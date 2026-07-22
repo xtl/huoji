@@ -1,0 +1,14 @@
+{
+  "name": "@huoji/domain-types",
+  "version": "0.1.0",
+  "description": "货记 前后端共享领域类型（状态机枚举、实体类型），依据总体设计说明书第 10/15 章",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.2"
+  }
+}

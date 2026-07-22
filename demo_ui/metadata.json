@@ -1,0 +1,6 @@
+{
+  "name": "货记 · GPU服务器贸易助手",
+  "description": "货记是一款专为服务器贸易从业者打造的AI贸易笔记，支持微信聊天、截图和铭牌照片3秒一键变成结构化货单，智能判定真伪，轻量管理个人和企业团队的货、客、价、证及交易进度。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

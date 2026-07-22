@@ -1,0 +1,1726 @@
+货记系统总体设计说明书 V1.0
+1. 系统定义
+1.1 产品定位
+货记是一套面向GPU服务器、整机、模组及零配件贸易产业链的：
+AI货源记录、关系管理、报价协作与交易推进系统。
+产品由两个终端、两个版本组成：
+终端
+个人版
+企业版
+微信小程序
+随手记货、查货、报价、跟进
+团队录入、项目执行、审批、现场验货
+Web网页端
+批量管理、分析个人货源
+企业货源、客户、项目、报价、权限和经营管理
+1.2 核心系统原则
+一个账号可以同时拥有个人空间和多个企业空间。
+所有业务数据必须归属于一个工作空间。
+个人数据和企业数据在数据库层面隔离。
+个人共享给企业的数据采用“共享镜像”，不允许企业直接读取个人原始数据。
+市场货源和企业实际库存必须分开管理。
+AI负责整理和提示，用户负责最终确认。
+所有价格、数量、状态变化必须保留历史。
+企业敏感字段必须支持字段级权限和脱敏。
+小程序解决高频现场动作，网页端解决复杂管理动作。
+第一阶段采用模块化单体架构，不直接上微服务。
+
+2. 系统业务边界
+2.1 系统负责
+文本、截图、照片、语音记货
+AI识别服务器配置和商务条件
+市场货源管理
+企业实际库存管理
+求购需求管理
+货主、渠道商、居间商、买家关系管理
+货源可信度与证据管理
+重复货源识别
+货源与需求匹配
+价格、数量、交期更新
+报价生成、审批和发送
+交易项目推进
+跟进任务和提醒
+现场验货
+合同、付款、交付基础管理
+利润和佣金记录
+企业权限和审计
+2.2 第一阶段不负责
+公开服务器交易广场
+平台资金托管
+平台担保交易
+自动读取微信私人聊天
+自研电子签
+完整会计总账
+完整仓储ERP
+自建物流系统
+自动判定货源绝对真假
+系统只能由用户主动粘贴、上传、转发或拍摄信息，不能承诺直接抓取微信私人聊天。
+
+3. 总体技术架构
+3.1 架构选型
+第一阶段采用：
+模块化单体业务服务 + 独立AI处理服务 + 异步任务队列。
+不建议第一版拆成十几个微服务。
+原因：
+初期业务规则变化频繁
+模块间事务较多
+团队开发和运维成本更低
+后期可以按模块独立拆分
+3.2 总体架构图
+flowchart TB    subgraph Client[&quot;客户端&quot;]        MP[&quot;微信小程序&lt;br/&gt;个人版 / 企业版&quot;]        WEB[&quot;Web网页端&lt;br/&gt;个人版 / 企业版&quot;]    end    subgraph Access[&quot;接入层&quot;]        CDN[&quot;CDN / 静态资源&quot;]        GW[&quot;API网关&quot;]        AUTH[&quot;身份认证与会话&quot;]    end    subgraph Application[&quot;业务应用层&quot;]        CORE[&quot;核心业务服务&lt;br/&gt;模块化单体&quot;]        AIAPI[&quot;AI任务编排服务&quot;]        WORKER[&quot;异步任务Worker&quot;]        NOTICE[&quot;消息通知服务&quot;]    end    subgraph Domain[&quot;领域模块&quot;]        WS[&quot;空间与企业&quot;]        PARTY[&quot;联系人与关系&quot;]        GOODS[&quot;货源与库存&quot;]        DEMAND[&quot;求购需求&quot;]        MATCH[&quot;匹配与重复识别&quot;]        QUOTE[&quot;报价与审批&quot;]        DEAL[&quot;交易项目&quot;]        VERIFY[&quot;证据与验货&quot;]        FIN[&quot;合同/付款/佣金&quot;]        AUDIT[&quot;权限与审计&quot;]    end    subgraph Data[&quot;数据层&quot;]        PG[&quot;PostgreSQL&quot;]        REDIS[&quot;Redis&quot;]        OSS[&quot;对象存储&quot;]        SEARCH[&quot;搜索引擎 / PostgreSQL全文检索&quot;]        VECTOR[&quot;向量索引 / pgvector&quot;]        MQ[&quot;消息队列&quot;]    end    subgraph AI[&quot;AI能力层&quot;]        OCR[&quot;OCR&quot;]        ASR[&quot;语音识别&quot;]        LLM[&quot;大模型结构化抽取&quot;]        NORMAL[&quot;服务器配置标准化&quot;]        DEDUPE[&quot;重复货源判断&quot;]        SCORE[&quot;可信度与冲突检测&quot;]    end    MP --&gt; GW    WEB --&gt; CDN    WEB --&gt; GW    GW --&gt; AUTH    GW --&gt; CORE    CORE --&gt; Domain    CORE --&gt; PG    CORE --&gt; REDIS    CORE --&gt; OSS    CORE --&gt; SEARCH    CORE --&gt; MQ    AIAPI --&gt; MQ    MQ --&gt; WORKER    WORKER --&gt; OCR    WORKER --&gt; ASR    WORKER --&gt; LLM    WORKER --&gt; NORMAL    WORKER --&gt; DEDUPE    WORKER --&gt; SCORE    WORKER --&gt; PG    WORKER --&gt; VECTOR    CORE --&gt; NOTICE
+
+4. 推荐技术栈
+4.1 前端
+微信小程序
+推荐两种方案：
+优先：微信原生小程序
+多端要求明确时：Taro
+第一阶段更建议原生小程序，减少上传、拍摄、扫码、分享和微信登录兼容问题。
+Web网页端
+建议：
+React
+Next.js或同类企业级前端框架
+TypeScript
+企业级组件库
+表格支持虚拟滚动、大数据筛选和固定列
+图表库用于经营驾驶舱
+4.2 后端
+推荐：
+TypeScript + NestJS，或Java + Spring Boot
+REST API为主
+PostgreSQL主数据库
+Redis缓存及分布式锁
+对象存储保存图片、视频、文件
+消息队列处理AI、通知、索引和水印任务
+OpenSearch/Elasticsearch作为后期搜索增强
+初期可以先用PostgreSQL全文检索和pgvector
+4.3 AI服务
+推荐独立Python服务：
+FastAPI
+OCR适配层
+ASR适配层
+多模型LLM网关
+JSON Schema结构化输出
+服务配置知识库
+图片相似度和向量相似度
+模型调用日志及成本统计
+4.4 基础设施
+Docker容器化
+开发、测试、预发布、生产四套环境
+数据库主从或托管高可用
+日志、指标、链路追踪统一接入
+每日备份
+文件存储生命周期管理
+
+5. 代码仓库建议
+huoji-platform/├── apps/│   ├── miniapp/                 # 微信小程序│   ├── web/                     # Web网页端│   ├── api/                     # 核心业务API│   ├── ai-service/              # AI服务│   └── worker/                  # 异步任务│├── packages/│   ├── domain-types/            # 前后端共享类型│   ├── api-client/              # API SDK│   ├── validation/              # 校验规则│   ├── server-catalog/          # 服务器配置字典│   ├── permission-sdk/          # 权限判断│   ├── ui-components/           # Web公共组件│   └── miniapp-components/      # 小程序公共组件│├── database/│   ├── migrations/│   ├── seeds/│   └── dictionaries/│├── infra/│   ├── docker/│   ├── deployment/│   ├── monitoring/│   └── scripts/│└── docs/    ├── api/    ├── architecture/    ├── database/    └── testing/
+
+6. 业务领域模块
+后端必须按以下领域模块拆分，禁止把所有逻辑堆在一个Service里。
+6.1 身份认证模块 Identity
+负责：
+微信小程序登录
+手机号登录
+Web扫码登录
+Access Token和Refresh Token
+登录设备管理
+登录会话管理
+企业单点登录扩展
+账号禁用
+风险登录提醒
+核心对象：
+User
+UserIdentity
+UserSession
+LoginDevice
+
+6.2 工作空间与企业模块 Workspace
+负责：
+创建个人空间
+创建企业
+加入企业
+企业成员管理
+部门和项目组
+空间切换
+数据归属
+成员离职和数据转移
+工作空间类型：
+PERSONALENTERPRISE
+一个用户默认只能有一个个人空间，可以加入多个企业空间。
+
+6.3 权限模块 Permission
+采用：
+RBAC角色权限 + 数据范围 + 字段权限 + 数据密级。
+权限判断分四层：
+用户是否属于当前工作空间
+用户是否具有操作权限
+用户是否有权访问当前记录
+用户是否有权查看当前字段
+权限表达：
+CanAccess =  IsWorkspaceMember  AND HasActionPermission  AND MatchDataScope  AND PassRecordPolicy
+
+6.4 货源模块 Goods
+负责：
+市场货源记录
+货源版本
+价格历史
+数量历史
+货源状态
+货源可信等级
+货源证据
+货源保护
+实际库存转换
+货源失效
+必须区分：
+市场货源 GoodsOffer
+别人告诉用户“市场上可能存在的一批货”。
+企业实际库存 InventoryLot
+已经采购、代销、锁货或实际控制的货。
+两者不能使用同一库存字段混合管理。
+
+6.5 产品与配置模块 Catalog
+负责：
+GPU型号
+整机品牌
+整机型号
+GPU形态
+CPU型号
+内存规格
+SSD规格
+IB网卡
+电源和散热
+标准配置模板
+配置兼容关系
+配置别名
+例如：
+H200NVIDIA H200H200 SXMH200 141GB
+必须归一到统一标准值。
+
+6.6 求购需求模块 Demand
+负责：
+买家求购
+内部采购需求
+型号要求
+数量和预算
+交期和地区
+新旧要求
+质保和验货要求
+付款条件
+需求优先级
+需求状态
+
+6.7 联系人与关系模块 Party
+统一管理：
+个人
+公司
+货主
+供应商
+渠道商
+居间商
+买家
+验货机构
+物流商
+同一个主体可以拥有多个角色。
+例如：
+A公司├── H200供应商├── B300买家└── 某项目居间方
+
+6.8 匹配与重复识别模块 Matching
+负责：
+货源与需求匹配
+货源重复识别
+联系人重复识别
+同一买家撞单提醒
+同一货源多价格提醒
+匹配评分
+匹配理由
+
+6.9 报价模块 Quote
+负责：
+报价单
+报价版本
+报价明细
+成本构成
+毛利计算
+报价有效期
+报价审批
+报价发送
+报价查看记录
+客户报价一致性检查
+脱敏报价卡
+
+6.10 交易项目模块 Deal
+负责：
+买家项目
+货源候选
+项目成员
+项目阶段
+当前卡点
+下一步动作
+赢单/丢单
+项目金额
+预计利润
+交易历史
+
+6.11 跟进和任务模块 Task
+负责：
+跟进记录
+待办任务
+提醒
+@成员
+截止时间
+重复任务
+任务完成
+自动任务
+
+6.12 文件和证据模块 Evidence
+负责：
+原始聊天截图
+报价单
+服务器图片
+铭牌
+SN清单
+BMC截图
+nvidia-smi
+视频
+验货报告
+合同
+发票
+物流单据
+文件只存对象存储地址，数据库不存文件二进制。
+
+6.13 验货模块 Inspection
+负责：
+验货任务
+验货批次
+一机一档
+SN扫描
+设备照片
+GPU健康度
+压力测试
+外观问题
+验货结论
+复检
+
+6.14 审批模块 Approval
+负责：
+报价审批
+低毛利审批
+锁货审批
+采购审批
+合同审批
+付款审批
+佣金审批
+第一阶段可以使用固定审批模板，后期扩展为流程设计器。
+
+6.15 合同、付款与交付模块 Fulfillment
+负责：
+合同记录
+合同主体
+付款节点
+收款节点
+发票
+交付批次
+物流状态
+到货
+验收
+售后和质保
+
+6.16 利润与佣金模块 Finance
+负责：
+项目收入
+采购成本
+税费
+物流成本
+验货成本
+资金成本
+售后预留
+毛利
+居间佣金
+员工业绩分配
+它是业务利润核算，不替代正式财务软件。
+
+6.17 搜索模块 Search
+支持自然语言和结构化搜索：
+深圳H200现货
+430万以内含税H200
+老陈上个月发的货
+缺少SN的B300
+三天未更新的货源
+已报价但买家未回复的项目
+
+6.18 通知模块 Notification
+通知渠道：
+小程序订阅消息
+站内消息
+Web通知
+短信扩展
+企业微信或钉钉扩展
+
+6.19 审计模块 Audit
+记录：
+登录
+创建
+修改
+删除
+导出
+分享
+查看敏感字段
+下载文件
+修改价格
+审批
+权限变更
+审计日志不可被普通用户删除。
+
+7. 四端功能模块
+7.1 个人版小程序
+底部导航：
+首页货单跟进我的
+页面清单：
+/pages/login/pages/workspace-switch/pages/home/index/pages/capture/index/pages/capture/confirm/pages/goods/list/pages/goods/detail/pages/goods/edit/pages/goods/price-update/pages/goods/stock-update/pages/demand/list/pages/demand/detail/pages/demand/edit/pages/contact/list/pages/contact/detail/pages/contact/edit/pages/task/list/pages/task/detail/pages/quote/create/pages/quote/preview/pages/quote/detail/pages/share/create/pages/share/result/pages/profile/index/pages/settings/index
+核心动作：
+粘贴聊天
+上传图片
+拍铭牌
+录语音
+确认AI结果
+查货
+改价
+改数量
+生成报价
+设置提醒
+添加联系人
+标记成交或失效
+
+7.2 企业版小程序
+底部导航：
+工作台货源项目消息我的
+增加页面：
+/pages/enterprise/workbench/pages/enterprise/goods-pool/pages/enterprise/project-list/pages/enterprise/project-detail/pages/approval/list/pages/approval/detail/pages/inspection/task-list/pages/inspection/detail/pages/inspection/device/pages/inspection/scan-sn/pages/enterprise/member/pages/enterprise/notification
+核心动作：
+录入企业货源
+将个人货源共享到企业
+认领货源
+分配负责人
+更新项目
+提交审批
+移动审批
+扫描SN
+上传验货资料
+完成现场验货
+
+7.3 个人版网页端
+主导航：
+总览货源需求联系人交易报价资料分析设置
+核心能力：
+Excel批量导入
+表格批量编辑
+多条件筛选
+自定义视图
+价格历史
+重复货源合并
+交易看板
+报价模板
+个人收入和佣金统计
+
+7.4 企业版网页端
+主导航：
+经营驾驶舱货源中心需求中心客户与渠道交易项目报价中心采购与验货合同与交付利润与佣金审批中心团队与权限审计中心系统设置
+
+8. 核心数据模型
+8.1 数据关系图
+erDiagram    USER ||--o{ MEMBERSHIP : joins    WORKSPACE ||--o{ MEMBERSHIP : contains    ORGANIZATION ||--|| WORKSPACE : owns    WORKSPACE ||--o{ PARTY : owns    PARTY ||--o{ PARTY_ROLE : has    PARTY ||--o{ PARTY_RELATION : connects    WORKSPACE ||--o{ CAPTURE_ITEM : receives    CAPTURE_ITEM ||--o{ AI_EXTRACTION_JOB : triggers    WORKSPACE ||--o{ GOODS_OFFER : owns    GOODS_OFFER ||--o{ GOODS_OFFER_VERSION : versions    GOODS_OFFER ||--o{ GOODS_PRICE_HISTORY : prices    GOODS_OFFER ||--o{ GOODS_QUANTITY_HISTORY : quantities    GOODS_OFFER ||--o{ EVIDENCE : proves    GOODS_OFFER ||--o{ GOODS_PARTY : involves    GOODS_OFFER ||--o| INVENTORY_LOT : converts_to    WORKSPACE ||--o{ DEMAND : owns    DEMAND ||--o{ MATCH_CANDIDATE : matched    GOODS_OFFER ||--o{ MATCH_CANDIDATE : matches    WORKSPACE ||--o{ DEAL : owns    DEAL ||--o{ DEAL_GOODS : includes    DEAL ||--o{ DEAL_PARTY : involves    DEAL ||--o{ DEAL_STAGE_HISTORY : stages    DEAL ||--o{ TASK : has    DEAL ||--o{ QUOTE : quotes    QUOTE ||--o{ QUOTE_VERSION : versions    QUOTE ||--o{ QUOTE_ITEM : contains    QUOTE ||--o{ APPROVAL_INSTANCE : requires    DEAL ||--o{ INSPECTION : inspects    INSPECTION ||--o{ INSPECTION_DEVICE : devices    DEAL ||--o{ CONTRACT : contracts    CONTRACT ||--o{ PAYMENT_MILESTONE : payments    DEAL ||--o{ DELIVERY_BATCH : delivers    DEAL ||--o{ COMMISSION : commissions    WORKSPACE ||--o{ SHARE_PROJECTION : shares    WORKSPACE ||--o{ AUDIT_LOG : audits
+
+9. 数据库统一字段规范
+所有业务表必须至少包含：
+id                 UUID PRIMARY KEYworkspace_id       UUID NOT NULLcreated_by         UUID NOT NULLupdated_by         UUIDowner_user_id      UUIDcreated_at         TIMESTAMPTZ NOT NULLupdated_at         TIMESTAMPTZ NOT NULLdeleted_at         TIMESTAMPTZversion            INTEGER NOT NULL DEFAULT 1
+企业敏感数据表增加：
+data_classification VARCHAR(20)visibility_scope    VARCHAR(20)department_id       UUIDproject_group_id    UUID
+枚举建议：
+data_classification:PUBLICINTERNALCONFIDENTIALSTRICT_CONFIDENTIALvisibility_scope:PRIVATEOWNER_ONLYDEPARTMENTPROJECTWORKSPACECUSTOM
+禁止物理删除核心业务数据，使用软删除。
+
+10. 核心表结构
+10.1 users 用户表
+字段
+类型
+说明
+id
+UUID
+用户ID
+display_name
+varchar
+昵称
+avatar_url
+text
+头像
+mobile
+varchar
+手机号
+status
+varchar
+ACTIVE/DISABLED
+default_workspace_id
+UUID
+默认空间
+last_login_at
+timestamptz
+最后登录
+created_at
+timestamptz
+创建时间
+
+10.2 workspaces 工作空间
+字段
+类型
+说明
+id
+UUID
+空间ID
+type
+varchar
+PERSONAL/ENTERPRISE
+name
+varchar
+空间名称
+owner_user_id
+UUID
+个人空间所有者
+organization_id
+UUID
+企业ID
+status
+varchar
+ACTIVE/SUSPENDED
+plan_code
+varchar
+套餐
+settings
+jsonb
+空间设置
+
+10.3 memberships 企业成员
+字段
+类型
+说明
+id
+UUID
+成员记录
+workspace_id
+UUID
+企业空间
+user_id
+UUID
+用户
+department_id
+UUID
+部门
+status
+varchar
+INVITED/ACTIVE/LEFT
+joined_at
+timestamptz
+加入时间
+left_at
+timestamptz
+离开时间
+data_scope
+varchar
+SELF/DEPARTMENT/ALL
+用户离职时禁止删除Membership，只修改为LEFT。
+
+10.4 roles及permissions
+roles
+字段
+说明
+id
+角色ID
+workspace_id
+企业空间
+code
+角色编码
+name
+角色名称
+is_system
+是否系统角色
+permissions
+权限编码示例：
+goods.creategoods.readgoods.read_costgoods.read_suppliergoods.updategoods.exportgoods.sharedemand.createdemand.readdemand.updatequote.createquote.approvequote.sendquote.read_costquote.read_margindeal.createdeal.updatedeal.assigninspection.executecontract.readfinance.readaudit.read
+
+10.5 party 业务主体
+统一表示个人或公司。
+字段
+类型
+说明
+id
+UUID
+主体ID
+workspace_id
+UUID
+所属空间
+party_type
+varchar
+PERSON/COMPANY
+display_name
+varchar
+显示名称
+mobile
+varchar
+手机
+email
+varchar
+邮箱
+country_code
+varchar
+国家地区
+province
+varchar
+省
+city
+varchar
+城市
+company_parent_id
+UUID
+个人所属公司
+source
+varchar
+MANUAL/AI/IMPORT
+owner_user_id
+UUID
+内部负责人
+trust_level
+varchar
+信用等级
+notes
+text
+备注
+extra
+jsonb
+扩展字段
+
+10.6 party_roles 主体角色
+OWNERSUPPLIERCHANNELBROKERBUYERPROCUREMENTINSPECTORLOGISTICSSERVICE_PROVIDER
+一个主体允许多个角色。
+
+10.7 party_relations 关系图谱
+字段
+说明
+from_party_id
+起点
+to_party_id
+终点
+relation_type
+INTRODUCED_BY/CONTROLS/WORKS_FOR/COOPERATES_WITH
+strength
+关系强度
+started_at
+开始时间
+ended_at
+结束时间
+notes
+备注
+货源链路不能只存一段文字，应以关系节点保存。
+
+10.8 capture_items 原始采集记录
+字段
+说明
+id
+采集ID
+workspace_id
+保存空间
+capture_type
+TEXT/IMAGE/AUDIO/DOCUMENT
+raw_text
+原始文字
+file_id
+原始文件
+source_channel
+WECHAT/MANUAL/IMPORT/CAMERA
+processing_status
+PENDING/PROCESSING/DONE/FAILED
+target_type
+GOODS/DEMAND/CONTACT/UNKNOWN
+confirmed
+是否确认
+created_by
+创建人
+任何AI结构化数据必须可以追溯到CaptureItem。
+
+10.9 ai_extraction_jobs
+字段
+说明
+capture_item_id
+原始输入
+model_provider
+模型提供方
+model_name
+模型
+schema_version
+抽取Schema版本
+request_payload
+脱敏请求
+result_payload
+原始结果
+token_usage
+Token消耗
+cost_amount
+调用成本
+status
+状态
+error_message
+错误
+started_at
+开始时间
+completed_at
+完成时间
+
+10.10 goods_offers 市场货源
+核心表。
+字段
+类型
+说明
+id
+UUID
+货源ID
+workspace_id
+UUID
+所属空间
+offer_no
+varchar
+货源编号
+title
+varchar
+自动标题
+record_type
+varchar
+MARKET_LEAD/CONTROLLED_STOCK
+direction
+varchar
+SELL/SUPPLY
+product_category
+varchar
+SERVER/GPU/BASEBOARD/PART
+gpu_model
+varchar
+H100/H200/B200/B300等
+gpu_form_factor
+varchar
+SXM/PCIE/NVL/HGX
+gpu_count
+integer
+GPU数量
+server_brand
+varchar
+整机品牌
+server_model
+varchar
+整机型号
+cpu_spec
+jsonb
+CPU结构
+memory_spec
+jsonb
+内存结构
+storage_spec
+jsonb
+存储结构
+network_spec
+jsonb
+网卡结构
+cooling_type
+varchar
+AIR/LIQUID
+quantity_total
+decimal
+总数量
+quantity_available
+decimal
+可售数量
+quantity_unit
+varchar
+台/套/块
+minimum_order_quantity
+decimal
+起订量
+condition
+varchar
+NEW/USED/REFURBISHED
+package_status
+varchar
+SEALED/OPENED/UNKNOWN
+availability_type
+varchar
+SPOT/NEAR_SPOT/FUTURES
+location_country
+varchar
+国家
+location_province
+varchar
+省
+location_city
+varchar
+城市
+delivery_days_min
+integer
+最短交期
+delivery_days_max
+integer
+最长交期
+owner_party_id
+UUID
+实际货主
+source_party_id
+UUID
+当前信息来源
+status
+varchar
+货源状态
+verification_level
+varchar
+L0-L4
+trust_score
+decimal
+0-100
+completeness_score
+decimal
+完整度
+freshness_at
+timestamptz
+最近确认时间
+expires_at
+timestamptz
+失效时间
+raw_summary
+text
+原始描述摘要
+normalized_spec
+jsonb
+标准化配置
+ai_confidence
+decimal
+AI整体置信度
+
+10.11 goods_offer_versions
+每次重大修改生成新版本。
+保存：
+配置快照
+数量快照
+价格快照
+状态快照
+修改来源
+修改人
+修改理由
+禁止只覆盖原值而不保留历史。
+
+10.12 goods_price_history
+字段
+说明
+goods_offer_id
+货源
+price_type
+OWNER_PRICE/COST_PRICE/EXTERNAL_PRICE
+amount
+金额
+currency
+CNY/USD等
+unit
+PER_UNIT/TOTAL
+tax_included
+是否含税
+tax_rate
+税率
+valid_from
+生效时间
+valid_until
+失效时间
+source_party_id
+价格来源
+created_by
+记录人
+底价、成本价、对外价必须分行保存，不能只用一个price字段。
+
+10.13 goods_quantity_history
+保存每次库存变化：
+原数量
+新数量
+变化数量
+原因
+已售
+锁定
+释放
+人工调整
+原因枚举：
+INITIALUPDATED_BY_SOURCERESERVEDRELEASEDSOLDEXPIREDMANUAL_CORRECTION
+
+10.14 inventory_lots 企业实际库存
+字段
+说明
+source_goods_offer_id
+来源市场货源
+inventory_type
+OWNED/CONSIGNED/RESERVED
+warehouse_location
+实际仓库
+quantity_on_hand
+在库
+quantity_reserved
+锁定
+quantity_available
+可售
+acquisition_cost
+采购成本
+ownership_document_id
+货权资料
+inventory_status
+状态
+只有完成真实控制、采购或代销确认后才能创建。
+
+10.15 demands 求购需求
+字段
+说明
+demand_no
+需求编号
+buyer_party_id
+买家
+product_category
+产品类型
+gpu_model
+GPU型号
+gpu_count
+数量要求
+brand_requirements
+品牌要求
+required_spec
+配置要求JSON
+quantity_required
+求购数量
+budget_min
+预算下限
+budget_max
+预算上限
+currency
+币种
+tax_required
+是否要求含税
+location_requirement
+地区要求
+condition_requirement
+新旧要求
+warranty_requirement
+质保要求
+inspection_requirement
+验货要求
+delivery_deadline
+交付期限
+priority
+LOW/MEDIUM/HIGH/URGENT
+status
+状态
+owner_user_id
+负责人
+
+10.16 match_candidates 匹配候选
+字段
+说明
+demand_id
+需求
+goods_offer_id
+货源
+match_score
+总分
+spec_score
+配置匹配
+price_score
+价格匹配
+location_score
+地区匹配
+delivery_score
+交期匹配
+verification_score
+可信度匹配
+match_reason
+匹配理由JSON
+status
+RECOMMENDED/SELECTED/REJECTED
+rejected_reason
+淘汰原因
+
+10.17 deals 交易项目
+字段
+说明
+deal_no
+项目编号
+title
+项目名称
+buyer_party_id
+买家
+owner_user_id
+负责人
+department_id
+部门
+current_stage
+当前阶段
+amount_estimated
+预计金额
+margin_estimated
+预计毛利
+probability
+成交概率
+current_blocker
+当前卡点
+next_action
+下一步
+next_action_at
+下一步时间
+expected_close_at
+预计完成
+lost_reason
+丢单原因
+status
+ACTIVE/WON/LOST/CANCELLED
+
+10.18 deal_goods
+一个项目可关联多个货源。
+字段：
+deal_id
+goods_offer_id
+usage_role
+selected
+rejection_reason
+target_quantity
+target_price
+usage_role：
+CANDIDATEPRIMARYBACKUPREJECTED
+
+10.19 quotes 报价单
+字段
+说明
+quote_no
+报价编号
+deal_id
+项目
+buyer_party_id
+买家
+status
+状态
+current_version_no
+当前版本
+valid_until
+有效期
+total_amount
+总价
+currency
+币种
+tax_included
+是否含税
+margin_amount
+毛利
+margin_rate
+毛利率
+approval_required
+是否需审批
+sent_at
+发送时间
+accepted_at
+接受时间
+
+10.20 quote_versions
+每轮报价必须生成新版本，不覆盖旧版本。
+包含：
+版本号
+报价快照
+成本快照
+条款快照
+生成PDF地址
+修改原因
+创建人
+
+10.21 quote_items
+字段
+说明
+quote_id
+报价
+goods_offer_id
+来源货源
+item_name
+产品名称
+spec_snapshot
+配置快照
+quantity
+数量
+unit_price
+单价
+total_price
+总价
+cost_price
+成本
+margin_amount
+毛利
+tax_rate
+税率
+delivery_terms
+交付条件
+报价必须使用快照，货源后续改价不能自动修改已发出的历史报价。
+
+10.22 evidence_files 证据资料
+字段
+说明
+object_type
+GOODS/DEAL/INSPECTION/CONTRACT
+object_id
+业务对象
+evidence_type
+CHAT/PHOTO/SN/BMC/TEST/CONTRACT等
+file_id
+文件
+source_party_id
+来源
+captured_at
+获取时间
+verified_by
+核验人
+verification_status
+未核验/已核验/冲突
+sensitive_level
+敏感等级
+metadata
+图片尺寸、Hash等
+
+10.23 share_projections 共享镜像
+这是个人版和企业版之间最重要的表。
+字段
+说明
+source_workspace_id
+个人空间
+source_object_type
+GOODS/DEMAND/CONTACT
+source_object_id
+原始数据
+target_workspace_id
+企业空间
+projection_object_id
+企业镜像ID
+field_policy
+共享字段规则JSON
+sync_policy
+MANUAL/AUTO/NOTIFY_ONLY
+status
+ACTIVE/REVOKED
+last_synced_at
+最后同步
+created_by
+分享人
+企业只能读取企业空间内的镜像数据，禁止跨空间直接查询个人数据。
+
+10.24 tasks 待办任务
+字段
+说明
+related_type
+GOODS/DEMAND/DEAL/QUOTE
+related_id
+关联对象
+title
+标题
+description
+描述
+assignee_user_id
+执行人
+due_at
+截止时间
+priority
+优先级
+status
+TODO/DOING/DONE/CANCELLED
+source
+MANUAL/SYSTEM/AI
+completed_at
+完成时间
+
+10.25 audit_logs 审计日志
+字段
+说明
+workspace_id
+空间
+user_id
+操作人
+action
+操作
+object_type
+对象类型
+object_id
+对象ID
+before_data
+修改前
+after_data
+修改后
+ip_address
+IP
+device_id
+设备
+risk_level
+风险等级
+created_at
+时间
+底价查看、SN下载、批量导出等行为必须单独记录。
+
+11. AI抽取数据结构
+AI输出不能直接返回自然语言，必须按照固定JSON Schema。
+{  &quot;intent&quot;: &quot;SELL_OFFER&quot;,  &quot;goods&quot;: {    &quot;product_category&quot;: &quot;SERVER&quot;,    &quot;gpu_model&quot;: &quot;H200&quot;,    &quot;gpu_form_factor&quot;: &quot;SXM&quot;,    &quot;gpu_count&quot;: 8,    &quot;server_brand&quot;: &quot;Supermicro&quot;,    &quot;server_model&quot;: null,    &quot;cpu&quot;: [],    &quot;memory&quot;: [],    &quot;storage&quot;: [],    &quot;network&quot;: [],    &quot;quantity&quot;: 10,    &quot;quantity_unit&quot;: &quot;UNIT&quot;,    &quot;condition&quot;: &quot;NEW&quot;,    &quot;availability_type&quot;: &quot;SPOT&quot;,    &quot;location&quot;: {      &quot;country&quot;: &quot;CN&quot;,      &quot;province&quot;: &quot;Guangdong&quot;,      &quot;city&quot;: &quot;Shenzhen&quot;    }  },  &quot;commercial&quot;: {    &quot;price&quot;: 4300000,    &quot;currency&quot;: &quot;CNY&quot;,    &quot;price_unit&quot;: &quot;PER_UNIT&quot;,    &quot;tax_included&quot;: true,    &quot;tax_rate&quot;: null,    &quot;delivery_days_min&quot;: 3,    &quot;delivery_days_max&quot;: 3,    &quot;minimum_order_quantity&quot;: null,    &quot;valid_until&quot;: null  },  &quot;parties&quot;: [    {      &quot;name&quot;: &quot;老陈&quot;,      &quot;role&quot;: &quot;OWNER&quot;    }  ],  &quot;requirements&quot;: [    &quot;NEED_SN_LIST&quot;  ],  &quot;missing_fields&quot;: [    &quot;server_model&quot;,    &quot;warranty&quot;,    &quot;tax_rate&quot;  ],  &quot;conflicts&quot;: [],  &quot;field_confidence&quot;: {    &quot;gpu_model&quot;: 0.98,    &quot;quantity&quot;: 0.94,    &quot;price&quot;: 0.91,    &quot;tax_included&quot;: 0.76  }}
+每个AI字段必须保留：
+字段值
+置信度
+原始证据位置
+是否经用户确认
+最后确认人
+最后确认时间
+
+12. AI处理流程
+sequenceDiagram    participant U as 用户    participant C as 小程序/Web    participant API as 核心API    participant Q as 任务队列    participant AI as AI服务    participant DB as 数据库    U-&gt;&gt;C: 上传文字/图片/语音    C-&gt;&gt;API: 创建CaptureItem    API-&gt;&gt;DB: 保存原始记录    API-&gt;&gt;Q: 提交AI任务    API--&gt;&gt;C: 返回处理中状态    Q-&gt;&gt;AI: 执行OCR/ASR/结构化    AI-&gt;&gt;AI: 标准化配置    AI-&gt;&gt;AI: 检测缺失和冲突    AI-&gt;&gt;AI: 重复货源初筛    AI-&gt;&gt;DB: 保存抽取结果    C-&gt;&gt;API: 查询处理结果    API--&gt;&gt;C: 返回待确认字段    U-&gt;&gt;C: 确认或修正    C-&gt;&gt;API: 创建正式货源    API-&gt;&gt;DB: 保存货源和版本
+AI任务必须异步执行，前端不能一直阻塞等待。
+
+13. 重复货源识别设计
+重复货源判断分五级。
+13.1 强唯一证据
+相同完整SN
+相同批次编号
+相同合同编号
+相同设备唯一标识
+命中后直接高概率重复。
+13.2 图片证据
+图片文件Hash
+感知Hash
+铭牌区域相似度
+背景和拍摄环境相似度
+13.3 结构化特征
+GPU型号
+品牌型号
+数量
+地点
+交期
+新旧程度
+CPU和内存配置
+13.4 价格和时间特征
+报价接近
+发布时间接近
+价格变化轨迹接近
+13.5 关系链特征
+信息来源是否指向相同上游
+是否由同一渠道圈传播
+是否共享相同联系人
+建议重复评分：
+SN证据              40%图片相似度           20%配置相似度           15%数量及地点           10%价格和时间            5%关系链相似度          10%
+系统只能提示：
+疑似同一批货，重复概率87%。
+不能自动合并，必须由用户确认。
+
+14. 货源可信度设计
+不要只输出一个无法解释的分数。
+可信度分五个维度：
+维度
+权重
+信息来源可信度
+20%
+证据完整度
+25%
+配置一致性
+20%
+货权或控制证明
+25%
+信息新鲜度
+10%
+验证等级：
+L0 口头或纯文字货源L1 有图片或报价截图L2 有SN、铭牌、实时视频或BMCL3 有货权、合同、发票或主体证明L4 已完成现场或第三方验货
+可信分和等级同时展示：
+可信等级：L2可信评分：72主要缺口：货权资料、质保证明
+
+15. 状态机设计
+15.1 货源状态
+DRAFTPARSINGNEED_CONFIRMATIONUNVERIFIEDVERIFIEDSELLABLERESERVEDPARTIALLY_SOLDSOLD_OUTEXPIREDINVALIDCANCELLED
+允许流转：
+stateDiagram-v2    [*] --&gt; DRAFT    DRAFT --&gt; PARSING    PARSING --&gt; NEED_CONFIRMATION    NEED_CONFIRMATION --&gt; UNVERIFIED    UNVERIFIED --&gt; VERIFIED    VERIFIED --&gt; SELLABLE    SELLABLE --&gt; RESERVED    RESERVED --&gt; SELLABLE    RESERVED --&gt; PARTIALLY_SOLD    PARTIALLY_SOLD --&gt; SOLD_OUT    SELLABLE --&gt; EXPIRED    UNVERIFIED --&gt; INVALID    VERIFIED --&gt; INVALID    SOLD_OUT --&gt; [*]
+
+15.2 求购状态
+DRAFTACTIVEMATCHINGCANDIDATES_FOUNDQUOTEDNEGOTIATINGFULFILLEDEXPIREDCLOSEDCANCELLED
+
+15.3 报价状态
+DRAFTPENDING_APPROVALAPPROVEDREJECTEDSENTVIEWEDACCEPTEDDECLINEDEXPIREDREVOKED
+已发送报价禁止直接修改，只能创建新版本。
+
+15.4 交易项目状态
+LEADQUALIFIEDMATCHINGQUOTINGNEGOTIATINGRESERVINGINSPECTIONCONTRACTINGPAYMENTDELIVERYACCEPTANCEWONLOSTCANCELLED
+每次阶段变化必须写入DealStageHistory。
+
+15.5 验货状态
+PLANNEDIN_PROGRESSPENDING_REVIEWPASSEDCONDITIONAL_PASSEDREINSPECTION_REQUIREDFAILEDCANCELLED
+
+16. 权限体系
+16.1 企业默认角色
+企业管理员
+老板/管理层
+采购
+销售
+渠道经理
+财务
+法务
+验货人员
+只读成员
+16.2 数据范围
+SELFDEPARTMENTPROJECT_GROUPWORKSPACECUSTOM
+16.3 敏感字段权限
+重点字段：
+实际货主
+上游联系人
+采购底价
+成本价
+企业毛利
+居间佣金
+完整SN
+原始聊天截图
+合同
+银行账户
+身份证件
+发票
+前端隐藏不等于安全，后端接口必须不返回无权字段。
+错误做法：
+{  &quot;costPrice&quot;: 4200000,  &quot;hidden&quot;: true}
+正确做法：
+{  &quot;externalPrice&quot;: 4380000}
+无权限用户的响应中根本不出现costPrice。
+
+17. 个人空间共享到企业
+17.1 共享字段选择
+用户可以选择：
+设备配置数量地点对外报价交期货源状态证据等级真实货主上游联系方式成本价佣金完整SN原始截图
+默认不共享：
+真实货主
+上游联系人
+成本价
+佣金
+原始聊天
+完整SN
+17.2 同步策略
+MANUAL用户手动同步AUTO允许指定字段自动同步NOTIFY_ONLY个人数据变化时只提醒企业，不自动覆盖
+17.3 撤销共享
+撤销后：
+企业不再收到更新
+企业历史业务记录不删除
+企业镜像标记为“来源已撤销”
+已经生成的报价、项目和合同继续保留
+
+18. 核心API设计
+统一前缀：
+/api/v1
+统一响应：
+{  &quot;success&quot;: true,  &quot;data&quot;: {},  &quot;requestId&quot;: &quot;req_xxx&quot;}
+错误响应：
+{  &quot;success&quot;: false,  &quot;error&quot;: {    &quot;code&quot;: &quot;GOODS_PRICE_PERMISSION_DENIED&quot;,    &quot;message&quot;: &quot;无权查看该货源成本价&quot;  },  &quot;requestId&quot;: &quot;req_xxx&quot;}
+18.1 登录和空间
+POST   /auth/wechat/loginPOST   /auth/mobile/loginPOST   /auth/refreshPOST   /auth/logoutGET    /meGET    /me/workspacesPOST   /workspaces/switchPOST   /organizationsPOST   /organizations/{id}/inviteGET    /organizations/{id}/membersPATCH  /organizations/{id}/members/{memberId}
+18.2 原始采集和AI
+POST   /capturesPOST   /captures/{id}/filesPOST   /captures/{id}/processGET    /captures/{id}GET    /captures/{id}/resultPOST   /captures/{id}/confirm
+创建采集请求：
+{  &quot;workspaceId&quot;: &quot;uuid&quot;,  &quot;captureType&quot;: &quot;TEXT&quot;,  &quot;rawText&quot;: &quot;H200超微八卡，深圳10台现货，430含税&quot;}
+18.3 货源
+GET    /goodsPOST   /goodsGET    /goods/{id}PATCH  /goods/{id}POST   /goods/{id}/confirmPOST   /goods/{id}/pricesPOST   /goods/{id}/quantitiesPOST   /goods/{id}/statusPOST   /goods/{id}/evidenceGET    /goods/{id}/historyGET    /goods/{id}/duplicatesPOST   /goods/{id}/mergePOST   /goods/{id}/convert-to-inventory
+所有修改接口接受：
+Idempotency-Key: uuidIf-Match: version
+防止重复提交和并发覆盖。
+18.4 求购
+GET    /demandsPOST   /demandsGET    /demands/{id}PATCH  /demands/{id}POST   /demands/{id}/matchGET    /demands/{id}/matches
+18.5 联系人
+GET    /partiesPOST   /partiesGET    /parties/{id}PATCH  /parties/{id}POST   /parties/{id}/rolesPOST   /party-relationsGET    /parties/{id}/network
+18.6 项目
+GET    /dealsPOST   /dealsGET    /deals/{id}PATCH  /deals/{id}POST   /deals/{id}/stagePOST   /deals/{id}/goodsPOST   /deals/{id}/partiesGET    /deals/{id}/timeline
+18.7 报价
+GET    /quotesPOST   /quotesGET    /quotes/{id}POST   /quotes/{id}/versionsPOST   /quotes/{id}/submit-approvalPOST   /quotes/{id}/sendPOST   /quotes/{id}/revokeGET    /quotes/{id}/pdf
+18.8 分享
+POST   /sharesGET    /shares/{id}PATCH  /shares/{id}/policyPOST   /shares/{id}/syncPOST   /shares/{id}/revoke
+18.9 任务和通知
+GET    /tasksPOST   /tasksPATCH  /tasks/{id}POST   /tasks/{id}/completeGET    /notificationsPOST   /notifications/{id}/read
+18.10 验货
+POST   /inspectionsGET    /inspections/{id}POST   /inspections/{id}/startPOST   /inspections/{id}/devicesPOST   /inspections/{id}/devices/{deviceId}/scan-snPOST   /inspections/{id}/devices/{deviceId}/evidencePOST   /inspections/{id}/submitPOST   /inspections/{id}/review
+
+19. 搜索设计
+19.1 结构化搜索
+使用数据库字段：
+GPU型号
+品牌
+数量
+地点
+价格区间
+是否含税
+状态
+可信等级
+更新时间
+负责人
+19.2 全文搜索
+搜索：
+原始聊天
+货源摘要
+联系人备注
+跟进记录
+项目备注
+文件OCR文本
+19.3 自然语言搜索
+处理步骤：
+用户问题→ 意图识别→ 结构化过滤条件→ 权限过滤→ 数据库查询→ 搜索排序→ 结果解释
+例如：
+找深圳430万以下含税的H200现货。
+转换为：
+{  &quot;gpuModel&quot;: &quot;H200&quot;,  &quot;city&quot;: &quot;Shenzhen&quot;,  &quot;maxExternalPrice&quot;: 4300000,  &quot;taxIncluded&quot;: true,  &quot;availabilityType&quot;: &quot;SPOT&quot;,  &quot;status&quot;: [&quot;VERIFIED&quot;, &quot;SELLABLE&quot;]}
+AI不得绕过权限直接搜索全部数据。
+
+20. 文件系统设计
+20.1 上传流程
+客户端向API申请上传凭证
+客户端直传对象存储
+上传完成后通知API
+API创建FileObject
+异步执行病毒扫描、OCR、缩略图和水印
+文件绑定到业务对象
+20.2 文件表
+file_objects- id- workspace_id- object_key- original_name- mime_type- size- sha256- perceptual_hash- storage_provider- upload_status- scan_status- ocr_status- created_by
+20.3 敏感文件
+敏感文件下载必须：
+校验权限
+使用短期签名URL
+记录审计日志
+可选动态水印
+不返回永久公开地址
+
+21. 事件驱动设计
+业务数据库使用Outbox Pattern，保证业务事务和事件一致。
+核心事件：
+capture.createdcapture.processedgoods.createdgoods.updatedgoods.price_changedgoods.quantity_changedgoods.status_changedgoods.expiringgoods.duplicate_detecteddemand.createddemand.updateddemand.match_completeddeal.createddeal.stage_changeddeal.blockedquote.createdquote.approval_requestedquote.approvedquote.sentquote.expiringinspection.startedinspection.completedinspection.failedshare.createdshare.updatedshare.revokedmember.leftpermission.changed
+消费者：
+通知服务
+搜索索引
+匹配引擎
+审计
+报表
+AI任务
+
+22. 缓存与并发
+22.1 Redis用途
+用户会话
+短期权限缓存
+短信或验证码
+接口限流
+分布式锁
+AI任务状态
+热门字典
+临时上传凭证
+22.2 并发控制
+货源价格、数量和项目状态使用乐观锁。
+请求携带当前版本：
+If-Match: 12
+数据库更新：
+UPDATE goods_offersSET quantity_available = 6,    version = version + 1WHERE id = :id  AND version = 12;
+更新结果为0时返回：
+DATA_VERSION_CONFLICT
+前端提示用户刷新后重新提交。
+
+23. 安全设计
+23.1 租户隔离
+所有业务查询必须自动添加：
+workspace_id = current_workspace_id
+禁止前端传入任意Workspace ID后直接查询。
+建议在数据库层增加行级安全或统一Repository拦截器。
+23.2 数据加密
+需要加密或脱敏：
+手机号
+银行账户
+身份证件
+合同敏感字段
+完整SN
+原始聊天
+API密钥
+23.3 防越权
+必须测试：
+横向越权
+跨企业访问
+修改他人货源
+查看成本价
+下载敏感文件
+伪造企业空间ID
+撤销分享后继续读取
+离职成员继续访问
+23.4 操作风控
+高风险操作：
+批量导出
+查看大量完整SN
+下载原始聊天
+批量查看成本价
+大量删除
+权限提升
+修改报价审批结果
+触发：
+二次确认
+审计日志
+管理员提醒
+设备风险检查
+
+24. 非功能要求
+24.1 性能目标
+普通查询：
+P95小于500毫秒
+列表查询：
+首屏数据小于1秒
+必须分页
+Web大表格采用虚拟滚动
+文件上传：
+支持断点续传
+图片先返回本地预览
+AI处理：
+异步任务
+前端显示处理进度
+失败可重试
+不阻塞用户继续录入
+24.2 可用性
+核心业务服务可用性目标99.9%
+数据库每日备份
+核心表开启时间点恢复
+文件跨区域或多副本存储
+异步任务支持重试和死信队列
+24.3 可观测性
+每个请求必须具有：
+request_iduser_idworkspace_idtrace_iddevice_id
+监控：
+API错误率
+P95响应时间
+AI任务成功率
+OCR失败率
+文件上传失败率
+队列积压
+数据库慢查询
+登录异常
+权限拒绝次数
+
+25. 开发阶段拆分
+阶段一：核心可用版本
+必须完成
+微信登录
+个人空间
+企业空间基础结构
+文字、图片、语音采集
+AI结构化
+货源卡
+求购卡
+联系人
+改价和改数量
+跟进任务
+基础搜索
+生成脱敏报价
+对象存储
+基础审计
+个人共享到企业的底层模型
+暂不开放
+完整企业权限配置
+完整审批
+验货
+合同和财务
+复杂经营看板
+
+阶段二：企业协作版本
+必须完成
+企业成员
+部门
+角色权限
+企业货源池
+企业需求池
+货源认领和分配
+客户与渠道
+项目看板
+重复货源识别
+需求匹配
+报价版本
+报价审批
+操作日志
+个人共享镜像
+
+阶段三：交易闭环版本
+必须完成
+现场验货
+SN管理
+一机一档
+合同
+付款节点
+交付
+验收
+佣金
+项目利润
+企业经营驾驶舱
+API对接
+
+26. 第一阶段验收标准
+AI记货
+输入：
+H200超微8卡，深圳现货10台，430含税，三天交，老陈的货。
+系统必须正确输出：
+H200
+超微
+8卡整机
+深圳
+现货
+10台
+430万元/台
+含税
+3天交付
+老陈为货主或来源待确认
+并提示缺失：
+整机型号
+SN
+质保
+税率
+货源管理
+必须支持：
+创建
+查看
+编辑
+改价
+改数量
+状态变化
+查看历史
+标记失效
+生成报价
+空间隔离
+必须验证：
+个人空间数据企业管理员无法直接读取
+A企业无法访问B企业数据
+分享只显示允许字段
+撤销分享后企业不能继续同步
+离职成员无法访问企业空间
+报价
+必须支持：
+货源生成报价
+隐藏成本价和上游联系人
+保存历史版本
+报价有效期
+图片或PDF输出
+
+27. 数据库索引建议
+关键索引：
+CREATE INDEX idx_goods_workspace_statusON goods_offers(workspace_id, status);CREATE INDEX idx_goods_workspace_gpuON goods_offers(workspace_id, gpu_model);CREATE INDEX idx_goods_workspace_locationON goods_offers(workspace_id, location_city);CREATE INDEX idx_goods_freshnessON goods_offers(workspace_id, freshness_at DESC);CREATE INDEX idx_goods_owner_partyON goods_offers(workspace_id, owner_party_id);CREATE INDEX idx_demand_workspace_statusON demands(workspace_id, status);CREATE INDEX idx_deal_workspace_stageON deals(workspace_id, current_stage);CREATE INDEX idx_task_assignee_dueON tasks(workspace_id, assignee_user_id, status, due_at);CREATE INDEX idx_audit_workspace_timeON audit_logs(workspace_id, created_at DESC);
+软删除表索引应增加：
+WHERE deleted_at IS NULL
+
+28. 关键开发约束
+以下十条在开发过程中不能随意改变：
+每条业务数据必须有workspace_id。
+个人空间和企业空间禁止直接跨空间查询。
+共享使用镜像或投影，不使用裸外键跨租户读取。
+货源、库存和报价是三个不同对象。
+报价必须保存版本快照。
+价格、数量和状态必须保留历史。
+AI抽取结果必须经用户确认后才能成为正式业务数据。
+无权限字段后端不得返回。
+所有文件必须通过受控File Service访问。
+第一阶段采用模块化单体，但模块间只能通过明确Service或领域事件通信。
+
+29. 首批开发任务包
+后端任务包
+BE-01 身份与工作空间
+微信登录
+用户
+个人空间自动创建
+空间切换
+企业创建
+成员基础模型
+BE-02 文件与采集
+上传凭证
+文件回调
+CaptureItem
+AI任务提交
+任务状态
+BE-03 货源
+创建货源
+修改货源
+货源详情
+货源列表
+改价
+改数量
+状态机
+历史记录
+BE-04 联系人
+Party
+PartyRole
+PartyRelation
+货源关联联系人
+BE-05 求购和匹配
+求购CRUD
+基础规则匹配
+候选列表
+BE-06 跟进和通知
+Task
+Reminder
+站内通知
+小程序订阅消息
+BE-07 报价
+Quote
+QuoteVersion
+QuoteItem
+报价模板
+PDF生成
+BE-08 权限和审计
+RBAC
+数据范围
+字段脱敏
+审计日志
+
+AI任务包
+AI-01 OCR和ASR适配
+图片文字
+文档文字
+语音转文字
+AI-02 货源结构化
+固定JSON Schema
+字段置信度
+缺失项
+冲突项
+意图识别
+AI-03 配置标准化
+GPU别名
+品牌别名
+设备形态
+单位
+币种
+价格单位
+地名标准化
+AI-04 重复识别基础版
+SN
+图片Hash
+配置相似
+数量地点
+时间价格
+
+小程序任务包
+MP-01 登录与空间
+MP-02 首页和超级输入框
+MP-03 AI确认页
+MP-04 货源列表和详情
+MP-05 改价、改数量、更新状态
+MP-06 求购和联系人
+MP-07 跟进和提醒
+MP-08 报价预览和分享
+
+Web任务包
+WEB-01 登录和空间切换
+WEB-02 个人总览
+WEB-03 货源表格
+WEB-04 求购和联系人
+WEB-05 交易看板
+WEB-06 报价管理
+WEB-07 企业后台基础框架
+
+30. 最终架构判断
+货记的核心不是“做一个服务器CRM”，而是建立一套从非结构化市场信息进入正式交易的标准数据链路：
+聊天、截图、语音→ 原始采集记录→ AI结构化→ 用户确认→ 动态货源→ 证据与可信度→ 求购匹配→ 报价→ 交易项目→ 验货→ 合同付款→ 交付验收→ 库存和经营数据
+个人版和企业版共享同一底座，但解决不同的问题：
+个人版保护和管理个人的货源、人脉及交易机会。
+企业版把明确进入企业空间的货源、客户和项目沉淀为公司资产。
+小程序承担即时输入、现场执行和快速沟通。
+Web网页端承担批量管理、权限、流程和经营决策。
+第一阶段最重要的不是把所有企业功能一次做完，而是把以下三个底座做对：
+工作空间和数据归属。
+动态货源数据模型。
+AI输入到正式货源的确认链路。
+这三个底座一旦做错，后面企业权限、交易项目和数据资产都会推倒重来。

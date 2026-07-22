@@ -1,0 +1,12 @@
+{
+  "name": "huoji-platform",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "packages/domain-types"
+  ],
+  "scripts": {
+    "build": "npm run build -w @huoji/domain-types && npm run build -w @huoji/api",
+    "lint": "npm run lint -w @huoji/domain-types && npm run lint -w @huoji/api"
+  }
+}
