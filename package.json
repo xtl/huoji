@@ -7,6 +7,8 @@
   ],
   "scripts": {
     "build": "npm run build -w @huoji/domain-types && npm run build -w @huoji/api",
-    "lint": "npm run lint -w @huoji/domain-types && npm run lint -w @huoji/api"
+    "lint": "npm run lint -w @huoji/domain-types && npm run lint -w @huoji/api",
+    "api:dev": "npm run start:dev -w @huoji/api",
+    "ai:dev": "python -m uvicorn app.main:app --app-dir apps/ai-service --reload --port 8010"
   }
 }

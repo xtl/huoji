@@ -1,5 +1,7 @@
-import { CanActivate, ExecutionContext, Injectable, SetMetadata } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, SetMetadata, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { verify } from 'jsonwebtoken';
+import { DatabaseService } from './database.module';
 
 /** 标记无需空间上下文的路由（登录、平台管理入口等） */
 export const PUBLIC_ROUTE = 'public_route';
@@ -24,9 +26,12 @@ export interface WorkspaceContext {
  */
 @Injectable()
 export class WorkspaceScopeGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly db: DatabaseService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(PUBLIC_ROUTE, [
       context.getHandler(),
       context.getClass(),
@@ -34,13 +39,68 @@ export class WorkspaceScopeGuard implements CanActivate {
     if (isPublic) return true;
 
     const req = context.switchToHttp().getRequest();
-    // TODO(BE-01): 替换为真实鉴权。骨架阶段注入占位上下文以便联调。
+    const header = String(req.headers.authorization ?? '');
+    const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+    if (!token) {
+      throw new UnauthorizedException({ code: 'AUTH_REQUIRED', message: '请先登录' });
+    }
+
+    let payload: { sub?: string; type?: string };
+    try {
+      payload = verify(token, process.env.JWT_ACCESS_SECRET ?? 'dev-access-secret') as {
+        sub?: string;
+        type?: string;
+      };
+    } catch {
+      throw new UnauthorizedException({ code: 'ACCESS_TOKEN_INVALID', message: '登录态无效或已过期' });
+    }
+    if (!payload.sub || payload.type !== 'access') {
+      throw new UnauthorizedException({ code: 'ACCESS_TOKEN_INVALID', message: '登录态无效或已过期' });
+    }
+
+    const requestedWorkspaceId = req.headers['x-workspace-id'];
+    const membership = await this.db.one<{
+      user_id: string;
+      workspace_id: string;
+      workspace_type: 'PERSONAL' | 'ENTERPRISE';
+      workspace_status: string;
+      data_scope: WorkspaceContext['dataScope'];
+      permissions: string[];
+    }>(
+      `
+      SELECT
+        m.user_id,
+        w.id AS workspace_id,
+        w.type AS workspace_type,
+        w.status AS workspace_status,
+        m.data_scope,
+        COALESCE(array_agg(rp.permission_code) FILTER (WHERE rp.permission_code IS NOT NULL), '{}') AS permissions
+      FROM memberships m
+      JOIN workspaces w ON w.id = m.workspace_id
+      LEFT JOIN membership_roles mr ON mr.membership_id = m.id
+      LEFT JOIN role_permissions rp ON rp.role_id = mr.role_id
+      WHERE m.user_id = $1
+        AND m.status = 'ACTIVE'
+        AND ($2::uuid IS NULL OR m.workspace_id = $2::uuid)
+      GROUP BY m.user_id, w.id, w.type, w.status, m.data_scope
+      ORDER BY w.type = 'PERSONAL' DESC
+      LIMIT 1
+      `,
+      [payload.sub, typeof requestedWorkspaceId === 'string' ? requestedWorkspaceId : null],
+    );
+    if (!membership) {
+      throw new UnauthorizedException({ code: 'WORKSPACE_ACCESS_DENIED', message: '无权访问该工作空间' });
+    }
+    if (membership.workspace_status !== 'ACTIVE') {
+      throw new UnauthorizedException({ code: 'WORKSPACE_SUSPENDED', message: '工作空间已停用' });
+    }
+
     req.workspaceContext = {
-      userId: 'dev-user',
-      workspaceId: 'dev-workspace',
-      workspaceType: 'PERSONAL',
-      dataScope: 'SELF',
-      permissionCodes: [],
+      userId: membership.user_id,
+      workspaceId: membership.workspace_id,
+      workspaceType: membership.workspace_type,
+      dataScope: membership.data_scope,
+      permissionCodes: membership.permissions ?? [],
     } satisfies WorkspaceContext;
     return true;
   }

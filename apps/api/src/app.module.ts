@@ -10,6 +10,7 @@ import { TaskModule } from './modules/task/task.module';
 import { QuoteModule } from './modules/quote/quote.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { WorkspaceScopeGuard } from './common/workspace-scope.guard';
+import { DatabaseModule } from './common/database.module';
 
 /**
  * 模块化单体（说明书 3.1 / 28 章约束 10）：
@@ -18,6 +19,7 @@ import { WorkspaceScopeGuard } from './common/workspace-scope.guard';
  */
 @Module({
   imports: [
+    DatabaseModule,
     IdentityModule,
     WorkspaceModule,
     CaptureModule,
