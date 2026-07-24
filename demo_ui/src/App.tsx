@@ -17,6 +17,11 @@ type MarketType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY";
 
+interface ConfigItem {
+  label: string;
+  value: string;
+}
+
 interface StockItem {
   id: string;
   productCategory: ProductCategory;
@@ -30,6 +35,7 @@ interface StockItem {
   condition?: string;
   availabilityType?: string;
   tradeMode: TradeMode;
+  configItems: ConfigItem[];
   status: "UNVERIFIED" | "VERIFIED" | "SELLABLE" | "EXPIRED" | "SOLD_OUT";
   source: "AI" | "MANUAL";
   createdAt: string;
@@ -47,6 +53,7 @@ interface MarketPost {
   locationCity: string;
   priceAmount?: number;
   contactMethod: string;
+  configItems: ConfigItem[];
   publishedAt: string;
 }
 
@@ -64,6 +71,18 @@ const initialStocks: StockItem[] = [
     condition: "全新",
     availabilityType: "现货",
     tradeMode: "SPOT",
+    configItems: [
+      { label: "品牌", value: "Supermicro" },
+      { label: "整机型号", value: "HGX H100 8-GPU" },
+      { label: "GPU", value: "H100" },
+      { label: "GPU数量", value: "8卡" },
+      { label: "CPU", value: "双路 Intel Xeon" },
+      { label: "内存", value: "2TB DDR5 ECC" },
+      { label: "硬盘", value: "8 * 3.84T NVMe" },
+      { label: "网络", value: "双口 200G IB" },
+      { label: "电源", value: "冗余电源" },
+      { label: "质保", value: "三年" },
+    ],
     status: "SELLABLE",
     source: "AI",
     createdAt: new Date().toISOString(),
@@ -83,6 +102,18 @@ const initialMarket: MarketPost[] = [
     locationCity: "上海",
     priceAmount: 0,
     contactMethod: "站内联系",
+    configItems: [
+      { label: "品牌", value: "不限" },
+      { label: "整机型号", value: "HGX H200" },
+      { label: "GPU", value: "H200" },
+      { label: "GPU数量", value: "8卡" },
+      { label: "CPU", value: "双路" },
+      { label: "内存", value: "2TB 以上" },
+      { label: "硬盘", value: "NVMe" },
+      { label: "网络", value: "200G IB" },
+      { label: "电源", value: "" },
+      { label: "质保", value: "原厂优先" },
+    ],
     publishedAt: new Date().toISOString(),
   },
 ];
@@ -110,6 +141,7 @@ export default function App() {
     locationCity: "深圳",
     priceAmount: "1200000",
     title: "",
+    configItems: defaultConfig("SERVER"),
   });
   const [demand, setDemand] = useState({
     productCategory: "SERVER" as ProductCategory,
@@ -120,15 +152,20 @@ export default function App() {
     locationCity: "上海",
     budget: "",
     contactMethod: "站内联系",
+    configItems: defaultConfig("SERVER"),
   });
 
   const filteredStocks = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return stocks;
     return stocks.filter((item) =>
-      [item.title, item.gpuModel, item.locationCity, item.status].some((value) =>
-        String(value).toLowerCase().includes(q),
-      ),
+      [
+        item.title,
+        item.gpuModel,
+        item.locationCity,
+        item.status,
+        ...item.configItems.flatMap((config) => [config.label, config.value]),
+      ].some((value) => String(value).toLowerCase().includes(q)),
     );
   }, [query, stocks]);
 
@@ -147,6 +184,7 @@ export default function App() {
         post.tradeMode,
         post.productCategory,
         productCategoryText(post.productCategory),
+        ...post.configItems.flatMap((config) => [config.label, config.value]),
       ].some((value) => String(value).toLowerCase().includes(q));
     });
   }, [query, marketCategoryFilter, marketModeFilter, marketPosts, marketTypeFilter]);
@@ -176,6 +214,11 @@ export default function App() {
       condition: source === "AI" ? parsed.condition : "待确认",
       availabilityType: source === "AI" ? parsed.availabilityType : "待确认",
       tradeMode: parsed.tradeMode,
+      configItems: normalizeConfigItems(parsed.configItems, parsed.productCategory, {
+        gpuModel: parsed.gpuModel,
+        gpuCount: parsed.gpuCount,
+        condition: source === "AI" ? parsed.condition : undefined,
+      }),
       status: "UNVERIFIED",
       source,
       createdAt: new Date().toISOString(),
@@ -197,6 +240,7 @@ export default function App() {
       locationCity: stock.locationCity,
       priceAmount: stock.priceAmount,
       contactMethod: "站内联系",
+      configItems: stock.configItems,
       publishedAt: new Date().toISOString(),
     };
     saveMarket([post, ...marketPosts]);
@@ -213,10 +257,13 @@ export default function App() {
       title: `${tradeModeText(demand.tradeMode)}求购 ${productCategoryText(demand.productCategory)} ${demand.gpuModel}`,
       gpuModel: demand.gpuModel,
       quantity: toNumber(demand.quantity, 1),
-      quantityUnit: quantityUnitForCategory(demand.productCategory),
+      quantityUnit: demand.quantityUnit || quantityUnitForCategory(demand.productCategory),
       locationCity: demand.locationCity,
       priceAmount: toOptionalNumber(demand.budget),
       contactMethod: demand.contactMethod || "站内联系",
+      configItems: normalizeConfigItems(demand.configItems, demand.productCategory, {
+        gpuModel: demand.gpuModel,
+      }),
       publishedAt: new Date().toISOString(),
     };
     saveMarket([post, ...marketPosts]);
@@ -305,6 +352,7 @@ export default function App() {
                         ...manual,
                         productCategory: value as ProductCategory,
                         quantityUnit: quantityUnitForCategory(value as ProductCategory),
+                        configItems: defaultConfig(value as ProductCategory),
                       })
                     }
                   />
@@ -317,6 +365,10 @@ export default function App() {
                   <TextField label="城市" value={manual.locationCity} onChange={(value) => setManual({ ...manual, locationCity: value })} />
                   <TextField label="对外价格" value={manual.priceAmount} onChange={(value) => setManual({ ...manual, priceAmount: value })} />
                 </div>
+                <ConfigEditor
+                  items={manual.configItems}
+                  onChange={(configItems) => setManual({ ...manual, configItems })}
+                />
                 <button
                   type="button"
                   onClick={() => createStock("MANUAL")}
@@ -346,6 +398,7 @@ export default function App() {
                         {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
                         {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
                       </p>
+                      <ConfigSheet items={stock.configItems} />
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -389,6 +442,7 @@ export default function App() {
                         ...demand,
                         productCategory: value as ProductCategory,
                         quantityUnit: quantityUnitForCategory(value as ProductCategory),
+                        configItems: defaultConfig(value as ProductCategory),
                       })
                     }
                   />
@@ -399,6 +453,10 @@ export default function App() {
                   <TextField label="预算上限" value={demand.budget} onChange={(value) => setDemand({ ...demand, budget: value })} />
                   <TextField label="联系方式" value={demand.contactMethod} onChange={(value) => setDemand({ ...demand, contactMethod: value })} />
                 </div>
+                <ConfigEditor
+                  items={demand.configItems}
+                  onChange={(configItems) => setDemand({ ...demand, configItems })}
+                />
                 <button
                   type="button"
                   onClick={publishDemand}
@@ -447,6 +505,7 @@ export default function App() {
                           {post.gpuModel} / {post.quantity}{post.quantityUnit} / {post.locationCity}
                           {post.priceAmount ? ` / ${formatMoney(post.priceAmount)}` : ""}
                         </p>
+                        <ConfigSheet items={post.configItems} />
                         <p className="mt-1 text-xs text-slate-500">联系方式：{post.contactMethod}</p>
                       </div>
                       <button type="button" className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold">
@@ -552,6 +611,56 @@ function SelectField({
   );
 }
 
+function ConfigEditor({
+  items,
+  onChange,
+}: {
+  items: ConfigItem[];
+  onChange: (items: ConfigItem[]) => void;
+}) {
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-xs font-black text-slate-500">详细配置单</p>
+        <span className="text-xs font-semibold text-slate-400">按当前品类保存</span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {items.map((item, index) => (
+          <label key={`${item.label}-${index}`} className="block">
+            <span className="mb-1 block text-xs font-bold text-slate-500">{item.label}</span>
+            <input
+              value={item.value}
+              onChange={(event) =>
+                onChange(items.map((config, configIndex) => (configIndex === index ? { ...config, value: event.target.value } : config)))
+              }
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-500"
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ConfigSheet({ items }: { items: ConfigItem[] }) {
+  const visibleItems = items.filter((item) => item.value.trim());
+  if (!visibleItems.length) return null;
+
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3">
+      <p className="mb-1 text-xs font-black text-slate-500">详细配置单</p>
+      <dl className="grid gap-x-5 sm:grid-cols-2 xl:grid-cols-3">
+        {visibleItems.map((item, index) => (
+          <div key={`${item.label}-${index}`} className="grid grid-cols-[72px_1fr] gap-2 border-b border-slate-100 py-2 text-sm">
+            <dt className="font-bold text-slate-500">{item.label}</dt>
+            <dd className="break-words text-slate-800">{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 function Segmented({
   value,
   options,
@@ -603,6 +712,7 @@ function parseAiText(text: string) {
   const price = text.match(/价格?\s*(\d+(?:\.\d+)?)\s*(万)?/)?.[1] ?? "";
   const city = text.match(/(深圳|上海|北京|广州|杭州|香港|苏州|成都)/)?.[1] ?? "";
   const gpuCount = text.match(/(\d+)\s*卡/)?.[1] ?? "8";
+  const condition = text.includes("全新") ? "全新" : "待确认";
   return {
     productCategory,
     title: buildParsedTitle(productCategory, gpuModel, gpuCount, city),
@@ -612,9 +722,10 @@ function parseAiText(text: string) {
     quantityUnit: quantityMatch?.[2] ?? quantityUnitForCategory(productCategory),
     locationCity: city,
     priceAmount: price ? String(Number(price) * 10000) : "",
-    condition: text.includes("全新") ? "全新" : "待确认",
+    condition,
     availabilityType: text.includes("现货") ? "现货" : "待确认",
     tradeMode: parseTradeMode(text),
+    configItems: extractConfigItems(text, productCategory, gpuModel, gpuCount, condition),
   };
 }
 
@@ -629,6 +740,108 @@ const productCategoryOptions: Array<{ label: string; value: ProductCategory }> =
   { label: "显卡", value: "GPU_CARD" },
   { label: "内存", value: "MEMORY" },
 ];
+
+function defaultConfig(category: ProductCategory): ConfigItem[] {
+  const labels: Record<ProductCategory, string[]> = {
+    SERVER: ["品牌", "整机型号", "GPU", "GPU数量", "CPU", "内存", "硬盘", "网络", "电源", "质保"],
+    GPU_CARD: ["品牌", "型号", "显存", "接口", "成色", "质保"],
+    MEMORY: ["品牌", "容量", "类型", "频率", "ECC", "成色"],
+  };
+  return labels[category].map((label) => ({ label, value: "" }));
+}
+
+function extractConfigItems(
+  text: string,
+  category: ProductCategory,
+  gpuModel: string,
+  gpuCount: string,
+  condition: string,
+): ConfigItem[] {
+  const values: Record<string, string> = {};
+  const brand = captureBrand(text);
+
+  if (brand) values["品牌"] = brand;
+  if (category === "SERVER") {
+    values["GPU"] = gpuModel;
+    values["GPU数量"] = gpuCount ? `${gpuCount}卡` : "";
+    values["整机型号"] = captureAfter(text, ["整机型号", "服务器型号"]) || captureModelFamily(text);
+    values["CPU"] = captureAfter(text, ["CPU", "处理器"]);
+    values["内存"] = captureAfter(text, ["内存", "RAM"]) || captureFirst(text, /\d+\s*(?:TB|T|GB|G)\s*(?:DDR[45])?(?:\s*ECC)?/i);
+    values["硬盘"] = captureAfter(text, ["硬盘", "存储", "SSD", "NVMe"]);
+    values["网络"] = captureAfter(text, ["网络", "网卡"]) || captureFirst(text, /\d+\s*G\s*(?:IB|以太网|网卡)?/i);
+    values["电源"] = captureAfter(text, ["电源"]);
+    values["质保"] = captureAfter(text, ["质保", "保修"]);
+  }
+
+  if (category === "GPU_CARD") {
+    values["型号"] = gpuModel;
+    values["显存"] = captureAfter(text, ["显存", "内存"]) || captureFirst(text, /\d+\s*(?:GB|G)\s*(?:GDDR\d|HBM\d?)?/i);
+    values["接口"] = captureFirst(text, /\b(?:PCIe|PCIE|SXM|NVL)\b/i);
+    values["成色"] = condition === "待确认" ? "" : condition;
+    values["质保"] = captureAfter(text, ["质保", "保修"]);
+  }
+
+  if (category === "MEMORY") {
+    values["容量"] = captureAfter(text, ["容量"]) || captureFirst(text, /\d+\s*(?:GB|G|TB|T)/i);
+    values["类型"] = captureAfter(text, ["类型"]) || captureFirst(text, /DDR[45]\s*(?:RDIMM|LRDIMM|DIMM|ECC|REG)?/i);
+    values["频率"] = captureAfter(text, ["频率"]) || captureFirst(text, /\b\d{4,5}\s*(?:MHz|MT\/s|M)?\b/i);
+    values["ECC"] = /ECC|RDIMM|LRDIMM|REG/i.test(text) ? "ECC/REG" : "";
+    values["成色"] = condition === "待确认" ? "" : condition;
+  }
+
+  return defaultConfig(category).map((item) => ({ ...item, value: values[item.label] ?? "" }));
+}
+
+function normalizeConfigItems(
+  items: unknown,
+  category: ProductCategory,
+  seed: { gpuModel?: unknown; gpuCount?: unknown; condition?: unknown } = {},
+): ConfigItem[] {
+  const rawItems = Array.isArray(items)
+    ? items
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const record = item as Record<string, unknown>;
+          const label = asDisplayText(record.label);
+          if (!label) return null;
+          return { label, value: asDisplayText(record.value) };
+        })
+        .filter((item): item is ConfigItem => Boolean(item))
+    : [];
+  const seedValues = seedConfigValues(category, seed);
+  const rawByLabel = new Map(rawItems.map((item) => [item.label, item.value]));
+  const base = defaultConfig(category);
+  const merged = base.map((item) => {
+    const rawValue = rawByLabel.get(item.label);
+    const value = rawValue?.trim() ? rawValue : seedValues[item.label] ?? rawValue ?? item.value;
+    return { label: item.label, value };
+  });
+  const extra = rawItems.filter((item) => !base.some((baseItem) => baseItem.label === item.label));
+  return [...merged, ...extra];
+}
+
+function seedConfigValues(
+  category: ProductCategory,
+  seed: { gpuModel?: unknown; gpuCount?: unknown; condition?: unknown },
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  const model = asDisplayText(seed.gpuModel);
+  const count = asDisplayText(seed.gpuCount);
+  const condition = asDisplayText(seed.condition);
+
+  if (category === "SERVER") {
+    if (model) values["GPU"] = model;
+    if (count) values["GPU数量"] = `${count}卡`;
+  }
+  if (category === "GPU_CARD") {
+    if (model) values["型号"] = model;
+    if (condition && condition !== "待确认") values["成色"] = condition;
+  }
+  if (category === "MEMORY") {
+    if (model) values["类型"] = model;
+  }
+  return values;
+}
 
 function parseProductCategory(text: string): ProductCategory {
   if (/内存|DDR\d?|RDIMM|LRDIMM|DIMM|ECC|REG/i.test(text)) return "MEMORY";
@@ -691,6 +904,40 @@ function stockSpecText(stock: StockItem): string {
   return stock.gpuModel;
 }
 
+function captureAfter(text: string, labels: string[]): string {
+  for (const label of labels) {
+    const match = text.match(new RegExp(`${label}\\s*[:：]?\\s*([^,，;；\\n]+)`, "i"));
+    if (match?.[1]) return cleanConfigValue(match[1]);
+  }
+  return "";
+}
+
+function captureFirst(text: string, pattern: RegExp): string {
+  return cleanConfigValue(text.match(pattern)?.[0] ?? "");
+}
+
+function captureBrand(text: string): string {
+  return (
+    captureFirst(
+      text,
+      /Supermicro|超微|Dell|戴尔|浪潮|HPE|新华三|联想|Lenovo|NVIDIA|英伟达|ASUS|华硕|Gigabyte|技嘉|MSI|微星|Samsung|三星|SK\s?Hynix|海力士|Micron|美光|Kingston|金士顿/i,
+    ) || ""
+  );
+}
+
+function captureModelFamily(text: string): string {
+  return captureFirst(text, /\b(?:HGX|DGX|SuperServer|PowerEdge|ThinkSystem)[A-Za-z0-9\s-]*/i);
+}
+
+function cleanConfigValue(value: string): string {
+  return value.replace(/^(是|为|配置|含|带)\s*/, "").trim();
+}
+
+function asDisplayText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
 function load<T>(key: string, fallback: T): T {
   try {
     const value = localStorage.getItem(key);
@@ -701,21 +948,35 @@ function load<T>(key: string, fallback: T): T {
 }
 
 function normalizeStocks(items: StockItem[]): StockItem[] {
-  return items.map((item) => ({
-    ...item,
-    productCategory: item.productCategory ?? parseProductCategory(`${item.title} ${item.gpuModel}`),
-    tradeMode: item.tradeMode ?? parseTradeMode(`${item.title} ${item.availabilityType ?? ""}`),
-    quantityUnit: item.quantityUnit ?? quantityUnitForCategory(item.productCategory ?? "SERVER"),
-  }));
+  return items.map((item) => {
+    const productCategory = item.productCategory ?? parseProductCategory(`${item.title} ${item.gpuModel}`);
+    return {
+      ...item,
+      productCategory,
+      tradeMode: item.tradeMode ?? parseTradeMode(`${item.title} ${item.availabilityType ?? ""}`),
+      quantityUnit: item.quantityUnit ?? quantityUnitForCategory(productCategory),
+      configItems: normalizeConfigItems(item.configItems, productCategory, {
+        gpuModel: item.gpuModel,
+        gpuCount: item.gpuCount,
+        condition: item.condition,
+      }),
+    };
+  });
 }
 
 function normalizeMarketPosts(items: MarketPost[]): MarketPost[] {
-  return items.map((item) => ({
-    ...item,
-    productCategory: item.productCategory ?? parseProductCategory(`${item.title} ${item.gpuModel}`),
-    tradeMode: item.tradeMode ?? parseTradeMode(item.title),
-    quantityUnit: item.quantityUnit ?? quantityUnitForCategory(item.productCategory ?? "SERVER"),
-  }));
+  return items.map((item) => {
+    const productCategory = item.productCategory ?? parseProductCategory(`${item.title} ${item.gpuModel}`);
+    return {
+      ...item,
+      productCategory,
+      tradeMode: item.tradeMode ?? parseTradeMode(item.title),
+      quantityUnit: item.quantityUnit ?? quantityUnitForCategory(productCategory),
+      configItems: normalizeConfigItems(item.configItems, productCategory, {
+        gpuModel: item.gpuModel,
+      }),
+    };
+  });
 }
 
 function toNumber(value: unknown, fallback: number): number {

@@ -17,7 +17,7 @@ export class MarketplaceService {
       `
       SELECT id, trade_mode, post_type, title, summary, product_category, gpu_model, gpu_count,
              quantity, quantity_unit, location_city, price_amount, currency,
-             contact_method, published_at
+             contact_method, snapshot, published_at
       FROM marketplace_posts
       WHERE deleted_at IS NULL
         AND status = 'PUBLISHED'
@@ -76,6 +76,11 @@ export class MarketplaceService {
         availabilityType: goods.availability_type,
         deliveryDaysMin: goods.delivery_days_min,
         deliveryDaysMax: goods.delivery_days_max,
+        cpuSpec: goods.cpu_spec,
+        memorySpec: goods.memory_spec,
+        storageSpec: goods.storage_spec,
+        networkSpec: goods.network_spec,
+        normalizedSpec: goods.normalized_spec,
       },
     });
   }
@@ -112,7 +117,13 @@ export class MarketplaceService {
       priceAmount: asNumber(demand.budget_max),
       currency: asString(demand.currency) ?? 'CNY',
       contactMethod: input.contactMethod,
-      snapshot: { priority: demand.priority, conditionRequirement: demand.condition_requirement },
+      snapshot: {
+        priority: demand.priority,
+        brandRequirements: demand.brand_requirements,
+        requiredSpec: demand.required_spec,
+        conditionRequirement: demand.condition_requirement,
+        warrantyRequirement: demand.warranty_requirement,
+      },
     });
   }
 
@@ -141,7 +152,7 @@ export class MarketplaceService {
       priceAmount: asNumber(input.priceAmount ?? input.price_amount),
       currency: asString(input.currency) ?? 'CNY',
       contactMethod: asString(input.contactMethod ?? input.contact_method),
-      snapshot: input,
+      snapshot: buildManualSnapshot(input),
     });
   }
 
@@ -235,4 +246,16 @@ function asNumber(value: unknown): number | null {
 
 function buildGoodsTitle(goods: Record<string, unknown>): string {
   return [goods.server_brand, goods.server_model, goods.gpu_model].filter(Boolean).join(' ') || 'GPU 货源';
+}
+
+function buildManualSnapshot(input: Record<string, unknown>): Record<string, unknown> {
+  const { snapshot: nestedSnapshot, ...rest } = input;
+  return {
+    ...rest,
+    ...asRecord(nestedSnapshot),
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
