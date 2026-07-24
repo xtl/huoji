@@ -11,9 +11,10 @@ export class MarketplaceController {
   list(
     @Query('type') type?: 'GOODS' | 'DEMAND',
     @Query('mode') mode?: 'SPOT' | 'FUTURES' | 'RENTAL',
+    @Query('productCategory') productCategory?: string,
     @Query('gpuModel') gpuModel?: string,
   ) {
-    return this.marketplace.list({ type, mode, gpuModel });
+    return this.marketplace.list({ type, mode, productCategory, gpuModel });
   }
 
   @Post('goods/:goodsId/publish')

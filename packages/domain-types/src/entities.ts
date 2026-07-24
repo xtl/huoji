@@ -60,7 +60,7 @@ export interface GoodsOffer extends BaseEntity, SensitiveEntityFields {
   title?: string;
   recordType: GoodsRecordType;
   direction: 'SELL' | 'SUPPLY';
-  productCategory: 'SERVER' | 'GPU' | 'BASEBOARD' | 'PART';
+  productCategory: 'SERVER' | 'GPU' | 'GPU_CARD' | 'MEMORY' | 'BASEBOARD' | 'PART';
   gpuModel?: string;
   gpuFormFactor?: 'SXM' | 'PCIE' | 'NVL' | 'HGX';
   gpuCount?: number;

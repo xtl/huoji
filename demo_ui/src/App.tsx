@@ -15,13 +15,16 @@ import {
 type TabKey = "input" | "stock" | "market";
 type MarketType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
+type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY";
 
 interface StockItem {
   id: string;
+  productCategory: ProductCategory;
   title: string;
   gpuModel: string;
   gpuCount: number;
   quantity: number;
+  quantityUnit: string;
   locationCity: string;
   priceAmount?: number;
   condition?: string;
@@ -34,11 +37,13 @@ interface StockItem {
 
 interface MarketPost {
   id: string;
+  productCategory: ProductCategory;
   tradeMode: TradeMode;
   postType: MarketType;
   title: string;
   gpuModel: string;
   quantity: number;
+  quantityUnit: string;
   locationCity: string;
   priceAmount?: number;
   contactMethod: string;
@@ -48,10 +53,12 @@ interface MarketPost {
 const initialStocks: StockItem[] = [
   {
     id: "stock-demo-1",
+    productCategory: "SERVER",
     title: "Supermicro H100 8卡整机",
     gpuModel: "H100",
     gpuCount: 8,
     quantity: 2,
+    quantityUnit: "台",
     locationCity: "深圳",
     priceAmount: 1200000,
     condition: "全新",
@@ -66,11 +73,13 @@ const initialStocks: StockItem[] = [
 const initialMarket: MarketPost[] = [
   {
     id: "market-demo-1",
+    productCategory: "SERVER",
     tradeMode: "SPOT",
     postType: "DEMAND",
     title: "求购 H200 8卡服务器 4台",
     gpuModel: "H200",
     quantity: 4,
+    quantityUnit: "台",
     locationCity: "上海",
     priceAmount: 0,
     contactMethod: "站内联系",
@@ -90,19 +99,24 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [marketModeFilter, setMarketModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [marketTypeFilter, setMarketTypeFilter] = useState<MarketType | "ALL">("ALL");
+  const [marketCategoryFilter, setMarketCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
   const [manual, setManual] = useState({
+    productCategory: "SERVER" as ProductCategory,
     tradeMode: "SPOT" as TradeMode,
     gpuModel: "H100",
     gpuCount: "8",
     quantity: "1",
+    quantityUnit: "台",
     locationCity: "深圳",
     priceAmount: "1200000",
     title: "",
   });
   const [demand, setDemand] = useState({
+    productCategory: "SERVER" as ProductCategory,
     tradeMode: "SPOT" as TradeMode,
     gpuModel: "H200",
     quantity: "4",
+    quantityUnit: "台",
     locationCity: "上海",
     budget: "",
     contactMethod: "站内联系",
@@ -123,12 +137,19 @@ export default function App() {
     return marketPosts.filter((post) => {
       if (marketModeFilter !== "ALL" && post.tradeMode !== marketModeFilter) return false;
       if (marketTypeFilter !== "ALL" && post.postType !== marketTypeFilter) return false;
+      if (marketCategoryFilter !== "ALL" && post.productCategory !== marketCategoryFilter) return false;
       if (!q) return true;
-      return [post.title, post.gpuModel, post.locationCity, post.postType, post.tradeMode].some((value) =>
-        String(value).toLowerCase().includes(q),
-      );
+      return [
+        post.title,
+        post.gpuModel,
+        post.locationCity,
+        post.postType,
+        post.tradeMode,
+        post.productCategory,
+        productCategoryText(post.productCategory),
+      ].some((value) => String(value).toLowerCase().includes(q));
     });
-  }, [query, marketModeFilter, marketPosts, marketTypeFilter]);
+  }, [query, marketCategoryFilter, marketModeFilter, marketPosts, marketTypeFilter]);
 
   function saveStocks(next: StockItem[]) {
     setStocks(next);
@@ -144,10 +165,12 @@ export default function App() {
     const parsed = source === "AI" ? parseAiText(aiText) : manual;
     const stock: StockItem = {
       id: `stock-${Date.now()}`,
-      title: parsed.title || `${parsed.gpuModel || "GPU"} ${parsed.gpuCount || "8"}卡货源`,
+      productCategory: parsed.productCategory,
+      title: parsed.title || `${productCategoryText(parsed.productCategory)} ${parsed.gpuModel || "待确认"}`,
       gpuModel: parsed.gpuModel || "待确认",
       gpuCount: toNumber(parsed.gpuCount, 8),
       quantity: toNumber(parsed.quantity, 1),
+      quantityUnit: parsed.quantityUnit || quantityUnitForCategory(parsed.productCategory),
       locationCity: parsed.locationCity || "待确认",
       priceAmount: toOptionalNumber(parsed.priceAmount),
       condition: source === "AI" ? parsed.condition : "待确认",
@@ -164,11 +187,13 @@ export default function App() {
   function publishStock(stock: StockItem) {
     const post: MarketPost = {
       id: `market-${Date.now()}`,
+      productCategory: stock.productCategory,
       tradeMode: stock.tradeMode,
       postType: "GOODS",
       title: stock.title,
       gpuModel: stock.gpuModel,
       quantity: stock.quantity,
+      quantityUnit: stock.quantityUnit,
       locationCity: stock.locationCity,
       priceAmount: stock.priceAmount,
       contactMethod: "站内联系",
@@ -182,11 +207,13 @@ export default function App() {
   function publishDemand() {
     const post: MarketPost = {
       id: `market-${Date.now()}`,
+      productCategory: demand.productCategory,
       tradeMode: demand.tradeMode,
       postType: "DEMAND",
-      title: `${tradeModeText(demand.tradeMode)}求购 ${demand.gpuModel} ${demand.quantity}台`,
+      title: `${tradeModeText(demand.tradeMode)}求购 ${productCategoryText(demand.productCategory)} ${demand.gpuModel}`,
       gpuModel: demand.gpuModel,
       quantity: toNumber(demand.quantity, 1),
+      quantityUnit: quantityUnitForCategory(demand.productCategory),
       locationCity: demand.locationCity,
       priceAmount: toOptionalNumber(demand.budget),
       contactMethod: demand.contactMethod || "站内联系",
@@ -206,7 +233,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-base font-black leading-tight">货记</h1>
-              <p className="text-xs text-slate-500">GPU 货源记录与供需广场</p>
+              <p className="text-xs text-slate-500">服务器、显卡、内存供需广场</p>
             </div>
           </div>
           <div className="hidden items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 md:flex">
@@ -264,14 +291,29 @@ export default function App() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <TextField label="标题" value={manual.title} onChange={(value) => setManual({ ...manual, title: value })} />
                   <SelectField
-                    label="发布大类"
+                    label="交易大类"
                     value={manual.tradeMode}
                     options={tradeModeOptions}
                     onChange={(value) => setManual({ ...manual, tradeMode: value as TradeMode })}
                   />
-                  <TextField label="GPU 型号" value={manual.gpuModel} onChange={(value) => setManual({ ...manual, gpuModel: value })} />
-                  <TextField label="卡数" value={manual.gpuCount} onChange={(value) => setManual({ ...manual, gpuCount: value })} />
+                  <SelectField
+                    label="品类"
+                    value={manual.productCategory}
+                    options={productCategoryOptions}
+                    onChange={(value) =>
+                      setManual({
+                        ...manual,
+                        productCategory: value as ProductCategory,
+                        quantityUnit: quantityUnitForCategory(value as ProductCategory),
+                      })
+                    }
+                  />
+                  <TextField label="型号 / 规格" value={manual.gpuModel} onChange={(value) => setManual({ ...manual, gpuModel: value })} />
+                  {manual.productCategory !== "MEMORY" && (
+                    <TextField label="卡数" value={manual.gpuCount} onChange={(value) => setManual({ ...manual, gpuCount: value })} />
+                  )}
                   <TextField label="数量" value={manual.quantity} onChange={(value) => setManual({ ...manual, quantity: value })} />
+                  <TextField label="单位" value={manual.quantityUnit} onChange={(value) => setManual({ ...manual, quantityUnit: value })} />
                   <TextField label="城市" value={manual.locationCity} onChange={(value) => setManual({ ...manual, locationCity: value })} />
                   <TextField label="对外价格" value={manual.priceAmount} onChange={(value) => setManual({ ...manual, priceAmount: value })} />
                 </div>
@@ -295,12 +337,13 @@ export default function App() {
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h2 className="font-black">{stock.title}</h2>
+                        <Badge>{productCategoryText(stock.productCategory)}</Badge>
                         <Badge>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
                         <Badge>{tradeModeText(stock.tradeMode)}</Badge>
                         <Badge>{statusText(stock.status)}</Badge>
                       </div>
                       <p className="mt-2 text-sm text-slate-600">
-                        {stock.gpuModel} / {stock.gpuCount}卡 / {stock.quantity}台 / {stock.locationCity}
+                        {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
                         {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
                       </p>
                     </div>
@@ -332,13 +375,26 @@ export default function App() {
               <Panel title="发布需求" icon={<Megaphone />}>
                 <div className="grid gap-3">
                   <SelectField
-                    label="发布大类"
+                    label="交易大类"
                     value={demand.tradeMode}
                     options={tradeModeOptions}
                     onChange={(value) => setDemand({ ...demand, tradeMode: value as TradeMode })}
                   />
-                  <TextField label="GPU 型号" value={demand.gpuModel} onChange={(value) => setDemand({ ...demand, gpuModel: value })} />
+                  <SelectField
+                    label="品类"
+                    value={demand.productCategory}
+                    options={productCategoryOptions}
+                    onChange={(value) =>
+                      setDemand({
+                        ...demand,
+                        productCategory: value as ProductCategory,
+                        quantityUnit: quantityUnitForCategory(value as ProductCategory),
+                      })
+                    }
+                  />
+                  <TextField label="型号 / 规格" value={demand.gpuModel} onChange={(value) => setDemand({ ...demand, gpuModel: value })} />
                   <TextField label="数量" value={demand.quantity} onChange={(value) => setDemand({ ...demand, quantity: value })} />
+                  <TextField label="单位" value={demand.quantityUnit} onChange={(value) => setDemand({ ...demand, quantityUnit: value })} />
                   <TextField label="城市" value={demand.locationCity} onChange={(value) => setDemand({ ...demand, locationCity: value })} />
                   <TextField label="预算上限" value={demand.budget} onChange={(value) => setDemand({ ...demand, budget: value })} />
                   <TextField label="联系方式" value={demand.contactMethod} onChange={(value) => setDemand({ ...demand, contactMethod: value })} />
@@ -355,7 +411,12 @@ export default function App() {
 
               <div className="space-y-3">
                 <div className="rounded-lg border border-slate-200 bg-white p-3">
-                  <div className="grid gap-2 md:grid-cols-2">
+                  <div className="grid gap-2 xl:grid-cols-3">
+                    <Segmented
+                      value={marketCategoryFilter}
+                      options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
+                      onChange={(value) => setMarketCategoryFilter(value as ProductCategory | "ALL")}
+                    />
                     <Segmented
                       value={marketModeFilter}
                       options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
@@ -378,11 +439,12 @@ export default function App() {
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge>{tradeModeText(post.tradeMode)}</Badge>
+                          <Badge>{productCategoryText(post.productCategory)}</Badge>
                           <Badge>{post.postType === "GOODS" ? "供给" : "需求"}</Badge>
                           <h2 className="font-black">{post.title}</h2>
                         </div>
                         <p className="mt-2 text-sm text-slate-600">
-                          {post.gpuModel} / {post.quantity}台 / {post.locationCity}
+                          {post.gpuModel} / {post.quantity}{post.quantityUnit} / {post.locationCity}
                           {post.priceAmount ? ` / ${formatMoney(post.priceAmount)}` : ""}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">联系方式：{post.contactMethod}</p>
@@ -534,16 +596,20 @@ function Badge({ children }: { children: React.ReactNode }) {
 }
 
 function parseAiText(text: string) {
-  const gpuModel = text.match(/\b(H100|H200|B200|B300|A100|A800|H800|L40S)\b/i)?.[1]?.toUpperCase() ?? "";
-  const quantity = text.match(/(\d+(?:\.\d+)?)\s*(台|套|块)/)?.[1] ?? "1";
+  const productCategory = parseProductCategory(text);
+  const gpuModel = parseModelText(text, productCategory);
+  const quantityMatch = text.match(/(\d+(?:\.\d+)?)\s*(台|套|块|张|条|根|片)/);
+  const quantity = quantityMatch?.[1] ?? "1";
   const price = text.match(/价格?\s*(\d+(?:\.\d+)?)\s*(万)?/)?.[1] ?? "";
   const city = text.match(/(深圳|上海|北京|广州|杭州|香港|苏州|成都)/)?.[1] ?? "";
   const gpuCount = text.match(/(\d+)\s*卡/)?.[1] ?? "8";
   return {
-    title: `${city || ""}${gpuModel || "GPU"} ${gpuCount}卡货源`.trim(),
+    productCategory,
+    title: buildParsedTitle(productCategory, gpuModel, gpuCount, city),
     gpuModel,
     gpuCount,
     quantity,
+    quantityUnit: quantityMatch?.[2] ?? quantityUnitForCategory(productCategory),
     locationCity: city,
     priceAmount: price ? String(Number(price) * 10000) : "",
     condition: text.includes("全新") ? "全新" : "待确认",
@@ -557,6 +623,35 @@ const tradeModeOptions: Array<{ label: string; value: TradeMode }> = [
   { label: "期货", value: "FUTURES" },
   { label: "租赁", value: "RENTAL" },
 ];
+
+const productCategoryOptions: Array<{ label: string; value: ProductCategory }> = [
+  { label: "服务器", value: "SERVER" },
+  { label: "显卡", value: "GPU_CARD" },
+  { label: "内存", value: "MEMORY" },
+];
+
+function parseProductCategory(text: string): ProductCategory {
+  if (/内存|DDR\d?|RDIMM|LRDIMM|DIMM|ECC|REG/i.test(text)) return "MEMORY";
+  if (/显卡|GPU卡|PCIe卡|PCIE卡|RTX\s?\d{4}|4090|5090|L40S/i.test(text)) return "GPU_CARD";
+  return "SERVER";
+}
+
+function parseModelText(text: string, category: ProductCategory): string {
+  if (category === "MEMORY") {
+    return (
+      text.match(/(DDR[45]\s*(?:\d+G|GB)?\s*(?:RDIMM|LRDIMM|DIMM|ECC|REG)?)/i)?.[1]?.trim() ??
+      text.match(/(\d+\s*(?:G|GB)\s*(?:RDIMM|LRDIMM|DIMM|ECC|REG)?)/i)?.[1]?.trim() ??
+      "内存"
+    );
+  }
+  return text.match(/\b(H100|H200|B200|B300|A100|A800|H800|L40S|RTX\s?4090|RTX\s?5090)\b/i)?.[1]?.toUpperCase() ?? "";
+}
+
+function buildParsedTitle(category: ProductCategory, model: string, gpuCount: string, city: string): string {
+  const place = city || "";
+  if (category === "SERVER") return `${place}${model || "GPU"} ${gpuCount || "8"}卡服务器`.trim();
+  return `${place}${productCategoryText(category)} ${model || "待确认"}`.trim();
+}
 
 function parseTradeMode(text: string): TradeMode {
   if (/租赁|出租|租用|月租|年租/.test(text)) return "RENTAL";
@@ -573,6 +668,29 @@ function tradeModeText(mode: TradeMode): string {
   return map[mode];
 }
 
+function productCategoryText(category: ProductCategory): string {
+  const map: Record<ProductCategory, string> = {
+    SERVER: "服务器",
+    GPU_CARD: "显卡",
+    MEMORY: "内存",
+  };
+  return map[category];
+}
+
+function quantityUnitForCategory(category: ProductCategory): string {
+  const map: Record<ProductCategory, string> = {
+    SERVER: "台",
+    GPU_CARD: "张",
+    MEMORY: "条",
+  };
+  return map[category];
+}
+
+function stockSpecText(stock: StockItem): string {
+  if (stock.productCategory === "SERVER") return `${stock.gpuModel} / ${stock.gpuCount}卡`;
+  return stock.gpuModel;
+}
+
 function load<T>(key: string, fallback: T): T {
   try {
     const value = localStorage.getItem(key);
@@ -585,14 +703,18 @@ function load<T>(key: string, fallback: T): T {
 function normalizeStocks(items: StockItem[]): StockItem[] {
   return items.map((item) => ({
     ...item,
+    productCategory: item.productCategory ?? parseProductCategory(`${item.title} ${item.gpuModel}`),
     tradeMode: item.tradeMode ?? parseTradeMode(`${item.title} ${item.availabilityType ?? ""}`),
+    quantityUnit: item.quantityUnit ?? quantityUnitForCategory(item.productCategory ?? "SERVER"),
   }));
 }
 
 function normalizeMarketPosts(items: MarketPost[]): MarketPost[] {
   return items.map((item) => ({
     ...item,
+    productCategory: item.productCategory ?? parseProductCategory(`${item.title} ${item.gpuModel}`),
     tradeMode: item.tradeMode ?? parseTradeMode(item.title),
+    quantityUnit: item.quantityUnit ?? quantityUnitForCategory(item.productCategory ?? "SERVER"),
   }));
 }
 

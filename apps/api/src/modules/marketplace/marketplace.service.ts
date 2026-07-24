@@ -10,6 +10,7 @@ export class MarketplaceService {
   async list(filter: {
     type?: 'GOODS' | 'DEMAND';
     mode?: TradeMode;
+    productCategory?: string;
     gpuModel?: string;
   }): Promise<Array<Record<string, unknown>>> {
     const result = await this.db.query(
@@ -22,11 +23,17 @@ export class MarketplaceService {
         AND status = 'PUBLISHED'
         AND ($1::text IS NULL OR post_type = $1)
         AND ($2::text IS NULL OR trade_mode = $2)
-        AND ($3::text IS NULL OR gpu_model ILIKE '%' || $3 || '%')
+        AND ($3::text IS NULL OR product_category = $3)
+        AND ($4::text IS NULL OR gpu_model ILIKE '%' || $4 || '%')
       ORDER BY published_at DESC
       LIMIT 100
       `,
-      [filter.type ?? null, normalizeTradeMode(filter.mode), filter.gpuModel ?? null],
+      [
+        filter.type ?? null,
+        normalizeTradeMode(filter.mode),
+        asString(filter.productCategory),
+        filter.gpuModel ?? null,
+      ],
     );
     return result.rows.map((row) => omitNullish(camelizeRow(row)));
   }
