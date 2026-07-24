@@ -14,6 +14,7 @@ import {
 
 type TabKey = "input" | "stock" | "market";
 type MarketType = "GOODS" | "DEMAND";
+type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 
 interface StockItem {
   id: string;
@@ -25,6 +26,7 @@ interface StockItem {
   priceAmount?: number;
   condition?: string;
   availabilityType?: string;
+  tradeMode: TradeMode;
   status: "UNVERIFIED" | "VERIFIED" | "SELLABLE" | "EXPIRED" | "SOLD_OUT";
   source: "AI" | "MANUAL";
   createdAt: string;
@@ -32,6 +34,7 @@ interface StockItem {
 
 interface MarketPost {
   id: string;
+  tradeMode: TradeMode;
   postType: MarketType;
   title: string;
   gpuModel: string;
@@ -53,6 +56,7 @@ const initialStocks: StockItem[] = [
     priceAmount: 1200000,
     condition: "全新",
     availabilityType: "现货",
+    tradeMode: "SPOT",
     status: "SELLABLE",
     source: "AI",
     createdAt: new Date().toISOString(),
@@ -62,6 +66,7 @@ const initialStocks: StockItem[] = [
 const initialMarket: MarketPost[] = [
   {
     id: "market-demo-1",
+    tradeMode: "SPOT",
     postType: "DEMAND",
     title: "求购 H200 8卡服务器 4台",
     gpuModel: "H200",
@@ -75,11 +80,18 @@ const initialMarket: MarketPost[] = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("input");
-  const [stocks, setStocks] = useState<StockItem[]>(() => load("huoji_web_stocks", initialStocks));
-  const [marketPosts, setMarketPosts] = useState<MarketPost[]>(() => load("huoji_web_market", initialMarket));
+  const [stocks, setStocks] = useState<StockItem[]>(() =>
+    normalizeStocks(load("huoji_web_stocks", initialStocks)),
+  );
+  const [marketPosts, setMarketPosts] = useState<MarketPost[]>(() =>
+    normalizeMarketPosts(load("huoji_web_market", initialMarket)),
+  );
   const [aiText, setAiText] = useState("深圳现货 H100 8卡服务器 2台 全新 价格120万");
   const [query, setQuery] = useState("");
+  const [marketModeFilter, setMarketModeFilter] = useState<TradeMode | "ALL">("ALL");
+  const [marketTypeFilter, setMarketTypeFilter] = useState<MarketType | "ALL">("ALL");
   const [manual, setManual] = useState({
+    tradeMode: "SPOT" as TradeMode,
     gpuModel: "H100",
     gpuCount: "8",
     quantity: "1",
@@ -88,6 +100,7 @@ export default function App() {
     title: "",
   });
   const [demand, setDemand] = useState({
+    tradeMode: "SPOT" as TradeMode,
     gpuModel: "H200",
     quantity: "4",
     locationCity: "上海",
@@ -107,13 +120,15 @@ export default function App() {
 
   const filteredMarket = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return marketPosts;
-    return marketPosts.filter((post) =>
-      [post.title, post.gpuModel, post.locationCity, post.postType].some((value) =>
+    return marketPosts.filter((post) => {
+      if (marketModeFilter !== "ALL" && post.tradeMode !== marketModeFilter) return false;
+      if (marketTypeFilter !== "ALL" && post.postType !== marketTypeFilter) return false;
+      if (!q) return true;
+      return [post.title, post.gpuModel, post.locationCity, post.postType, post.tradeMode].some((value) =>
         String(value).toLowerCase().includes(q),
-      ),
-    );
-  }, [query, marketPosts]);
+      );
+    });
+  }, [query, marketModeFilter, marketPosts, marketTypeFilter]);
 
   function saveStocks(next: StockItem[]) {
     setStocks(next);
@@ -137,6 +152,7 @@ export default function App() {
       priceAmount: toOptionalNumber(parsed.priceAmount),
       condition: source === "AI" ? parsed.condition : "待确认",
       availabilityType: source === "AI" ? parsed.availabilityType : "待确认",
+      tradeMode: parsed.tradeMode,
       status: "UNVERIFIED",
       source,
       createdAt: new Date().toISOString(),
@@ -148,6 +164,7 @@ export default function App() {
   function publishStock(stock: StockItem) {
     const post: MarketPost = {
       id: `market-${Date.now()}`,
+      tradeMode: stock.tradeMode,
       postType: "GOODS",
       title: stock.title,
       gpuModel: stock.gpuModel,
@@ -165,8 +182,9 @@ export default function App() {
   function publishDemand() {
     const post: MarketPost = {
       id: `market-${Date.now()}`,
+      tradeMode: demand.tradeMode,
       postType: "DEMAND",
-      title: `求购 ${demand.gpuModel} ${demand.quantity}台`,
+      title: `${tradeModeText(demand.tradeMode)}求购 ${demand.gpuModel} ${demand.quantity}台`,
       gpuModel: demand.gpuModel,
       quantity: toNumber(demand.quantity, 1),
       locationCity: demand.locationCity,
@@ -208,7 +226,7 @@ export default function App() {
         <section className="space-y-5">
           <div className="grid gap-3 md:grid-cols-3">
             <Metric label="我的货源" value={`${stocks.length}`} />
-            <Metric label="广场货源" value={`${marketPosts.filter((post) => post.postType === "GOODS").length}`} />
+            <Metric label="广场供应" value={`${marketPosts.filter((post) => post.postType === "GOODS").length}`} />
             <Metric label="广场需求" value={`${marketPosts.filter((post) => post.postType === "DEMAND").length}`} />
           </div>
 
@@ -245,6 +263,12 @@ export default function App() {
               <Panel title="手工录入货源" icon={<Plus />}>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <TextField label="标题" value={manual.title} onChange={(value) => setManual({ ...manual, title: value })} />
+                  <SelectField
+                    label="发布大类"
+                    value={manual.tradeMode}
+                    options={tradeModeOptions}
+                    onChange={(value) => setManual({ ...manual, tradeMode: value as TradeMode })}
+                  />
                   <TextField label="GPU 型号" value={manual.gpuModel} onChange={(value) => setManual({ ...manual, gpuModel: value })} />
                   <TextField label="卡数" value={manual.gpuCount} onChange={(value) => setManual({ ...manual, gpuCount: value })} />
                   <TextField label="数量" value={manual.quantity} onChange={(value) => setManual({ ...manual, quantity: value })} />
@@ -272,6 +296,7 @@ export default function App() {
                       <div className="flex flex-wrap items-center gap-2">
                         <h2 className="font-black">{stock.title}</h2>
                         <Badge>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
+                        <Badge>{tradeModeText(stock.tradeMode)}</Badge>
                         <Badge>{statusText(stock.status)}</Badge>
                       </div>
                       <p className="mt-2 text-sm text-slate-600">
@@ -306,6 +331,12 @@ export default function App() {
             <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
               <Panel title="发布需求" icon={<Megaphone />}>
                 <div className="grid gap-3">
+                  <SelectField
+                    label="发布大类"
+                    value={demand.tradeMode}
+                    options={tradeModeOptions}
+                    onChange={(value) => setDemand({ ...demand, tradeMode: value as TradeMode })}
+                  />
                   <TextField label="GPU 型号" value={demand.gpuModel} onChange={(value) => setDemand({ ...demand, gpuModel: value })} />
                   <TextField label="数量" value={demand.quantity} onChange={(value) => setDemand({ ...demand, quantity: value })} />
                   <TextField label="城市" value={demand.locationCity} onChange={(value) => setDemand({ ...demand, locationCity: value })} />
@@ -323,11 +354,30 @@ export default function App() {
               </Panel>
 
               <div className="space-y-3">
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <Segmented
+                      value={marketModeFilter}
+                      options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
+                      onChange={(value) => setMarketModeFilter(value as TradeMode | "ALL")}
+                    />
+                    <Segmented
+                      value={marketTypeFilter}
+                      options={[
+                        { label: "全部类型", value: "ALL" },
+                        { label: "供应", value: "GOODS" },
+                        { label: "需求", value: "DEMAND" },
+                      ]}
+                      onChange={(value) => setMarketTypeFilter(value as MarketType | "ALL")}
+                    />
+                  </div>
+                </div>
                 {filteredMarket.map((post) => (
                   <article key={post.id} className="rounded-lg border border-slate-200 bg-white p-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
+                          <Badge>{tradeModeText(post.tradeMode)}</Badge>
                           <Badge>{post.postType === "GOODS" ? "供给" : "需求"}</Badge>
                           <h2 className="font-black">{post.title}</h2>
                         </div>
@@ -411,6 +461,65 @@ function TextField({ label, value, onChange }: { label: string; value: string; o
   );
 }
 
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ label: string; value: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-bold text-slate-500">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-500"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function Segmented({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: Array<{ label: string; value: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div
+      className="grid gap-1 rounded-lg bg-slate-100 p-1"
+      style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+    >
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={`rounded-md px-2 py-2 text-xs font-black ${
+            value === option.value ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -439,7 +548,29 @@ function parseAiText(text: string) {
     priceAmount: price ? String(Number(price) * 10000) : "",
     condition: text.includes("全新") ? "全新" : "待确认",
     availabilityType: text.includes("现货") ? "现货" : "待确认",
+    tradeMode: parseTradeMode(text),
   };
+}
+
+const tradeModeOptions: Array<{ label: string; value: TradeMode }> = [
+  { label: "现货", value: "SPOT" },
+  { label: "期货", value: "FUTURES" },
+  { label: "租赁", value: "RENTAL" },
+];
+
+function parseTradeMode(text: string): TradeMode {
+  if (/租赁|出租|租用|月租|年租/.test(text)) return "RENTAL";
+  if (/期货|预订|预售|交期|排产/.test(text)) return "FUTURES";
+  return "SPOT";
+}
+
+function tradeModeText(mode: TradeMode): string {
+  const map: Record<TradeMode, string> = {
+    SPOT: "现货",
+    FUTURES: "期货",
+    RENTAL: "租赁",
+  };
+  return map[mode];
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -449,6 +580,20 @@ function load<T>(key: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function normalizeStocks(items: StockItem[]): StockItem[] {
+  return items.map((item) => ({
+    ...item,
+    tradeMode: item.tradeMode ?? parseTradeMode(`${item.title} ${item.availabilityType ?? ""}`),
+  }));
+}
+
+function normalizeMarketPosts(items: MarketPost[]): MarketPost[] {
+  return items.map((item) => ({
+    ...item,
+    tradeMode: item.tradeMode ?? parseTradeMode(item.title),
+  }));
 }
 
 function toNumber(value: unknown, fallback: number): number {

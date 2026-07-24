@@ -8,15 +8,19 @@ export class MarketplaceController {
   constructor(private readonly marketplace: MarketplaceService) {}
 
   @Get()
-  list(@Query('type') type?: 'GOODS' | 'DEMAND', @Query('gpuModel') gpuModel?: string) {
-    return this.marketplace.list({ type, gpuModel });
+  list(
+    @Query('type') type?: 'GOODS' | 'DEMAND',
+    @Query('mode') mode?: 'SPOT' | 'FUTURES' | 'RENTAL',
+    @Query('gpuModel') gpuModel?: string,
+  ) {
+    return this.marketplace.list({ type, mode, gpuModel });
   }
 
   @Post('goods/:goodsId/publish')
   publishGoods(
     @WorkspaceCtx() ctx: WorkspaceContext,
     @Param('goodsId') goodsId: string,
-    @Body() body: { contactMethod?: string; priceAmount?: number },
+    @Body() body: { contactMethod?: string; priceAmount?: number; tradeMode?: 'SPOT' | 'FUTURES' | 'RENTAL' },
   ) {
     return this.marketplace.publishGoods(ctx, goodsId, body);
   }
@@ -25,7 +29,7 @@ export class MarketplaceController {
   publishDemand(
     @WorkspaceCtx() ctx: WorkspaceContext,
     @Param('demandId') demandId: string,
-    @Body() body: { contactMethod?: string },
+    @Body() body: { contactMethod?: string; tradeMode?: 'SPOT' | 'FUTURES' | 'RENTAL' },
   ) {
     return this.marketplace.publishDemand(ctx, demandId, body);
   }

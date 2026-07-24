@@ -7,21 +7,26 @@ import type { WorkspaceContext } from '../../common/workspace-scope.guard';
 export class MarketplaceService {
   constructor(private readonly db: DatabaseService) {}
 
-  async list(filter: { type?: 'GOODS' | 'DEMAND'; gpuModel?: string }): Promise<Array<Record<string, unknown>>> {
+  async list(filter: {
+    type?: 'GOODS' | 'DEMAND';
+    mode?: TradeMode;
+    gpuModel?: string;
+  }): Promise<Array<Record<string, unknown>>> {
     const result = await this.db.query(
       `
-      SELECT id, post_type, title, summary, product_category, gpu_model, gpu_count,
+      SELECT id, trade_mode, post_type, title, summary, product_category, gpu_model, gpu_count,
              quantity, quantity_unit, location_city, price_amount, currency,
              contact_method, published_at
       FROM marketplace_posts
       WHERE deleted_at IS NULL
         AND status = 'PUBLISHED'
         AND ($1::text IS NULL OR post_type = $1)
-        AND ($2::text IS NULL OR gpu_model ILIKE '%' || $2 || '%')
+        AND ($2::text IS NULL OR trade_mode = $2)
+        AND ($3::text IS NULL OR gpu_model ILIKE '%' || $3 || '%')
       ORDER BY published_at DESC
       LIMIT 100
       `,
-      [filter.type ?? null, filter.gpuModel ?? null],
+      [filter.type ?? null, normalizeTradeMode(filter.mode), filter.gpuModel ?? null],
     );
     return result.rows.map((row) => omitNullish(camelizeRow(row)));
   }
@@ -29,7 +34,7 @@ export class MarketplaceService {
   async publishGoods(
     ctx: WorkspaceContext,
     goodsId: string,
-    input: { contactMethod?: string; priceAmount?: number },
+    input: { contactMethod?: string; priceAmount?: number; tradeMode?: TradeMode },
   ): Promise<Record<string, unknown>> {
     const goods = await this.db.one<Record<string, unknown>>(
       `
@@ -43,6 +48,7 @@ export class MarketplaceService {
       throw new NotFoundException({ code: 'GOODS_NOT_FOUND', message: '货源不存在' });
     }
     return this.insertPost(ctx, {
+      tradeMode: normalizeTradeMode(input.tradeMode) ?? tradeModeFromAvailability(goods.availability_type),
       postType: 'GOODS',
       sourceType: 'GOODS',
       sourceId: goodsId,
@@ -70,7 +76,7 @@ export class MarketplaceService {
   async publishDemand(
     ctx: WorkspaceContext,
     demandId: string,
-    input: { contactMethod?: string },
+    input: { contactMethod?: string; tradeMode?: TradeMode },
   ): Promise<Record<string, unknown>> {
     const demand = await this.db.one<Record<string, unknown>>(
       `
@@ -84,6 +90,7 @@ export class MarketplaceService {
       throw new NotFoundException({ code: 'DEMAND_NOT_FOUND', message: '需求不存在' });
     }
     return this.insertPost(ctx, {
+      tradeMode: normalizeTradeMode(input.tradeMode) ?? 'SPOT',
       postType: 'DEMAND',
       sourceType: 'DEMAND',
       sourceId: demandId,
@@ -112,6 +119,7 @@ export class MarketplaceService {
       throw new BadRequestException({ code: 'MARKETPLACE_TITLE_REQUIRED', message: '标题不能为空' });
     }
     return this.insertPost(ctx, {
+      tradeMode: normalizeTradeMode(input.tradeMode ?? input.trade_mode) ?? 'SPOT',
       postType,
       sourceType: 'MANUAL',
       sourceId: null,
@@ -134,15 +142,16 @@ export class MarketplaceService {
     const result = await this.db.query(
       `
       INSERT INTO marketplace_posts(
-        workspace_id, post_type, source_type, source_id, title, summary, product_category,
+        workspace_id, trade_mode, post_type, source_type, source_id, title, summary, product_category,
         gpu_model, gpu_count, quantity, quantity_unit, location_city, price_amount,
         currency, contact_method, snapshot, published_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING *
       `,
       [
         ctx.workspaceId,
+        input.tradeMode,
         input.postType,
         input.sourceType,
         input.sourceId,
@@ -174,6 +183,7 @@ export class MarketplaceService {
 }
 
 interface MarketplacePostInput {
+  tradeMode: TradeMode;
   postType: 'GOODS' | 'DEMAND';
   sourceType: 'GOODS' | 'DEMAND' | 'MANUAL';
   sourceId: string | null;
@@ -189,6 +199,21 @@ interface MarketplacePostInput {
   currency: string;
   contactMethod?: string | null;
   snapshot: Record<string, unknown>;
+}
+
+type TradeMode = 'SPOT' | 'FUTURES' | 'RENTAL';
+
+function normalizeTradeMode(value: unknown): TradeMode | null {
+  if (value === 'SPOT' || value === 'FUTURES' || value === 'RENTAL') return value;
+  if (value === '现货') return 'SPOT';
+  if (value === '期货') return 'FUTURES';
+  if (value === '租赁') return 'RENTAL';
+  return null;
+}
+
+function tradeModeFromAvailability(value: unknown): TradeMode {
+  if (value === 'FUTURES') return 'FUTURES';
+  return 'SPOT';
 }
 
 function asString(value: unknown): string | null {
