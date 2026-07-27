@@ -653,7 +653,7 @@ export default function App() {
                     <Badge tone="green">供应 {draftSummary.goods}</Badge>
                     <Badge tone="orange">需求 {draftSummary.demands}</Badge>
                     <Badge tone="blue">可保存 {saveableDraftCount}</Badge>
-                    <Badge tone={draftSummary.incomplete ? "orange" : "default"}>待补 {draftSummary.incomplete}</Badge>
+                    <Badge tone={draftSummary.incomplete ? "orange" : "default"}>缺字段 {draftSummary.incomplete}</Badge>
                   </div>
                   {draftItems.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1">
@@ -683,7 +683,7 @@ export default function App() {
                 ) : (
                   <div className="space-y-4">
                     <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-500">
-                      完整条目可直接批量保存，缺型号、数量或城市的条目会留在这里继续补。当前显示第 {draftCurrentPage} 页。
+                      完整条目可直接批量保存；缺字段的条目不会丢，补齐型号、数量或城市后就能保存。当前显示第 {draftCurrentPage} 页。
                     </p>
                     {pagedDrafts.map((draft, index) => (
                       <DraftReviewItem
@@ -951,6 +951,7 @@ const DraftReviewItem: React.FC<{
   onConfirm,
 }) => {
   const issue = tradeDraftIssue(draft);
+  const missingFields = tradeDraftMissingFields(draft);
   return (
     <section className="border-t border-neutral-100 pt-4 first:border-t-0 first:pt-0">
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -962,7 +963,14 @@ const DraftReviewItem: React.FC<{
             <span className="text-xs font-medium text-neutral-400">#{index + 1}</span>
           </div>
           <p className="mt-1 truncate text-sm font-semibold text-neutral-900">{draft.title || `${productCategoryText(draft.productCategory)} ${draft.gpuModel}`}</p>
-          <p className={`mt-1 text-xs font-medium ${issue ? "text-amber-600" : "text-neutral-400"}`}>{issue ?? "字段完整，可保存"}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <span className={`text-xs font-medium ${issue ? "text-amber-600" : "text-neutral-400"}`}>
+              {issue ? "补齐字段后可保存" : "字段完整，可保存"}
+            </span>
+            {missingFields.map((field) => (
+              <Badge key={field} tone="orange">{`缺${field}`}</Badge>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -980,7 +988,7 @@ const DraftReviewItem: React.FC<{
             className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
           >
             <Check className="h-3.5 w-3.5" />
-            保存
+            {issue ? "补齐后保存" : "保存"}
           </button>
         </div>
       </div>
@@ -1341,7 +1349,7 @@ function Segmented({
   );
 }
 
-function Badge({ children, tone = "default" }: { children: React.ReactNode; tone?: BadgeTone }) {
+const Badge: React.FC<{ children: React.ReactNode; tone?: BadgeTone }> = ({ children, tone = "default" }) => {
   const toneClass: Record<BadgeTone, string> = {
     default: "bg-[#f1f1ef] text-neutral-500",
     blue: "bg-sky-50 text-sky-700",
@@ -1350,7 +1358,7 @@ function Badge({ children, tone = "default" }: { children: React.ReactNode; tone
     red: "bg-rose-50 text-rose-700",
   };
   return <span className={`rounded-[5px] px-1.5 py-0.5 text-xs font-medium ${toneClass[tone]}`}>{children}</span>;
-}
+};
 
 async function parseWithAiGateway(text: string): Promise<{
   items: ParsedTradeItem[];
@@ -1514,10 +1522,17 @@ function countDrafts(items: TradeDraft[]): { goods: number; demands: number; inc
 }
 
 function tradeDraftIssue(draft: TradeDraft): string | null {
-  if (!draft.gpuModel.trim()) return "请填写型号 / 规格";
-  if (!toNumber(draft.quantity, 0)) return "请填写有效数量";
-  if (!draft.locationCity.trim() || draft.locationCity === "待确认") return "请填写城市";
+  const missingFields = tradeDraftMissingFields(draft);
+  if (missingFields.length) return `请补齐：${missingFields.join("、")}`;
   return null;
+}
+
+function tradeDraftMissingFields(draft: TradeDraft): string[] {
+  const fields: string[] = [];
+  if (!draft.gpuModel.trim()) fields.push("型号");
+  if (!toNumber(draft.quantity, 0)) fields.push("数量");
+  if (!draft.locationCity.trim() || draft.locationCity === "待确认") fields.push("城市");
+  return fields;
 }
 
 function dedupeNewTradeDrafts(incoming: TradeDraft[], existing: TradeDraft[]): TradeDraft[] {
