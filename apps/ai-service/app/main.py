@@ -84,7 +84,7 @@ async def call_openai_compatible(
     if provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY")
         base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        model_name = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        model_name = model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
     else:
         api_key = os.getenv("SILICONFLOW_API_KEY")
         base_url = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")

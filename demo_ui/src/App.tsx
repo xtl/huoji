@@ -15,7 +15,7 @@ import {
 type TabKey = "input" | "stock" | "market";
 type MarketType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
-type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY";
+type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
 
 interface ConfigItem {
   label: string;
@@ -55,6 +55,39 @@ interface MarketPost {
   contactMethod: string;
   configItems: ConfigItem[];
   publishedAt: string;
+}
+
+interface ParsedTradeItem {
+  postType?: MarketType | string;
+  tradeMode?: TradeMode | string;
+  productCategory?: ProductCategory | string;
+  title?: string;
+  model?: string;
+  gpuModel?: string;
+  gpuCount?: number | string;
+  quantity?: number | string | null;
+  quantityUnit?: string;
+  locationCity?: string;
+  priceAmount?: number | string | null;
+  currency?: string;
+  condition?: string;
+  availabilityType?: string;
+  contactMethod?: string;
+  sourceContact?: string;
+  rawText?: string;
+  confidence?: number;
+  configItems?: ConfigItem[];
+}
+
+interface AiStructureResponse {
+  data?: {
+    summary?: { total?: number; goodsCount?: number; demandCount?: number };
+    items?: ParsedTradeItem[];
+  } | ParsedTradeItem;
+  isMock?: boolean;
+  provider?: string;
+  model?: string;
+  error?: string;
 }
 
 const initialStocks: StockItem[] = [
@@ -131,6 +164,8 @@ export default function App() {
   const [marketModeFilter, setMarketModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [marketTypeFilter, setMarketTypeFilter] = useState<MarketType | "ALL">("ALL");
   const [marketCategoryFilter, setMarketCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
+  const [isAiParsing, setIsAiParsing] = useState(false);
+  const [aiParseMessage, setAiParseMessage] = useState("");
   const [manual, setManual] = useState({
     productCategory: "SERVER" as ProductCategory,
     tradeMode: "SPOT" as TradeMode,
@@ -199,8 +234,38 @@ export default function App() {
     localStorage.setItem("huoji_web_market", JSON.stringify(next));
   }
 
-  function createStock(source: "AI" | "MANUAL") {
-    const parsed = source === "AI" ? parseAiText(aiText) : manual;
+  async function createStock(source: "AI" | "MANUAL") {
+    if (source === "AI") {
+      if (!aiText.trim()) {
+        setAiParseMessage("请先粘贴需要解析的货源文本。");
+        return;
+      }
+      setIsAiParsing(true);
+      setAiParseMessage("正在调用 DeepSeek 结构化解析...");
+      try {
+        const aiResult = await parseWithAiGateway(aiText);
+        const materialized = materializeParsedItems(aiResult.items);
+        if (!materialized.stockItems.length && !materialized.marketItems.length) {
+          throw new Error("没有识别到可入库的供需条目");
+        }
+        if (materialized.stockItems.length) saveStocks([...materialized.stockItems, ...stocks]);
+        if (materialized.marketItems.length) saveMarket([...materialized.marketItems, ...marketPosts]);
+        setAiParseMessage(
+          `${aiResult.isMock ? "离线解析" : "DeepSeek"}完成：${materialized.stockItems.length} 条供应进入我的货源，${materialized.marketItems.length} 条需求进入广场。`,
+        );
+        setActiveTab(materialized.stockItems.length ? "stock" : "market");
+      } catch (error) {
+        const fallback = materializeParsedItems([parseAiText(aiText)]);
+        saveStocks([...fallback.stockItems, ...stocks]);
+        setAiParseMessage(error instanceof Error ? `DeepSeek 解析失败，已用本地解析兜底：${error.message}` : "已用本地解析兜底。");
+        setActiveTab("stock");
+      } finally {
+        setIsAiParsing(false);
+      }
+      return;
+    }
+
+    const parsed = manual;
     const stock: StockItem = {
       id: `stock-${Date.now()}`,
       productCategory: parsed.productCategory,
@@ -211,13 +276,13 @@ export default function App() {
       quantityUnit: parsed.quantityUnit || quantityUnitForCategory(parsed.productCategory),
       locationCity: parsed.locationCity || "待确认",
       priceAmount: toOptionalNumber(parsed.priceAmount),
-      condition: source === "AI" ? parsed.condition : "待确认",
-      availabilityType: source === "AI" ? parsed.availabilityType : "待确认",
+      condition: "待确认",
+      availabilityType: "待确认",
       tradeMode: parsed.tradeMode,
       configItems: normalizeConfigItems(parsed.configItems, parsed.productCategory, {
         gpuModel: parsed.gpuModel,
         gpuCount: parsed.gpuCount,
-        condition: source === "AI" ? parsed.condition : undefined,
+        condition: undefined,
       }),
       status: "UNVERIFIED",
       source,
@@ -322,15 +387,20 @@ export default function App() {
                 <textarea
                   value={aiText}
                   onChange={(event) => setAiText(event.target.value)}
-                  className="min-h-40 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm leading-6 outline-none focus:border-slate-500"
+                  className="min-h-72 w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm leading-6 outline-none focus:border-slate-500"
+                  placeholder="粘贴微信群聊货源文本，DeepSeek 会按供应/需求、现货/期货/租赁、服务器/显卡/内存/硬盘/CPU/网络设备拆条结构化。"
                 />
+                {aiParseMessage && (
+                  <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">{aiParseMessage}</p>
+                )}
                 <button
                   type="button"
                   onClick={() => createStock("AI")}
-                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-3 text-sm font-bold text-white"
+                  disabled={isAiParsing}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
                 >
                   <Sparkles className="h-4 w-4" />
-                  解析并进入确认
+                  {isAiParsing ? "解析中..." : "DeepSeek 解析并入库"}
                 </button>
               </Panel>
 
@@ -704,6 +774,99 @@ function Badge({ children }: { children: React.ReactNode }) {
   return <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{children}</span>;
 }
 
+async function parseWithAiGateway(text: string): Promise<{
+  items: ParsedTradeItem[];
+  isMock: boolean;
+  provider: string;
+  model?: string;
+}> {
+  const response = await fetch("/api/structure", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  const payload = (await response.json()) as AiStructureResponse;
+  if (!response.ok) throw new Error(payload.error || "AI 解析接口不可用");
+
+  const data = payload.data;
+  const items = Array.isArray(data && "items" in data ? data.items : undefined)
+    ? ((data as { items: ParsedTradeItem[] }).items ?? [])
+    : data
+      ? [data as ParsedTradeItem]
+      : [];
+  return {
+    items: items.filter(Boolean),
+    isMock: Boolean(payload.isMock),
+    provider: payload.provider ?? "unknown",
+    model: payload.model,
+  };
+}
+
+function materializeParsedItems(items: ParsedTradeItem[]): { stockItems: StockItem[]; marketItems: MarketPost[] } {
+  const stockItems: StockItem[] = [];
+  const marketItems: MarketPost[] = [];
+  const now = Date.now();
+
+  items.forEach((item, index) => {
+    const rawText = item.rawText || "";
+    const category = normalizeProductCategoryValue(item.productCategory ?? `${item.title ?? ""} ${item.model ?? ""} ${rawText}`);
+    const postType = normalizeMarketType(item.postType ?? rawText);
+    const tradeMode = normalizeTradeModeValue(item.tradeMode ?? rawText);
+    const model = item.model || item.gpuModel || parseModelText(`${item.title ?? ""} ${rawText}`, category) || "待确认";
+    const quantity = toNumber(item.quantity, 1);
+    const quantityUnit = item.quantityUnit || quantityUnitForCategory(category);
+    const locationCity = item.locationCity || parseLocationText(rawText) || "待确认";
+    const configItems = normalizeConfigItems(item.configItems, category, {
+      gpuModel: model,
+      gpuCount: item.gpuCount,
+      condition: item.condition,
+      sourceContact: item.sourceContact,
+      rawText,
+    });
+    const title = item.title || buildParsedTitle(category, model, String(item.gpuCount ?? ""), locationCity);
+
+    if (postType === "DEMAND") {
+      marketItems.push({
+        id: `market-ai-${now}-${index}`,
+        productCategory: category,
+        tradeMode,
+        postType: "DEMAND",
+        title,
+        gpuModel: model,
+        quantity,
+        quantityUnit,
+        locationCity,
+        priceAmount: toOptionalNumber(item.priceAmount),
+        contactMethod: item.contactMethod || item.sourceContact || "站内联系",
+        configItems,
+        publishedAt: new Date(now + index).toISOString(),
+      });
+      return;
+    }
+
+    stockItems.push({
+      id: `stock-ai-${now}-${index}`,
+      productCategory: category,
+      title,
+      gpuModel: model,
+      gpuCount: toNumber(item.gpuCount, category === "SERVER" ? 8 : 0),
+      quantity,
+      quantityUnit,
+      locationCity,
+      priceAmount: toOptionalNumber(item.priceAmount),
+      condition: item.condition || "待确认",
+      availabilityType: item.availabilityType || tradeModeText(tradeMode),
+      tradeMode,
+      configItems,
+      status: "UNVERIFIED",
+      source: "AI",
+      createdAt: new Date(now + index).toISOString(),
+    });
+  });
+
+  return { stockItems, marketItems };
+}
+
 function parseAiText(text: string) {
   const productCategory = parseProductCategory(text);
   const gpuModel = parseModelText(text, productCategory);
@@ -739,6 +902,10 @@ const productCategoryOptions: Array<{ label: string; value: ProductCategory }> =
   { label: "服务器", value: "SERVER" },
   { label: "显卡", value: "GPU_CARD" },
   { label: "内存", value: "MEMORY" },
+  { label: "硬盘/SSD", value: "STORAGE" },
+  { label: "CPU", value: "CPU" },
+  { label: "网络设备", value: "NETWORK" },
+  { label: "其他配件", value: "OTHER" },
 ];
 
 function defaultConfig(category: ProductCategory): ConfigItem[] {
@@ -746,6 +913,10 @@ function defaultConfig(category: ProductCategory): ConfigItem[] {
     SERVER: ["品牌", "整机型号", "GPU", "GPU数量", "CPU", "内存", "硬盘", "网络", "电源", "质保"],
     GPU_CARD: ["品牌", "型号", "显存", "接口", "成色", "质保"],
     MEMORY: ["品牌", "容量", "类型", "频率", "ECC", "成色"],
+    STORAGE: ["品牌", "型号", "容量", "接口", "形态", "成色", "质保"],
+    CPU: ["品牌", "型号", "代际", "成色", "质保"],
+    NETWORK: ["品牌", "型号", "速率", "接口", "成色", "质保"],
+    OTHER: ["品牌", "型号", "规格", "成色", "质保"],
   };
   return labels[category].map((label) => ({ label, value: "" }));
 }
@@ -789,13 +960,33 @@ function extractConfigItems(
     values["成色"] = condition === "待确认" ? "" : condition;
   }
 
+  if (category === "STORAGE") {
+    values["型号"] = captureFirst(text, /(?:PM9D3A|PM9A3|PM893|PM983A?|PM1743|P5510|P5500|P5520|P5600|P5620|PS1010|S4520|J5300|H5100|R6100|ES3500P|ST\d{8,}[A-Z]*|WD[A-Z0-9-]+|WUH[A-Z0-9]+|WUS[A-Z0-9]+|MG\d+[A-Z0-9]+)[A-Z0-9-]*/i);
+    values["容量"] = captureFirst(text, /\d+(?:\.\d+)?\s*(?:TB|T|GB|G)/i);
+    values["接口"] = captureFirst(text, /NVMe|SATA|SAS|U\.?2|E1\.?S|M\.?2|GEN[45]|PCIe\s?[45]/i);
+    values["成色"] = condition === "待确认" ? "" : condition;
+  }
+
+  if (category === "CPU") {
+    values["品牌"] = /AMD|EPYC/i.test(text) ? "AMD" : /Intel|英特尔|Xeon|至强/i.test(text) ? "Intel" : values["品牌"] ?? "";
+    values["型号"] = captureFirst(text, /(?:Xeon\s*)?(?:\d{4,5}[A-Z+]?|E-\d{4,5}|E5-\d{4}|W[579]-\d{4,5}X?|EPYC\s*\d{4,5}[A-Z]?)/i);
+    values["成色"] = condition === "待确认" ? "" : condition;
+  }
+
+  if (category === "NETWORK") {
+    values["型号"] = captureFirst(text, /(?:ConnectX-\d|CX\d|Mellanox|迈络思|Q3400)[A-Z0-9 -]*/i);
+    values["速率"] = captureFirst(text, /\d+\s*G/i);
+    values["接口"] = captureFirst(text, /IB|以太网|Ethernet|PCIe/i);
+    values["成色"] = condition === "待确认" ? "" : condition;
+  }
+
   return defaultConfig(category).map((item) => ({ ...item, value: values[item.label] ?? "" }));
 }
 
 function normalizeConfigItems(
   items: unknown,
   category: ProductCategory,
-  seed: { gpuModel?: unknown; gpuCount?: unknown; condition?: unknown } = {},
+  seed: { gpuModel?: unknown; gpuCount?: unknown; condition?: unknown; sourceContact?: unknown; rawText?: unknown } = {},
 ): ConfigItem[] {
   const rawItems = Array.isArray(items)
     ? items
@@ -817,12 +1008,18 @@ function normalizeConfigItems(
     return { label: item.label, value };
   });
   const extra = rawItems.filter((item) => !base.some((baseItem) => baseItem.label === item.label));
-  return [...merged, ...extra];
+  const sourceContact = asDisplayText(seed.sourceContact);
+  const rawText = asDisplayText(seed.rawText);
+  const traceItems = [
+    ...(sourceContact && !rawByLabel.has("来源") ? [{ label: "来源", value: sourceContact }] : []),
+    ...(rawText && !rawByLabel.has("原文") ? [{ label: "原文", value: rawText }] : []),
+  ];
+  return [...merged, ...extra, ...traceItems];
 }
 
 function seedConfigValues(
   category: ProductCategory,
-  seed: { gpuModel?: unknown; gpuCount?: unknown; condition?: unknown },
+  seed: { gpuModel?: unknown; gpuCount?: unknown; condition?: unknown; sourceContact?: unknown; rawText?: unknown },
 ): Record<string, string> {
   const values: Record<string, string> = {};
   const model = asDisplayText(seed.gpuModel);
@@ -840,10 +1037,17 @@ function seedConfigValues(
   if (category === "MEMORY") {
     if (model) values["类型"] = model;
   }
+  if (category === "STORAGE" || category === "CPU" || category === "NETWORK" || category === "OTHER") {
+    if (model) values["型号"] = model;
+    if (condition && condition !== "待确认") values["成色"] = condition;
+  }
   return values;
 }
 
 function parseProductCategory(text: string): ProductCategory {
+  if (/网卡|交换机|迈络思|Mellanox|ConnectX|Q3400|400g/i.test(text)) return "NETWORK";
+  if (/CPU|至强|Xeon|AMD|EPYC|6767P|6776P|6760P|6747P|6740P|8468V|8558P?|6530P?|9554|9655|9555/i.test(text)) return "CPU";
+  if (/硬盘|固态|SSD|HDD|NVMe|SATA|U\.?2|E1\.?S|M\.?2|SAS|PM9|PM8|P55|P56|ST\d|WD|WUH|WUS|希捷|西数|东芝|思得|SOLIDIGM|SOLINIGM|大普微|忆联|小海豚|\d+(?:\.\d+)?\s*T/i.test(text)) return "STORAGE";
   if (/内存|DDR\d?|RDIMM|LRDIMM|DIMM|ECC|REG/i.test(text)) return "MEMORY";
   if (/显卡|GPU卡|PCIe卡|PCIE卡|RTX\s?\d{4}|4090|5090|L40S/i.test(text)) return "GPU_CARD";
   return "SERVER";
@@ -856,6 +1060,22 @@ function parseModelText(text: string, category: ProductCategory): string {
       text.match(/(\d+\s*(?:G|GB)\s*(?:RDIMM|LRDIMM|DIMM|ECC|REG)?)/i)?.[1]?.trim() ??
       "内存"
     );
+  }
+  if (category === "STORAGE") {
+    return (
+      text.match(/(?:PM9D3A|PM9A3|PM893|PM983A?|PM1743|P5510|P5500|P5520|P5600|P5620|PS1010|S4520|J5300|H5100|R6100|ES3500P|ST\d{8,}[A-Z]*|WD[A-Z0-9-]+|WUH[A-Z0-9]+|WUS[A-Z0-9]+|MG\d+[A-Z0-9]+)[A-Z0-9-]*(?:\s*\d+(?:\.\d+)?T|\s*\d+G)?/i)?.[0]?.trim() ??
+      text.match(/(?:HDD|SSD|NVMe|SATA|SAS|U\.?2|E1\.?S|M\.?2)?\s*\d+(?:\.\d+)?\s*(?:T|TB|G|GB)/i)?.[0]?.trim() ??
+      "硬盘/SSD"
+    );
+  }
+  if (category === "CPU") {
+    return (
+      text.match(/(?:Xeon\s*)?(?:\d{4,5}[A-Z+]?|E-\d{4,5}|E5-\d{4}|W[579]-\d{4,5}X?|EPYC\s*\d{4,5}[A-Z]?)/i)?.[0]?.trim() ??
+      "CPU"
+    );
+  }
+  if (category === "NETWORK") {
+    return text.match(/(?:ConnectX-\d|CX\d|Mellanox|迈络思|Q3400|400G网卡|200G网卡|交换机)[A-Z0-9 -]*/i)?.[0]?.trim() ?? "网络设备";
   }
   return text.match(/\b(H100|H200|B200|B300|A100|A800|H800|L40S|RTX\s?4090|RTX\s?5090)\b/i)?.[1]?.toUpperCase() ?? "";
 }
@@ -872,6 +1092,27 @@ function parseTradeMode(text: string): TradeMode {
   return "SPOT";
 }
 
+function normalizeTradeModeValue(value: unknown): TradeMode {
+  if (value === "SPOT" || value === "FUTURES" || value === "RENTAL") return value;
+  return parseTradeMode(asDisplayText(value));
+}
+
+function normalizeMarketType(value: unknown): MarketType {
+  const text = asDisplayText(value).toUpperCase();
+  if (text === "DEMAND" || /收|求购|找/.test(text)) return "DEMAND";
+  return "GOODS";
+}
+
+function normalizeProductCategoryValue(value: unknown): ProductCategory {
+  const text = asDisplayText(value).toUpperCase();
+  if (["SERVER", "GPU_CARD", "MEMORY", "STORAGE", "CPU", "NETWORK", "OTHER"].includes(text)) return text as ProductCategory;
+  return parseProductCategory(asDisplayText(value));
+}
+
+function parseLocationText(text: string): string {
+  return text.match(/(深圳|香港|上海|北京|广州|杭州|苏州|成都|国内|大陆|海外|新加坡|泰国)/)?.[1] ?? "";
+}
+
 function tradeModeText(mode: TradeMode): string {
   const map: Record<TradeMode, string> = {
     SPOT: "现货",
@@ -886,6 +1127,10 @@ function productCategoryText(category: ProductCategory): string {
     SERVER: "服务器",
     GPU_CARD: "显卡",
     MEMORY: "内存",
+    STORAGE: "硬盘/SSD",
+    CPU: "CPU",
+    NETWORK: "网络设备",
+    OTHER: "配件",
   };
   return map[category];
 }
@@ -895,6 +1140,10 @@ function quantityUnitForCategory(category: ProductCategory): string {
     SERVER: "台",
     GPU_CARD: "张",
     MEMORY: "条",
+    STORAGE: "个",
+    CPU: "颗",
+    NETWORK: "个",
+    OTHER: "个",
   };
   return map[category];
 }
@@ -920,7 +1169,7 @@ function captureBrand(text: string): string {
   return (
     captureFirst(
       text,
-      /Supermicro|超微|Dell|戴尔|浪潮|HPE|新华三|联想|Lenovo|NVIDIA|英伟达|ASUS|华硕|Gigabyte|技嘉|MSI|微星|Samsung|三星|SK\s?Hynix|海力士|Micron|美光|Kingston|金士顿/i,
+      /Supermicro|超微|Dell|戴尔|浪潮|HPE|新华三|H3C|联想|Lenovo|NVIDIA|英伟达|ASUS|华硕|Gigabyte|技嘉|MSI|微星|Samsung|三星|SK\s?Hynix|海力士|Micron|美光|Kingston|金士顿|长鑫|Intel|英特尔|AMD|希捷|Seagate|西数|Western\s?Digital|东芝|Toshiba|Solidigm|思得|大普微|忆联|小海豚|迈络思|Mellanox/i,
     ) || ""
   );
 }

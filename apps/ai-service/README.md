@@ -7,6 +7,7 @@
 ```powershell
 $env:AI_PROVIDER="deepseek"
 $env:DEEPSEEK_API_KEY="..."
+$env:DEEPSEEK_MODEL="deepseek-v4-flash" # 或 deepseek-v4-pro
 uvicorn app.main:app --reload --port 8010
 ```
 
