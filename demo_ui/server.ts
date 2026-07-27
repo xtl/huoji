@@ -17,6 +17,14 @@ const PORT = Number(process.env.PORT ?? 3000);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+app.get("/api/health", (_, res) => {
+  res.json({
+    success: true,
+    service: "huoji-web",
+    time: new Date().toISOString(),
+  });
+});
+
 type PostType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
