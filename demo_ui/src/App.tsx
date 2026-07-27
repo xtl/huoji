@@ -25,9 +25,6 @@ type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "N
 type PriceFilter = "ALL" | "HAS_PRICE" | "NO_PRICE" | "UNDER_10000" | "FROM_10000_TO_100000" | "FROM_100000_TO_500000" | "OVER_500000";
 type BadgeTone = "default" | "blue" | "green" | "orange" | "red";
 type NoticeTone = "info" | "success" | "warning";
-type QuickMarketType = "AUTO" | MarketType;
-type QuickTradeMode = "AUTO" | TradeMode;
-type QuickProductCategory = "AUTO" | ProductCategory;
 
 const LIST_PAGE_SIZE = 30;
 const AI_EXAMPLE_TEXT = "深圳现货 H100 8卡服务器 2台 全新 价格120万";
@@ -226,16 +223,13 @@ export default function App() {
   const [stockPriceFilter, setStockPriceFilter] = useState<PriceFilter>("ALL");
   const [stockPage, setStockPage] = useState(1);
   const [marketPage, setMarketPage] = useState(1);
-  const [entryIntent, setEntryIntent] = useState<QuickMarketType>("AUTO");
-  const [entryMode, setEntryMode] = useState<QuickTradeMode>("AUTO");
-  const [entryCategory, setEntryCategory] = useState<QuickProductCategory>("AUTO");
   const [draftItems, setDraftItems] = useState<TradeDraft[]>([]);
   const [draftPage, setDraftPage] = useState(1);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "assistant-welcome",
       role: "assistant",
-      text: "把微信群货源、求购、租赁信息直接发给我。我会先拆成待确认结果，不会自动入库。",
+      text: "把微信群货源、求购、租赁信息直接发给我。我会自动识别类型、交易大类和品类，先拆成待确认结果，不会自动入库。",
     },
   ]);
   const [isAiParsing, setIsAiParsing] = useState(false);
@@ -382,18 +376,14 @@ export default function App() {
       return;
     }
 
-    const overrides = {
-      postType: entryIntent === "AUTO" ? undefined : entryIntent,
-      tradeMode: entryMode === "AUTO" ? undefined : entryMode,
-      productCategory: entryCategory === "AUTO" ? undefined : entryCategory,
-    };
+    const overrides: EntryOverrides = {};
     setIsAiParsing(true);
     setNotice(null);
     setAiParseMessage("正在解析为待确认结果...");
     setChatMessages((messages) => [...messages, { id: `user-${Date.now()}`, role: "user", text: input }]);
 
     try {
-      const aiResult = await parseWithAiGateway(buildPromptWithHints(input, overrides));
+      const aiResult = await parseWithAiGateway(input);
       const parsedDrafts = createDraftsFromParsedItems(aiResult.items, "AI", overrides);
       if (!parsedDrafts.length) throw new Error("没有识别到可确认的供需条目");
       const result = appendDrafts(parsedDrafts);
@@ -625,29 +615,10 @@ export default function App() {
                 </div>
 
                 <div className="mt-3 space-y-3">
-                  <ChipGroup
-                    label="类型"
-                    value={entryIntent}
-                    options={[
-                      { label: "自动识别", value: "AUTO" },
-                      { label: "供应", value: "GOODS" },
-                      { label: "需求", value: "DEMAND" },
-                    ]}
-                    onChange={(value) => setEntryIntent(value as QuickMarketType)}
-                  />
-                  <ChipGroup
-                    label="交易"
-                    value={entryMode}
-                    options={[{ label: "自动", value: "AUTO" }, ...tradeModeOptions]}
-                    onChange={(value) => setEntryMode(value as QuickTradeMode)}
-                  />
-                  <ChipGroup
-                    label="品类"
-                    value={entryCategory}
-                    options={[{ label: "自动", value: "AUTO" }, ...productCategoryOptions]}
-                    onChange={(value) => setEntryCategory(value as QuickProductCategory)}
-                  />
-
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="green">AI 自动识别</Badge>
+                    <span className="text-xs font-medium text-neutral-400">类型、交易大类、品类会在待确认结果里生成</span>
+                  </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-medium text-neutral-400">{aiLineCount ? `${aiLineCount} 行文本` : "空白输入"}</span>
                     <div className="flex items-center gap-1">
@@ -659,7 +630,7 @@ export default function App() {
                     value={aiText}
                     onChange={(event) => setAiText(event.target.value)}
                     className="min-h-36 w-full resize-y rounded-md border border-transparent bg-[#f7f7f5] p-3 text-sm leading-6 text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
-                    placeholder="直接发一句，或粘贴整段微信群聊。比如：供应 深圳现货 5090 风扇卡 300张；需求 香港找 H200 整机 4台。"
+                    placeholder="直接发一句，或粘贴整段微信群聊。AI 会自动识别供应/需求、现货/期货/租赁，以及服务器/显卡/内存/硬盘等品类。"
                   />
                   {aiParseMessage && (
                     <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-600">{aiParseMessage}</p>
@@ -953,38 +924,6 @@ const ChatBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
     </div>
   );
 };
-
-function ChipGroup({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: Array<{ label: string; value: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="space-y-1">
-      <p className="text-xs font-medium text-neutral-500">{label}</p>
-      <div className="flex gap-1 overflow-x-auto pb-1">
-        {options.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => onChange(option.value)}
-            className={`shrink-0 rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
-              value === option.value ? "bg-neutral-900 text-white" : "bg-[#f1f1ef] text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900"
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function AssistantEmptyState() {
   return (
@@ -1554,15 +1493,6 @@ function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockIte
   });
 
   return { stockItems, marketItems };
-}
-
-function buildPromptWithHints(text: string, overrides: EntryOverrides): string {
-  const hints = [
-    overrides.postType ? `类型固定为：${overrides.postType === "GOODS" ? "供应" : "需求"}` : "",
-    overrides.tradeMode ? `交易大类固定为：${tradeModeText(overrides.tradeMode)}` : "",
-    overrides.productCategory ? `品类固定为：${productCategoryText(overrides.productCategory)}` : "",
-  ].filter(Boolean);
-  return hints.length ? `解析提示：${hints.join("；")}。\n\n原文：\n${text}` : text;
 }
 
 function buildDraftTitle(postType: MarketType, category: ProductCategory, model: string, gpuCount: string, city: string): string {
