@@ -4,7 +4,6 @@ import {
   Bot,
   Boxes,
   Check,
-  CircleOff,
   ClipboardCheck,
   Compass,
   Database,
@@ -356,11 +355,6 @@ export default function App() {
   function saveMarket(next: MarketPost[]) {
     setMarketPosts(next);
     localStorage.setItem("huoji_web_market", JSON.stringify(next));
-  }
-
-  function updateStockStatus(stockId: string, status: StockItem["status"]) {
-    saveStocks(stocks.map((item) => (item.id === stockId ? { ...item, status } : item)));
-    setNotice({ tone: "success", text: status === "EXPIRED" ? "已标记为失效货源。" : "已恢复为供应中。" });
   }
 
   function resetStockFilters() {
@@ -759,31 +753,21 @@ export default function App() {
                   key={stock.id}
                   className="group rounded-md bg-white p-4 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:bg-[#fdfdfc] hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)]"
                 >
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="font-semibold text-neutral-950">{stock.title}</h2>
-                        <Badge tone="blue">{productCategoryText(stock.productCategory)}</Badge>
-                        <Badge tone={stock.source === "AI" ? "green" : "default"}>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
-                        <Badge tone={tradeModeTone(stock.tradeMode)}>{tradeModeText(stock.tradeMode)}</Badge>
-                        <Badge tone={statusTone(stock.status)}>{statusText(stock.status)}</Badge>
-                      </div>
-                      <p className="mt-2 text-sm text-neutral-600">
-                        {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
-                        {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
-                      </p>
-                      <p className="mt-1 text-xs font-medium text-neutral-500">来源用户：{stock.sourceContact}</p>
-                      <p className="mt-1 text-xs font-medium text-neutral-400">录入时间：{formatHourTime(stock.createdAt)}</p>
-                      <ConfigSheet items={stock.configItems} />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="font-semibold text-neutral-950">{stock.title}</h2>
+                      <Badge tone="blue">{productCategoryText(stock.productCategory)}</Badge>
+                      <Badge tone={stock.source === "AI" ? "green" : "default"}>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
+                      <Badge tone={tradeModeTone(stock.tradeMode)}>{tradeModeText(stock.tradeMode)}</Badge>
+                      <Badge tone={statusTone(stock.status)}>{statusText(stock.status)}</Badge>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => updateStockStatus(stock.id, stock.status === "EXPIRED" ? "SELLABLE" : "EXPIRED")}
-                      className="inline-flex items-center gap-1 self-start rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 md:self-auto"
-                    >
-                      {stock.status === "EXPIRED" ? <RotateCcw className="h-4 w-4" /> : <CircleOff className="h-4 w-4" />}
-                      {stock.status === "EXPIRED" ? "恢复供应" : "标记失效"}
-                    </button>
+                    <p className="mt-2 text-sm text-neutral-600">
+                      {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
+                      {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-neutral-500">来源用户：{stock.sourceContact}</p>
+                    <p className="mt-1 text-xs font-medium text-neutral-400">录入时间：{formatHourTime(stock.createdAt)}</p>
+                    <ConfigSheet items={stock.configItems} />
                   </div>
                 </article>
               ))}
