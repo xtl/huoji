@@ -8,7 +8,6 @@ import {
   Megaphone,
   Plus,
   Search,
-  Send,
   Sparkles,
 } from "lucide-react";
 
@@ -165,7 +164,6 @@ export default function App() {
   const [aiText, setAiText] = useState("深圳现货 H100 8卡服务器 2台 全新 价格120万");
   const [query, setQuery] = useState("");
   const [marketModeFilter, setMarketModeFilter] = useState<TradeMode | "ALL">("ALL");
-  const [marketTypeFilter, setMarketTypeFilter] = useState<MarketType | "ALL">("ALL");
   const [marketCategoryFilter, setMarketCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
   const [stockCategoryFilter, setStockCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
   const [stockCityFilter, setStockCityFilter] = useState("ALL");
@@ -237,23 +235,23 @@ export default function App() {
 
   const filteredMarket = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return marketPosts.filter((post) => {
-      if (marketModeFilter !== "ALL" && post.tradeMode !== marketModeFilter) return false;
-      if (marketTypeFilter !== "ALL" && post.postType !== marketTypeFilter) return false;
-      if (marketCategoryFilter !== "ALL" && post.productCategory !== marketCategoryFilter) return false;
-      if (!q) return true;
-      return [
-        post.title,
-        post.gpuModel,
-        post.locationCity,
-        post.postType,
-        post.tradeMode,
-        post.productCategory,
-        productCategoryText(post.productCategory),
-        ...post.configItems.flatMap((config) => [config.label, config.value]),
-      ].some((value) => String(value).toLowerCase().includes(q));
-    });
-  }, [query, marketCategoryFilter, marketModeFilter, marketPosts, marketTypeFilter]);
+    return marketPosts
+      .filter((post) => post.postType === "DEMAND")
+      .filter((post) => {
+        if (marketModeFilter !== "ALL" && post.tradeMode !== marketModeFilter) return false;
+        if (marketCategoryFilter !== "ALL" && post.productCategory !== marketCategoryFilter) return false;
+        if (!q) return true;
+        return [
+          post.title,
+          post.gpuModel,
+          post.locationCity,
+          post.tradeMode,
+          post.productCategory,
+          productCategoryText(post.productCategory),
+          ...post.configItems.flatMap((config) => [config.label, config.value]),
+        ].some((value) => String(value).toLowerCase().includes(q));
+      });
+  }, [query, marketCategoryFilter, marketModeFilter, marketPosts]);
 
   const stockCurrentPage = clampPage(stockPage, totalPagesFor(filteredStocks.length));
   const marketCurrentPage = clampPage(marketPage, totalPagesFor(filteredMarket.length));
@@ -336,29 +334,6 @@ export default function App() {
     setActiveTab("stock");
   }
 
-  function publishStock(stock: StockItem) {
-    const post: MarketPost = {
-      id: `market-${Date.now()}`,
-      productCategory: stock.productCategory,
-      tradeMode: stock.tradeMode,
-      postType: "GOODS",
-      title: stock.title,
-      gpuModel: stock.gpuModel,
-      quantity: stock.quantity,
-      quantityUnit: stock.quantityUnit,
-      locationCity: stock.locationCity,
-      priceAmount: stock.priceAmount,
-      contactMethod: "站内联系",
-      configItems: stock.configItems,
-      publishedAt: new Date().toISOString(),
-    };
-    saveMarket([post, ...marketPosts]);
-    saveStocks(stocks.map((item) => (item.id === stock.id ? { ...item, status: "SELLABLE" } : item)));
-    setStockPage(1);
-    setMarketPage(1);
-    setActiveTab("market");
-  }
-
   function publishDemand() {
     const post: MarketPost = {
       id: `market-${Date.now()}`,
@@ -392,7 +367,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-base font-black leading-tight">货记</h1>
-              <p className="text-xs text-slate-500">服务器、显卡、内存供需广场</p>
+              <p className="text-xs text-slate-500">供应管理与需求广场</p>
             </div>
           </div>
           <div className="hidden items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 md:flex">
@@ -404,16 +379,15 @@ export default function App() {
 
       <main className="mx-auto grid max-w-7xl gap-5 px-4 py-5 pb-24 md:grid-cols-[220px_1fr] md:px-6 md:pb-8">
         <nav className="hidden rounded-lg border border-slate-200 bg-white p-2 md:block">
-          <NavButton active={activeTab === "input"} icon={<Sparkles />} label="录入货源" onClick={() => setActiveTab("input")} />
+          <NavButton active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
           <NavButton active={activeTab === "stock"} icon={<Boxes />} label="我的货源" onClick={() => setActiveTab("stock")} />
           <NavButton active={activeTab === "market"} icon={<Compass />} label="广场" onClick={() => setActiveTab("market")} />
         </nav>
 
         <section className="space-y-5">
-          <div className="grid gap-3 md:grid-cols-3">
-            <Metric label="我的货源" value={`${stocks.length}`} />
-            <Metric label="广场供应" value={`${marketPosts.filter((post) => post.postType === "GOODS").length}`} />
-            <Metric label="广场需求" value={`${marketPosts.filter((post) => post.postType === "DEMAND").length}`} />
+          <div className="grid gap-3 md:grid-cols-2">
+            <Metric label="我的供应" value={`${stocks.length}`} />
+            <Metric label="需求广场" value={`${marketPosts.filter((post) => post.postType === "DEMAND").length}`} />
           </div>
 
           {activeTab !== "input" && (
@@ -502,8 +476,8 @@ export default function App() {
           )}
 
           {activeTab === "input" && (
-            <div className="grid gap-5 lg:grid-cols-2">
-              <Panel title="AI 解析货源" icon={<Bot />}>
+            <div className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3">
+              <Panel title="AI 解析供需" icon={<Bot />}>
                 <textarea
                   value={aiText}
                   onChange={(event) => setAiText(event.target.value)}
@@ -524,7 +498,7 @@ export default function App() {
                 </button>
               </Panel>
 
-              <Panel title="手工录入货源" icon={<Plus />}>
+              <Panel title="手工录入供应" icon={<Plus />}>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <TextField label="标题" value={manual.title} onChange={(value) => setManual({ ...manual, title: value })} />
                   <SelectField
@@ -568,61 +542,9 @@ export default function App() {
                   保存到我的货源
                 </button>
               </Panel>
-            </div>
-          )}
 
-          {activeTab === "stock" && (
-            <div className="space-y-3">
-              {pagedStocks.map((stock) => (
-                <article key={stock.id} className="rounded-lg border border-slate-200 bg-white p-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="font-black">{stock.title}</h2>
-                        <Badge>{productCategoryText(stock.productCategory)}</Badge>
-                        <Badge>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
-                        <Badge>{tradeModeText(stock.tradeMode)}</Badge>
-                        <Badge>{statusText(stock.status)}</Badge>
-                      </div>
-                      <p className="mt-2 text-sm text-slate-600">
-                        {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
-                        {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
-                      </p>
-                      <p className="mt-1 text-xs font-semibold text-slate-400">录入时间：{formatHourTime(stock.createdAt)}</p>
-                      <ConfigSheet items={stock.configItems} />
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => saveStocks(stocks.map((item) => (item.id === stock.id ? { ...item, status: "EXPIRED" } : item)))}
-                        className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700"
-                      >
-                        标记失效
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => publishStock(stock)}
-                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white"
-                      >
-                        <Send className="h-4 w-4" />
-                        发布广场
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              ))}
-              <Pagination
-                total={filteredStocks.length}
-                page={stockCurrentPage}
-                onPageChange={setStockPage}
-              />
-            </div>
-          )}
-
-          {activeTab === "market" && (
-            <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
-              <Panel title="发布需求" icon={<Megaphone />}>
-                <div className="grid gap-3">
+              <Panel title="发布需求到广场" icon={<Megaphone />}>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
                   <SelectField
                     label="交易大类"
                     value={demand.tradeMode}
@@ -662,77 +584,105 @@ export default function App() {
                   发布需求
                 </button>
               </Panel>
+            </div>
+          )}
 
-              <div className="space-y-3">
-                <div className="rounded-lg border border-slate-200 bg-white p-3">
-                  <div className="grid gap-2 xl:grid-cols-3">
-                    <Segmented
-                      value={marketCategoryFilter}
-                      options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
-                      onChange={(value) => {
-                        setMarketCategoryFilter(value as ProductCategory | "ALL");
-                        setMarketPage(1);
-                      }}
-                    />
-                    <Segmented
-                      value={marketModeFilter}
-                      options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
-                      onChange={(value) => {
-                        setMarketModeFilter(value as TradeMode | "ALL");
-                        setMarketPage(1);
-                      }}
-                    />
-                    <Segmented
-                      value={marketTypeFilter}
-                      options={[
-                        { label: "全部类型", value: "ALL" },
-                        { label: "供应", value: "GOODS" },
-                        { label: "需求", value: "DEMAND" },
-                      ]}
-                      onChange={(value) => {
-                        setMarketTypeFilter(value as MarketType | "ALL");
-                        setMarketPage(1);
-                      }}
-                    />
-                  </div>
-                </div>
-                {pagedMarket.map((post) => (
-                  <article key={post.id} className="rounded-lg border border-slate-200 bg-white p-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge>{tradeModeText(post.tradeMode)}</Badge>
-                          <Badge>{productCategoryText(post.productCategory)}</Badge>
-                          <Badge>{post.postType === "GOODS" ? "供给" : "需求"}</Badge>
-                          <h2 className="font-black">{post.title}</h2>
-                        </div>
-                        <p className="mt-2 text-sm text-slate-600">
-                          {post.gpuModel} / {post.quantity}{post.quantityUnit} / {post.locationCity}
-                          {post.priceAmount ? ` / ${formatMoney(post.priceAmount)}` : ""}
-                        </p>
-                        <p className="mt-1 text-xs font-semibold text-slate-400">创建时间：{formatHourTime(post.publishedAt)}</p>
-                        <ConfigSheet items={post.configItems} />
-                        <p className="mt-1 text-xs text-slate-500">联系方式：{post.contactMethod}</p>
+          {activeTab === "stock" && (
+            <div className="space-y-3">
+              {pagedStocks.map((stock) => (
+                <article key={stock.id} className="rounded-lg border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="font-black">{stock.title}</h2>
+                        <Badge>{productCategoryText(stock.productCategory)}</Badge>
+                        <Badge>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
+                        <Badge>{tradeModeText(stock.tradeMode)}</Badge>
+                        <Badge>{statusText(stock.status)}</Badge>
                       </div>
-                      <button type="button" className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold">
-                        联系
-                      </button>
+                      <p className="mt-2 text-sm text-slate-600">
+                        {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
+                        {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
+                      </p>
+                      <p className="mt-1 text-xs font-semibold text-slate-400">录入时间：{formatHourTime(stock.createdAt)}</p>
+                      <ConfigSheet items={stock.configItems} />
                     </div>
-                  </article>
-                ))}
-                <Pagination
-                  total={filteredMarket.length}
-                  page={marketCurrentPage}
-                  onPageChange={setMarketPage}
-                />
+                    <button
+                      type="button"
+                      onClick={() => saveStocks(stocks.map((item) => (item.id === stock.id ? { ...item, status: "EXPIRED" } : item)))}
+                      className="self-start rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 md:self-auto"
+                    >
+                      标记失效
+                    </button>
+                  </div>
+                </article>
+              ))}
+              <Pagination
+                total={filteredStocks.length}
+                page={stockCurrentPage}
+                onPageChange={setStockPage}
+              />
+            </div>
+          )}
+
+          {activeTab === "market" && (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="grid gap-2 xl:grid-cols-2">
+                  <Segmented
+                    value={marketCategoryFilter}
+                    options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
+                    onChange={(value) => {
+                      setMarketCategoryFilter(value as ProductCategory | "ALL");
+                      setMarketPage(1);
+                    }}
+                  />
+                  <Segmented
+                    value={marketModeFilter}
+                    options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
+                    onChange={(value) => {
+                      setMarketModeFilter(value as TradeMode | "ALL");
+                      setMarketPage(1);
+                    }}
+                  />
+                </div>
               </div>
+              {pagedMarket.map((post) => (
+                <article key={post.id} className="rounded-lg border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge>需求</Badge>
+                        <Badge>{tradeModeText(post.tradeMode)}</Badge>
+                        <Badge>{productCategoryText(post.productCategory)}</Badge>
+                        <h2 className="font-black">{post.title}</h2>
+                      </div>
+                      <p className="mt-2 text-sm text-slate-600">
+                        {post.gpuModel} / {post.quantity}{post.quantityUnit} / {post.locationCity}
+                        {post.priceAmount ? ` / ${formatMoney(post.priceAmount)}` : ""}
+                      </p>
+                      <p className="mt-1 text-xs font-semibold text-slate-400">创建时间：{formatHourTime(post.publishedAt)}</p>
+                      <ConfigSheet items={post.configItems} />
+                      <p className="mt-1 text-xs text-slate-500">联系方式：{post.contactMethod}</p>
+                    </div>
+                    <button type="button" className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold">
+                      联系
+                    </button>
+                  </div>
+                </article>
+              ))}
+              <Pagination
+                total={filteredMarket.length}
+                page={marketCurrentPage}
+                onPageChange={setMarketPage}
+              />
             </div>
           )}
         </section>
       </main>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t border-slate-200 bg-white md:hidden">
-        <MobileTab active={activeTab === "input"} icon={<Sparkles />} label="录入" onClick={() => setActiveTab("input")} />
+        <MobileTab active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
         <MobileTab active={activeTab === "stock"} icon={<Boxes />} label="我的货源" onClick={() => setActiveTab("stock")} />
         <MobileTab active={activeTab === "market"} icon={<Compass />} label="广场" onClick={() => setActiveTab("market")} />
       </nav>
@@ -1528,7 +1478,7 @@ function statusText(status: StockItem["status"]): string {
   const map: Record<StockItem["status"], string> = {
     UNVERIFIED: "待核实",
     VERIFIED: "已核实",
-    SELLABLE: "可发布",
+    SELLABLE: "供应中",
     EXPIRED: "已失效",
     SOLD_OUT: "已售罄",
   };
