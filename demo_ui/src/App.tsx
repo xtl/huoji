@@ -785,8 +785,9 @@ export default function App() {
           {activeTab === "market" && (
             <div className="space-y-3">
               <div className="rounded-md bg-white p-3 shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
-                <div className="grid gap-2 xl:grid-cols-3">
-                  <Segmented
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  <FilterSelect
+                    label="品类"
                     value={marketCategoryFilter}
                     options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
                     onChange={(value) => {
@@ -794,7 +795,8 @@ export default function App() {
                       setMarketPage(1);
                     }}
                   />
-                  <Segmented
+                  <FilterSelect
+                    label="交易大类"
                     value={marketModeFilter}
                     options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
                     onChange={(value) => {
@@ -1358,36 +1360,6 @@ function ConfigSheet({ items }: { items: ConfigItem[] }) {
           </div>
         ))}
       </dl>
-    </div>
-  );
-}
-
-function Segmented({
-  value,
-  options,
-  onChange,
-}: {
-  value: string;
-  options: Array<{ label: string; value: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div
-      className="grid gap-1 rounded-md bg-[#f1f1ef] p-1"
-      style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
-    >
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          onClick={() => onChange(option.value)}
-          className={`rounded-[5px] px-2 py-2 text-xs font-medium transition ${
-            value === option.value ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500 hover:bg-white/60 hover:text-neutral-900"
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
     </div>
   );
 }
