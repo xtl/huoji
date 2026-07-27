@@ -18,6 +18,11 @@ type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "N
 type PriceFilter = "ALL" | "HAS_PRICE" | "NO_PRICE" | "UNDER_10000" | "FROM_10000_TO_100000" | "FROM_100000_TO_500000" | "OVER_500000";
 
 const LIST_PAGE_SIZE = 30;
+const pageMeta: Record<TabKey, { title: string; crumb: string }> = {
+  input: { title: "货记", crumb: "录入" },
+  stock: { title: "我的货源", crumb: "供应" },
+  market: { title: "广场", crumb: "需求" },
+};
 
 interface ConfigItem {
   label: string;
@@ -172,6 +177,7 @@ export default function App() {
   const [stockPriceFilter, setStockPriceFilter] = useState<PriceFilter>("ALL");
   const [stockPage, setStockPage] = useState(1);
   const [marketPage, setMarketPage] = useState(1);
+  const [manualEntryType, setManualEntryType] = useState<MarketType>("GOODS");
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [aiParseMessage, setAiParseMessage] = useState("");
   const [manual, setManual] = useState({
@@ -184,16 +190,6 @@ export default function App() {
     locationCity: "深圳",
     priceAmount: "1200000",
     title: "",
-    configItems: defaultConfig("SERVER"),
-  });
-  const [demand, setDemand] = useState({
-    productCategory: "SERVER" as ProductCategory,
-    tradeMode: "SPOT" as TradeMode,
-    gpuModel: "H200",
-    quantity: "4",
-    quantityUnit: "台",
-    locationCity: "上海",
-    budget: "",
     contactMethod: "站内联系",
     configItems: defaultConfig("SERVER"),
   });
@@ -257,6 +253,9 @@ export default function App() {
   const marketCurrentPage = clampPage(marketPage, totalPagesFor(filteredMarket.length));
   const pagedStocks = filteredStocks.slice((stockCurrentPage - 1) * LIST_PAGE_SIZE, stockCurrentPage * LIST_PAGE_SIZE);
   const pagedMarket = filteredMarket.slice((marketCurrentPage - 1) * LIST_PAGE_SIZE, marketCurrentPage * LIST_PAGE_SIZE);
+  const demandCount = marketPosts.filter((post) => post.postType === "DEMAND").length;
+  const verifiedStockCount = stocks.filter((item) => item.status === "VERIFIED" || item.status === "SELLABLE").length;
+  const activePage = pageMeta[activeTab];
 
   function saveStocks(next: StockItem[]) {
     setStocks(next);
@@ -334,21 +333,30 @@ export default function App() {
     setActiveTab("stock");
   }
 
+  function submitManualEntry() {
+    if (manualEntryType === "GOODS") {
+      createStock("MANUAL");
+      return;
+    }
+
+    publishDemand();
+  }
+
   function publishDemand() {
     const post: MarketPost = {
       id: `market-${Date.now()}`,
-      productCategory: demand.productCategory,
-      tradeMode: demand.tradeMode,
+      productCategory: manual.productCategory,
+      tradeMode: manual.tradeMode,
       postType: "DEMAND",
-      title: `${tradeModeText(demand.tradeMode)}求购 ${productCategoryText(demand.productCategory)} ${demand.gpuModel}`,
-      gpuModel: demand.gpuModel,
-      quantity: toNumber(demand.quantity, 1),
-      quantityUnit: demand.quantityUnit || quantityUnitForCategory(demand.productCategory),
-      locationCity: demand.locationCity,
-      priceAmount: toOptionalNumber(demand.budget),
-      contactMethod: demand.contactMethod || "站内联系",
-      configItems: normalizeConfigItems(demand.configItems, demand.productCategory, {
-        gpuModel: demand.gpuModel,
+      title: manual.title || `${tradeModeText(manual.tradeMode)}求购 ${productCategoryText(manual.productCategory)} ${manual.gpuModel}`,
+      gpuModel: manual.gpuModel,
+      quantity: toNumber(manual.quantity, 1),
+      quantityUnit: manual.quantityUnit || quantityUnitForCategory(manual.productCategory),
+      locationCity: manual.locationCity,
+      priceAmount: toOptionalNumber(manual.priceAmount),
+      contactMethod: manual.contactMethod || "站内联系",
+      configItems: normalizeConfigItems(manual.configItems, manual.productCategory, {
+        gpuModel: manual.gpuModel,
       }),
       publishedAt: new Date().toISOString(),
     };
@@ -358,41 +366,51 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-950">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 md:px-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-950 text-white">
-              <Database className="h-5 w-5" />
+    <div className="min-h-screen bg-[#fbfbfa] text-neutral-950">
+      <div className="mx-auto grid min-h-screen max-w-[1440px] md:grid-cols-[248px_1fr]">
+        <aside className="hidden border-r border-neutral-200/80 bg-[#f7f7f5] px-3 py-4 md:block">
+          <div className="mb-5 flex items-center gap-2 px-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-neutral-900 text-white shadow-sm">
+              <Database className="h-4 w-4" />
             </div>
-            <div>
-              <h1 className="text-base font-black leading-tight">货记</h1>
-              <p className="text-xs text-slate-500">供应管理与需求广场</p>
+            <div className="min-w-0">
+              <h1 className="truncate text-sm font-semibold leading-tight">货记</h1>
+              <p className="truncate text-xs text-neutral-500">AI 硬件供需台账</p>
             </div>
           </div>
-          <div className="hidden items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 md:flex">
-            <Check className="h-4 w-4 text-emerald-600" />
-            Web 优先，手机和桌面共用一套体验
-          </div>
-        </div>
-      </header>
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-5 pb-24 md:grid-cols-[220px_1fr] md:px-6 md:pb-8">
-        <nav className="hidden rounded-lg border border-slate-200 bg-white p-2 md:block">
-          <NavButton active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
-          <NavButton active={activeTab === "stock"} icon={<Boxes />} label="我的货源" onClick={() => setActiveTab("stock")} />
-          <NavButton active={activeTab === "market"} icon={<Compass />} label="广场" onClick={() => setActiveTab("market")} />
-        </nav>
+          <nav className="space-y-1">
+            <NavButton active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
+            <NavButton active={activeTab === "stock"} icon={<Boxes />} label="我的货源" onClick={() => setActiveTab("stock")} />
+            <NavButton active={activeTab === "market"} icon={<Compass />} label="广场" onClick={() => setActiveTab("market")} />
+          </nav>
 
-        <section className="space-y-5">
-          <div className="grid gap-3 md:grid-cols-2">
-            <Metric label="我的供应" value={`${stocks.length}`} />
-            <Metric label="需求广场" value={`${marketPosts.filter((post) => post.postType === "DEMAND").length}`} />
+          <div className="mt-6 space-y-2 border-t border-neutral-200/80 pt-4">
+            <SideMetric label="我的供应" value={`${stocks.length}`} />
+            <SideMetric label="已核实" value={`${verifiedStockCount}`} />
+            <SideMetric label="需求广场" value={`${demandCount}`} />
           </div>
+        </aside>
+
+        <main className="min-w-0 pb-24 md:pb-8">
+          <header className="sticky top-0 z-30 border-b border-neutral-200/70 bg-[#fbfbfa]/90 backdrop-blur">
+            <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-8">
+              <div className="min-w-0">
+                <p className="mb-1 text-xs font-medium text-neutral-500">货记 / {activePage.crumb}</p>
+                <h2 className="truncate text-xl font-semibold tracking-normal text-neutral-950 md:text-2xl">{activePage.title}</h2>
+              </div>
+              <div className="hidden items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-sm md:flex">
+                <Check className="h-3.5 w-3.5 text-emerald-600" />
+                本地原型运行中
+              </div>
+            </div>
+          </header>
+
+          <section className="mx-auto max-w-6xl space-y-4 px-4 py-5 md:px-8 md:py-7">
 
           {activeTab !== "input" && (
-            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-              <Search className="h-4 w-4 text-slate-400" />
+            <div className="group flex items-center gap-2 rounded-md border border-transparent bg-white px-3 py-2 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)] focus-within:shadow-[0_0_0_1px_rgba(15,15,15,0.22)]">
+              <Search className="h-4 w-4 text-neutral-400 transition group-focus-within:text-neutral-700" />
               <input
                 value={query}
                 onChange={(event) => {
@@ -401,13 +419,13 @@ export default function App() {
                   setMarketPage(1);
                 }}
                 placeholder="搜索型号、城市、状态、配置"
-                className="w-full bg-transparent text-sm outline-none"
+                className="w-full bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
               />
             </div>
           )}
 
           {activeTab === "stock" && (
-            <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="rounded-md bg-white p-3 shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                 <FilterSelect
                   label="品类"
@@ -455,7 +473,7 @@ export default function App() {
                   }}
                 />
               </div>
-              <div className="mt-3 flex flex-col gap-2 text-xs font-semibold text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+              <div className="mt-3 flex flex-col gap-2 text-xs font-medium text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
                 <span>已显示 {filteredStocks.length} 条，按录入时间最新在前</span>
                 <button
                   type="button"
@@ -467,7 +485,7 @@ export default function App() {
                     setStockPriceFilter("ALL");
                     setStockPage(1);
                   }}
-                  className="self-start rounded-md border border-slate-200 px-2 py-1 font-bold text-slate-600 sm:self-auto"
+                  className="self-start rounded-md px-2 py-1 font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 sm:self-auto"
                 >
                   清空筛选
                 </button>
@@ -476,30 +494,38 @@ export default function App() {
           )}
 
           {activeTab === "input" && (
-            <div className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-2">
               <Panel title="AI 解析供需" icon={<Bot />}>
                 <textarea
                   value={aiText}
                   onChange={(event) => setAiText(event.target.value)}
-                  className="min-h-72 w-full resize-y rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm leading-6 outline-none focus:border-slate-500"
+                  className="min-h-72 w-full resize-y rounded-md border border-transparent bg-[#f7f7f5] p-3 text-sm leading-6 text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
                   placeholder="粘贴微信群聊货源文本，DeepSeek 会按供应/需求、现货/期货/租赁、服务器/显卡/内存/硬盘/CPU/网络设备拆条结构化。"
                 />
                 {aiParseMessage && (
-                  <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">{aiParseMessage}</p>
+                  <p className="mt-2 rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-600">{aiParseMessage}</p>
                 )}
                 <button
                   type="button"
                   onClick={() => createStock("AI")}
                   disabled={isAiParsing}
-                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
                 >
                   <Sparkles className="h-4 w-4" />
                   {isAiParsing ? "解析中..." : "DeepSeek 解析并入库"}
                 </button>
               </Panel>
 
-              <Panel title="手工录入供应" icon={<Plus />}>
-                <div className="grid gap-3 sm:grid-cols-2">
+              <Panel title="手工录入" icon={<Plus />}>
+                <Segmented
+                  value={manualEntryType}
+                  options={[
+                    { label: "供应", value: "GOODS" },
+                    { label: "需求", value: "DEMAND" },
+                  ]}
+                  onChange={(value) => setManualEntryType(value as MarketType)}
+                />
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <TextField label="标题" value={manual.title} onChange={(value) => setManual({ ...manual, title: value })} />
                   <SelectField
                     label="交易大类"
@@ -527,7 +553,18 @@ export default function App() {
                   <TextField label="数量" value={manual.quantity} onChange={(value) => setManual({ ...manual, quantity: value })} />
                   <TextField label="单位" value={manual.quantityUnit} onChange={(value) => setManual({ ...manual, quantityUnit: value })} />
                   <TextField label="城市" value={manual.locationCity} onChange={(value) => setManual({ ...manual, locationCity: value })} />
-                  <TextField label="对外价格" value={manual.priceAmount} onChange={(value) => setManual({ ...manual, priceAmount: value })} />
+                  <TextField
+                    label={manualEntryType === "GOODS" ? "对外价格" : "预算上限"}
+                    value={manual.priceAmount}
+                    onChange={(value) => setManual({ ...manual, priceAmount: value })}
+                  />
+                  {manualEntryType === "DEMAND" && (
+                    <TextField
+                      label="联系方式"
+                      value={manual.contactMethod}
+                      onChange={(value) => setManual({ ...manual, contactMethod: value })}
+                    />
+                  )}
                 </div>
                 <ConfigEditor
                   items={manual.configItems}
@@ -535,53 +572,11 @@ export default function App() {
                 />
                 <button
                   type="button"
-                  onClick={() => createStock("MANUAL")}
-                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-bold text-white"
+                  onClick={submitManualEntry}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800"
                 >
-                  <Database className="h-4 w-4" />
-                  保存到我的货源
-                </button>
-              </Panel>
-
-              <Panel title="发布需求到广场" icon={<Megaphone />}>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                  <SelectField
-                    label="交易大类"
-                    value={demand.tradeMode}
-                    options={tradeModeOptions}
-                    onChange={(value) => setDemand({ ...demand, tradeMode: value as TradeMode })}
-                  />
-                  <SelectField
-                    label="品类"
-                    value={demand.productCategory}
-                    options={productCategoryOptions}
-                    onChange={(value) =>
-                      setDemand({
-                        ...demand,
-                        productCategory: value as ProductCategory,
-                        quantityUnit: quantityUnitForCategory(value as ProductCategory),
-                        configItems: defaultConfig(value as ProductCategory),
-                      })
-                    }
-                  />
-                  <TextField label="型号 / 规格" value={demand.gpuModel} onChange={(value) => setDemand({ ...demand, gpuModel: value })} />
-                  <TextField label="数量" value={demand.quantity} onChange={(value) => setDemand({ ...demand, quantity: value })} />
-                  <TextField label="单位" value={demand.quantityUnit} onChange={(value) => setDemand({ ...demand, quantityUnit: value })} />
-                  <TextField label="城市" value={demand.locationCity} onChange={(value) => setDemand({ ...demand, locationCity: value })} />
-                  <TextField label="预算上限" value={demand.budget} onChange={(value) => setDemand({ ...demand, budget: value })} />
-                  <TextField label="联系方式" value={demand.contactMethod} onChange={(value) => setDemand({ ...demand, contactMethod: value })} />
-                </div>
-                <ConfigEditor
-                  items={demand.configItems}
-                  onChange={(configItems) => setDemand({ ...demand, configItems })}
-                />
-                <button
-                  type="button"
-                  onClick={publishDemand}
-                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-3 text-sm font-bold text-white"
-                >
-                  <Megaphone className="h-4 w-4" />
-                  发布需求
+                  {manualEntryType === "GOODS" ? <Database className="h-4 w-4" /> : <Megaphone className="h-4 w-4" />}
+                  {manualEntryType === "GOODS" ? "保存到我的货源" : "发布需求到广场"}
                 </button>
               </Panel>
             </div>
@@ -590,27 +585,30 @@ export default function App() {
           {activeTab === "stock" && (
             <div className="space-y-3">
               {pagedStocks.map((stock) => (
-                <article key={stock.id} className="rounded-lg border border-slate-200 bg-white p-4">
+                <article
+                  key={stock.id}
+                  className="group rounded-md bg-white p-4 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:bg-[#fdfdfc] hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)]"
+                >
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="font-black">{stock.title}</h2>
+                        <h2 className="font-semibold text-neutral-950">{stock.title}</h2>
                         <Badge>{productCategoryText(stock.productCategory)}</Badge>
                         <Badge>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
                         <Badge>{tradeModeText(stock.tradeMode)}</Badge>
                         <Badge>{statusText(stock.status)}</Badge>
                       </div>
-                      <p className="mt-2 text-sm text-slate-600">
+                      <p className="mt-2 text-sm text-neutral-600">
                         {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
                         {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
                       </p>
-                      <p className="mt-1 text-xs font-semibold text-slate-400">录入时间：{formatHourTime(stock.createdAt)}</p>
+                      <p className="mt-1 text-xs font-medium text-neutral-400">录入时间：{formatHourTime(stock.createdAt)}</p>
                       <ConfigSheet items={stock.configItems} />
                     </div>
                     <button
                       type="button"
                       onClick={() => saveStocks(stocks.map((item) => (item.id === stock.id ? { ...item, status: "EXPIRED" } : item)))}
-                      className="self-start rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 md:self-auto"
+                      className="self-start rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 md:self-auto"
                     >
                       标记失效
                     </button>
@@ -627,7 +625,7 @@ export default function App() {
 
           {activeTab === "market" && (
             <div className="space-y-3">
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="rounded-md bg-white p-3 shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
                 <div className="grid gap-2 xl:grid-cols-2">
                   <Segmented
                     value={marketCategoryFilter}
@@ -648,24 +646,27 @@ export default function App() {
                 </div>
               </div>
               {pagedMarket.map((post) => (
-                <article key={post.id} className="rounded-lg border border-slate-200 bg-white p-4">
+                <article
+                  key={post.id}
+                  className="group rounded-md bg-white p-4 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:bg-[#fdfdfc] hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)]"
+                >
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge>需求</Badge>
                         <Badge>{tradeModeText(post.tradeMode)}</Badge>
                         <Badge>{productCategoryText(post.productCategory)}</Badge>
-                        <h2 className="font-black">{post.title}</h2>
+                        <h2 className="font-semibold text-neutral-950">{post.title}</h2>
                       </div>
-                      <p className="mt-2 text-sm text-slate-600">
+                      <p className="mt-2 text-sm text-neutral-600">
                         {post.gpuModel} / {post.quantity}{post.quantityUnit} / {post.locationCity}
                         {post.priceAmount ? ` / ${formatMoney(post.priceAmount)}` : ""}
                       </p>
-                      <p className="mt-1 text-xs font-semibold text-slate-400">创建时间：{formatHourTime(post.publishedAt)}</p>
+                      <p className="mt-1 text-xs font-medium text-neutral-400">创建时间：{formatHourTime(post.publishedAt)}</p>
                       <ConfigSheet items={post.configItems} />
-                      <p className="mt-1 text-xs text-slate-500">联系方式：{post.contactMethod}</p>
+                      <p className="mt-1 text-xs text-neutral-500">联系方式：{post.contactMethod}</p>
                     </div>
-                    <button type="button" className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold">
+                    <button type="button" className="self-start rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 md:self-auto">
                       联系
                     </button>
                   </div>
@@ -678,10 +679,11 @@ export default function App() {
               />
             </div>
           )}
-        </section>
-      </main>
+          </section>
+        </main>
+      </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t border-slate-200 bg-white md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t border-neutral-200 bg-white/95 shadow-[0_-8px_24px_rgba(15,15,15,0.05)] backdrop-blur md:hidden">
         <MobileTab active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
         <MobileTab active={activeTab === "stock"} icon={<Boxes />} label="我的货源" onClick={() => setActiveTab("stock")} />
         <MobileTab active={activeTab === "market"} icon={<Compass />} label="广场" onClick={() => setActiveTab("market")} />
@@ -692,9 +694,9 @@ export default function App() {
 
 function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex items-center gap-2 font-black">
-        {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-5 w-5 text-blue-600" })}
+    <section className="rounded-md bg-white p-4 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)]">
+      <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-800">
+        {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4 text-neutral-500" })}
         <h2>{title}</h2>
       </div>
       {children}
@@ -707,11 +709,11 @@ function NavButton({ active, icon, label, onClick }: { active: boolean; icon: Re
     <button
       type="button"
       onClick={onClick}
-      className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-3 text-sm font-bold ${
-        active ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"
+      className={`mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm font-medium transition ${
+        active ? "bg-neutral-200/70 text-neutral-950" : "text-neutral-600 hover:bg-neutral-200/50 hover:text-neutral-950"
       }`}
     >
-      {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4" })}
+      {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4 text-neutral-500" })}
       {label}
     </button>
   );
@@ -722,7 +724,9 @@ function MobileTab({ active, icon, label, onClick }: { active: boolean; icon: Re
     <button
       type="button"
       onClick={onClick}
-      className={`flex flex-col items-center gap-1 px-2 py-2 text-xs font-bold ${active ? "text-blue-600" : "text-slate-500"}`}
+      className={`flex flex-col items-center gap-1 px-2 py-2 text-xs font-medium transition ${
+        active ? "text-neutral-950" : "text-neutral-500"
+      }`}
     >
       {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-5 w-5" })}
       {label}
@@ -730,14 +734,23 @@ function MobileTab({ active, icon, label, onClick }: { active: boolean; icon: Re
   );
 }
 
+function SideMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs transition hover:bg-neutral-200/50">
+      <span className="font-medium text-neutral-500">{label}</span>
+      <span className="font-semibold text-neutral-800">{value}</span>
+    </div>
+  );
+}
+
 function TextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-bold text-slate-500">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-neutral-500">{label}</span>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-500"
+        className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
       />
     </label>
   );
@@ -756,11 +769,11 @@ function SelectField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-bold text-slate-500">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-neutral-500">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-500"
+        className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -785,11 +798,11 @@ function FilterSelect({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-black text-slate-500">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-neutral-500">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-sm font-semibold outline-none focus:border-slate-500"
+        className="h-9 w-full rounded-md border border-transparent bg-[#f7f7f5] px-2 text-sm font-medium text-neutral-900 outline-none transition hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -822,17 +835,17 @@ function Pagination({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
-      <span className="font-semibold">
+    <div className="flex flex-col gap-3 rounded-md bg-white px-3 py-3 text-sm text-neutral-600 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] sm:flex-row sm:items-center sm:justify-between">
+      <span className="font-medium">
         {total > 0 ? `显示 ${start}-${end} 条，共 ${total} 条` : "暂无符合条件的数据"}
-        <span className="ml-2 text-xs text-slate-400">每页 {LIST_PAGE_SIZE} 条</span>
+        <span className="ml-2 text-xs text-neutral-400">每页 {LIST_PAGE_SIZE} 条</span>
       </span>
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           disabled={isFirstPage}
           onClick={() => changePage(1)}
-          className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
         >
           首页
         </button>
@@ -840,18 +853,18 @@ function Pagination({
           type="button"
           disabled={isFirstPage}
           onClick={() => changePage(currentPage - 1)}
-          className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
         >
           上一页
         </button>
-        <span className="px-1 text-xs font-black text-slate-500">
+        <span className="px-1 text-xs font-semibold text-neutral-500">
           第 {currentPage} / {totalPages} 页
         </span>
         <button
           type="button"
           disabled={isLastPage}
           onClick={() => changePage(currentPage + 1)}
-          className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
         >
           下一页
         </button>
@@ -859,7 +872,7 @@ function Pagination({
           type="button"
           disabled={isLastPage}
           onClick={() => changePage(totalPages)}
-          className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
         >
           末页
         </button>
@@ -876,21 +889,21 @@ function ConfigEditor({
   onChange: (items: ConfigItem[]) => void;
 }) {
   return (
-    <div className="mt-4 border-t border-slate-100 pt-4">
+    <div className="mt-4 border-t border-neutral-100 pt-4">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="text-xs font-black text-slate-500">详细配置单</p>
-        <span className="text-xs font-semibold text-slate-400">按当前品类保存</span>
+        <p className="text-xs font-semibold text-neutral-500">详细配置单</p>
+        <span className="text-xs font-medium text-neutral-400">按当前品类保存</span>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         {items.map((item, index) => (
           <label key={`${item.label}-${index}`} className="block">
-            <span className="mb-1 block text-xs font-bold text-slate-500">{item.label}</span>
+            <span className="mb-1 block text-xs font-medium text-neutral-500">{item.label}</span>
             <input
               value={item.value}
               onChange={(event) =>
                 onChange(items.map((config, configIndex) => (configIndex === index ? { ...config, value: event.target.value } : config)))
               }
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-500"
+              className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
             />
           </label>
         ))}
@@ -904,13 +917,13 @@ function ConfigSheet({ items }: { items: ConfigItem[] }) {
   if (!visibleItems.length) return null;
 
   return (
-    <div className="mt-3 border-t border-slate-100 pt-3">
-      <p className="mb-1 text-xs font-black text-slate-500">详细配置单</p>
+    <div className="mt-3 border-t border-neutral-100 pt-3">
+      <p className="mb-1 text-xs font-semibold text-neutral-500">详细配置单</p>
       <dl className="grid gap-x-5 sm:grid-cols-2 xl:grid-cols-3">
         {visibleItems.map((item, index) => (
-          <div key={`${item.label}-${index}`} className="grid grid-cols-[72px_1fr] gap-2 border-b border-slate-100 py-2 text-sm">
-            <dt className="font-bold text-slate-500">{item.label}</dt>
-            <dd className="break-words text-slate-800">{item.value}</dd>
+          <div key={`${item.label}-${index}`} className="grid grid-cols-[72px_1fr] gap-2 border-b border-neutral-100 py-2 text-sm">
+            <dt className="font-medium text-neutral-400">{item.label}</dt>
+            <dd className="break-words text-neutral-800">{item.value}</dd>
           </div>
         ))}
       </dl>
@@ -929,7 +942,7 @@ function Segmented({
 }) {
   return (
     <div
-      className="grid gap-1 rounded-lg bg-slate-100 p-1"
+      className="grid gap-1 rounded-md bg-[#f1f1ef] p-1"
       style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
     >
       {options.map((option) => (
@@ -937,8 +950,8 @@ function Segmented({
           key={option.value}
           type="button"
           onClick={() => onChange(option.value)}
-          className={`rounded-md px-2 py-2 text-xs font-black ${
-            value === option.value ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"
+          className={`rounded-[5px] px-2 py-2 text-xs font-medium transition ${
+            value === option.value ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500 hover:bg-white/60 hover:text-neutral-900"
           }`}
         >
           {option.label}
@@ -948,17 +961,8 @@ function Segmented({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <p className="text-xs font-bold text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-black">{value}</p>
-    </div>
-  );
-}
-
 function Badge({ children }: { children: React.ReactNode }) {
-  return <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{children}</span>;
+  return <span className="rounded-[5px] bg-[#f1f1ef] px-1.5 py-0.5 text-xs font-medium text-neutral-500">{children}</span>;
 }
 
 async function parseWithAiGateway(text: string): Promise<{
