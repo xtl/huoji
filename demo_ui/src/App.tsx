@@ -18,6 +18,8 @@ type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
 type PriceFilter = "ALL" | "HAS_PRICE" | "NO_PRICE" | "UNDER_10000" | "FROM_10000_TO_100000" | "FROM_100000_TO_500000" | "OVER_500000";
 
+const LIST_PAGE_SIZE = 30;
+
 interface ConfigItem {
   label: string;
   value: string;
@@ -170,6 +172,8 @@ export default function App() {
   const [stockSourceFilter, setStockSourceFilter] = useState<StockItem["source"] | "ALL">("ALL");
   const [stockModeFilter, setStockModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [stockPriceFilter, setStockPriceFilter] = useState<PriceFilter>("ALL");
+  const [stockPage, setStockPage] = useState(1);
+  const [marketPage, setMarketPage] = useState(1);
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [aiParseMessage, setAiParseMessage] = useState("");
   const [manual, setManual] = useState({
@@ -251,6 +255,11 @@ export default function App() {
     });
   }, [query, marketCategoryFilter, marketModeFilter, marketPosts, marketTypeFilter]);
 
+  const stockCurrentPage = clampPage(stockPage, totalPagesFor(filteredStocks.length));
+  const marketCurrentPage = clampPage(marketPage, totalPagesFor(filteredMarket.length));
+  const pagedStocks = filteredStocks.slice((stockCurrentPage - 1) * LIST_PAGE_SIZE, stockCurrentPage * LIST_PAGE_SIZE);
+  const pagedMarket = filteredMarket.slice((marketCurrentPage - 1) * LIST_PAGE_SIZE, marketCurrentPage * LIST_PAGE_SIZE);
+
   function saveStocks(next: StockItem[]) {
     setStocks(next);
     localStorage.setItem("huoji_web_stocks", JSON.stringify(next));
@@ -275,8 +284,14 @@ export default function App() {
         if (!materialized.stockItems.length && !materialized.marketItems.length) {
           throw new Error("没有识别到可入库的供需条目");
         }
-        if (materialized.stockItems.length) saveStocks([...materialized.stockItems, ...stocks]);
-        if (materialized.marketItems.length) saveMarket([...materialized.marketItems, ...marketPosts]);
+        if (materialized.stockItems.length) {
+          saveStocks([...materialized.stockItems, ...stocks]);
+          setStockPage(1);
+        }
+        if (materialized.marketItems.length) {
+          saveMarket([...materialized.marketItems, ...marketPosts]);
+          setMarketPage(1);
+        }
         setAiParseMessage(
           `${aiResult.isMock ? "离线解析" : "DeepSeek"}完成：${materialized.stockItems.length} 条供应进入我的货源，${materialized.marketItems.length} 条需求进入广场。`,
         );
@@ -284,6 +299,7 @@ export default function App() {
       } catch (error) {
         const fallback = materializeParsedItems([parseAiText(aiText)]);
         saveStocks([...fallback.stockItems, ...stocks]);
+        setStockPage(1);
         setAiParseMessage(error instanceof Error ? `DeepSeek 解析失败，已用本地解析兜底：${error.message}` : "已用本地解析兜底。");
         setActiveTab("stock");
       } finally {
@@ -316,6 +332,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
     };
     saveStocks([stock, ...stocks]);
+    setStockPage(1);
     setActiveTab("stock");
   }
 
@@ -337,6 +354,8 @@ export default function App() {
     };
     saveMarket([post, ...marketPosts]);
     saveStocks(stocks.map((item) => (item.id === stock.id ? { ...item, status: "SELLABLE" } : item)));
+    setStockPage(1);
+    setMarketPage(1);
     setActiveTab("market");
   }
 
@@ -359,6 +378,7 @@ export default function App() {
       publishedAt: new Date().toISOString(),
     };
     saveMarket([post, ...marketPosts]);
+    setMarketPage(1);
     setActiveTab("market");
   }
 
@@ -401,7 +421,11 @@ export default function App() {
               <Search className="h-4 w-4 text-slate-400" />
               <input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setStockPage(1);
+                  setMarketPage(1);
+                }}
                 placeholder="搜索型号、城市、状态、配置"
                 className="w-full bg-transparent text-sm outline-none"
               />
@@ -415,31 +439,46 @@ export default function App() {
                   label="品类"
                   value={stockCategoryFilter}
                   options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
-                  onChange={(value) => setStockCategoryFilter(value as ProductCategory | "ALL")}
+                  onChange={(value) => {
+                    setStockCategoryFilter(value as ProductCategory | "ALL");
+                    setStockPage(1);
+                  }}
                 />
                 <FilterSelect
                   label="城市"
                   value={stockCityFilter}
                   options={stockCityOptions}
-                  onChange={setStockCityFilter}
+                  onChange={(value) => {
+                    setStockCityFilter(value);
+                    setStockPage(1);
+                  }}
                 />
                 <FilterSelect
                   label="来源"
                   value={stockSourceFilter}
                   options={stockSourceOptions}
-                  onChange={(value) => setStockSourceFilter(value as StockItem["source"] | "ALL")}
+                  onChange={(value) => {
+                    setStockSourceFilter(value as StockItem["source"] | "ALL");
+                    setStockPage(1);
+                  }}
                 />
                 <FilterSelect
                   label="交易大类"
                   value={stockModeFilter}
                   options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
-                  onChange={(value) => setStockModeFilter(value as TradeMode | "ALL")}
+                  onChange={(value) => {
+                    setStockModeFilter(value as TradeMode | "ALL");
+                    setStockPage(1);
+                  }}
                 />
                 <FilterSelect
                   label="价格"
                   value={stockPriceFilter}
                   options={stockPriceOptions}
-                  onChange={(value) => setStockPriceFilter(value as PriceFilter)}
+                  onChange={(value) => {
+                    setStockPriceFilter(value as PriceFilter);
+                    setStockPage(1);
+                  }}
                 />
               </div>
               <div className="mt-3 flex flex-col gap-2 text-xs font-semibold text-slate-500 sm:flex-row sm:items-center sm:justify-between">
@@ -452,6 +491,7 @@ export default function App() {
                     setStockSourceFilter("ALL");
                     setStockModeFilter("ALL");
                     setStockPriceFilter("ALL");
+                    setStockPage(1);
                   }}
                   className="self-start rounded-md border border-slate-200 px-2 py-1 font-bold text-slate-600 sm:self-auto"
                 >
@@ -533,7 +573,7 @@ export default function App() {
 
           {activeTab === "stock" && (
             <div className="space-y-3">
-              {filteredStocks.map((stock) => (
+              {pagedStocks.map((stock) => (
                 <article key={stock.id} className="rounded-lg border border-slate-200 bg-white p-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
@@ -571,6 +611,11 @@ export default function App() {
                   </div>
                 </article>
               ))}
+              <Pagination
+                total={filteredStocks.length}
+                page={stockCurrentPage}
+                onPageChange={setStockPage}
+              />
             </div>
           )}
 
@@ -624,12 +669,18 @@ export default function App() {
                     <Segmented
                       value={marketCategoryFilter}
                       options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
-                      onChange={(value) => setMarketCategoryFilter(value as ProductCategory | "ALL")}
+                      onChange={(value) => {
+                        setMarketCategoryFilter(value as ProductCategory | "ALL");
+                        setMarketPage(1);
+                      }}
                     />
                     <Segmented
                       value={marketModeFilter}
                       options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
-                      onChange={(value) => setMarketModeFilter(value as TradeMode | "ALL")}
+                      onChange={(value) => {
+                        setMarketModeFilter(value as TradeMode | "ALL");
+                        setMarketPage(1);
+                      }}
                     />
                     <Segmented
                       value={marketTypeFilter}
@@ -638,11 +689,14 @@ export default function App() {
                         { label: "供应", value: "GOODS" },
                         { label: "需求", value: "DEMAND" },
                       ]}
-                      onChange={(value) => setMarketTypeFilter(value as MarketType | "ALL")}
+                      onChange={(value) => {
+                        setMarketTypeFilter(value as MarketType | "ALL");
+                        setMarketPage(1);
+                      }}
                     />
                   </div>
                 </div>
-                {filteredMarket.map((post) => (
+                {pagedMarket.map((post) => (
                   <article key={post.id} className="rounded-lg border border-slate-200 bg-white p-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                       <div>
@@ -666,6 +720,11 @@ export default function App() {
                     </div>
                   </article>
                 ))}
+                <Pagination
+                  total={filteredMarket.length}
+                  page={marketCurrentPage}
+                  onPageChange={setMarketPage}
+                />
               </div>
             </div>
           )}
@@ -789,6 +848,73 @@ function FilterSelect({
         ))}
       </select>
     </label>
+  );
+}
+
+function Pagination({
+  total,
+  page,
+  onPageChange,
+}: {
+  total: number;
+  page: number;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = totalPagesFor(total);
+  const currentPage = clampPage(page, totalPages);
+  const start = total > 0 ? (currentPage - 1) * LIST_PAGE_SIZE + 1 : 0;
+  const end = Math.min(currentPage * LIST_PAGE_SIZE, total);
+  const isFirstPage = currentPage <= 1;
+  const isLastPage = currentPage >= totalPages;
+
+  function changePage(nextPage: number) {
+    onPageChange(clampPage(nextPage, totalPages));
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+      <span className="font-semibold">
+        {total > 0 ? `显示 ${start}-${end} 条，共 ${total} 条` : "暂无符合条件的数据"}
+        <span className="ml-2 text-xs text-slate-400">每页 {LIST_PAGE_SIZE} 条</span>
+      </span>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={isFirstPage}
+          onClick={() => changePage(1)}
+          className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          首页
+        </button>
+        <button
+          type="button"
+          disabled={isFirstPage}
+          onClick={() => changePage(currentPage - 1)}
+          className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          上一页
+        </button>
+        <span className="px-1 text-xs font-black text-slate-500">
+          第 {currentPage} / {totalPages} 页
+        </span>
+        <button
+          type="button"
+          disabled={isLastPage}
+          onClick={() => changePage(currentPage + 1)}
+          className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          下一页
+        </button>
+        <button
+          type="button"
+          disabled={isLastPage}
+          onClick={() => changePage(totalPages)}
+          className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          末页
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1271,6 +1397,15 @@ function matchesPriceFilter(amount: number | undefined, filter: PriceFilter): bo
 function createdTimeValue(value: string): number {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
+}
+
+function totalPagesFor(total: number): number {
+  return Math.max(1, Math.ceil(total / LIST_PAGE_SIZE));
+}
+
+function clampPage(page: number, totalPages: number): number {
+  if (!Number.isFinite(page) || page < 1) return 1;
+  return Math.min(Math.floor(page), totalPages);
 }
 
 function productCategoryText(category: ProductCategory): string {
