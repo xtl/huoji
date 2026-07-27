@@ -548,6 +548,7 @@ export default function App() {
                         {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
                         {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
                       </p>
+                      <p className="mt-1 text-xs font-semibold text-slate-400">录入时间：{formatHourTime(stock.createdAt)}</p>
                       <ConfigSheet items={stock.configItems} />
                     </div>
                     <div className="flex gap-2">
@@ -655,6 +656,7 @@ export default function App() {
                           {post.gpuModel} / {post.quantity}{post.quantityUnit} / {post.locationCity}
                           {post.priceAmount ? ` / ${formatMoney(post.priceAmount)}` : ""}
                         </p>
+                        <p className="mt-1 text-xs font-semibold text-slate-400">创建时间：{formatHourTime(post.publishedAt)}</p>
                         <ConfigSheet items={post.configItems} />
                         <p className="mt-1 text-xs text-slate-500">联系方式：{post.contactMethod}</p>
                       </div>
@@ -1400,4 +1402,13 @@ function statusText(status: StockItem["status"]): string {
 
 function formatMoney(amount: number): string {
   return amount >= 10000 ? `${Math.round(amount / 10000)}万` : `${amount}`;
+}
+
+function formatHourTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "时间待确认";
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const hour = `${date.getHours()}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day} ${hour}:00`;
 }
