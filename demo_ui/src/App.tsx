@@ -5,13 +5,14 @@ import {
   Boxes,
   Check,
   CircleOff,
+  ClipboardCheck,
   Compass,
   Database,
-  Megaphone,
   MessageCircle,
   Plus,
   RotateCcw,
   Search,
+  SendHorizontal,
   Sparkles,
   Trash2,
   X,
@@ -24,6 +25,9 @@ type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "N
 type PriceFilter = "ALL" | "HAS_PRICE" | "NO_PRICE" | "UNDER_10000" | "FROM_10000_TO_100000" | "FROM_100000_TO_500000" | "OVER_500000";
 type BadgeTone = "default" | "blue" | "green" | "orange" | "red";
 type NoticeTone = "info" | "success" | "warning";
+type QuickMarketType = "AUTO" | MarketType;
+type QuickTradeMode = "AUTO" | TradeMode;
+type QuickProductCategory = "AUTO" | ProductCategory;
 
 const LIST_PAGE_SIZE = 30;
 const AI_EXAMPLE_TEXT = "深圳现货 H100 8卡服务器 2台 全新 价格120万";
@@ -95,23 +99,40 @@ interface ParsedTradeItem {
   configItems?: ConfigItem[];
 }
 
-interface ManualDraft {
+interface NoticeState {
+  tone: NoticeTone;
+  text: string;
+}
+
+interface TradeDraft {
+  id: string;
+  postType: MarketType;
   productCategory: ProductCategory;
   tradeMode: TradeMode;
+  title: string;
   gpuModel: string;
   gpuCount: string;
   quantity: string;
   quantityUnit: string;
   locationCity: string;
   priceAmount: string;
-  title: string;
   contactMethod: string;
   configItems: ConfigItem[];
+  source: "AI" | "MANUAL";
+  rawText: string;
 }
 
-interface NoticeState {
-  tone: NoticeTone;
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
   text: string;
+  tone?: NoticeTone;
+}
+
+interface EntryOverrides {
+  postType?: MarketType;
+  tradeMode?: TradeMode;
+  productCategory?: ProductCategory;
 }
 
 interface AiStructureResponse {
@@ -205,10 +226,19 @@ export default function App() {
   const [stockPriceFilter, setStockPriceFilter] = useState<PriceFilter>("ALL");
   const [stockPage, setStockPage] = useState(1);
   const [marketPage, setMarketPage] = useState(1);
-  const [manualEntryType, setManualEntryType] = useState<MarketType>("GOODS");
+  const [entryIntent, setEntryIntent] = useState<QuickMarketType>("AUTO");
+  const [entryMode, setEntryMode] = useState<QuickTradeMode>("AUTO");
+  const [entryCategory, setEntryCategory] = useState<QuickProductCategory>("AUTO");
+  const [draftItems, setDraftItems] = useState<TradeDraft[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: "assistant-welcome",
+      role: "assistant",
+      text: "把微信群货源、求购、租赁信息直接发给我。我会先拆成待确认结果，不会自动入库。",
+    },
+  ]);
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [aiParseMessage, setAiParseMessage] = useState("");
-  const [manual, setManual] = useState<ManualDraft>(() => createManualDraft());
   const [notice, setNotice] = useState<NoticeState | null>(null);
 
   const filteredStocks = useMemo(() => {
@@ -276,12 +306,19 @@ export default function App() {
   const activePage = pageMeta[activeTab];
   const activeSummary =
     activeTab === "input"
-      ? `${stocks.length} 条供应 / ${demandCount} 条需求`
+      ? `${stocks.length} 条供应 / ${demandCount} 条需求 / ${draftItems.length} 待确认`
       : activeTab === "stock"
         ? `${filteredStocks.length} 条供应`
         : `${filteredMarket.length} 条需求`;
   const aiLineCount = aiText.trim() ? aiText.trim().split(/\r?\n/).filter(Boolean).length : 0;
-  const manualIssue = manualDraftIssue(manual);
+  const draftSummary = draftItems.reduce(
+    (summary, item) => ({
+      goods: summary.goods + (item.postType === "GOODS" ? 1 : 0),
+      demands: summary.demands + (item.postType === "DEMAND" ? 1 : 0),
+      incomplete: summary.incomplete + (tradeDraftIssue(item) ? 1 : 0),
+    }),
+    { goods: 0, demands: 0, incomplete: 0 },
+  );
 
   function saveStocks(next: StockItem[]) {
     setStocks(next);
@@ -333,113 +370,107 @@ export default function App() {
     };
   }
 
-  async function createStock(source: "AI" | "MANUAL") {
-    if (source === "AI") {
-      if (!aiText.trim()) {
-        setAiParseMessage("请先粘贴需要解析的货源文本。");
-        setNotice({ tone: "warning", text: "AI 解析文本为空。" });
-        return;
-      }
-      setIsAiParsing(true);
-      setAiParseMessage("正在调用 DeepSeek 结构化解析...");
-      setNotice(null);
-      try {
-        const aiResult = await parseWithAiGateway(aiText);
-        const materialized = materializeParsedItems(aiResult.items);
-        if (!materialized.stockItems.length && !materialized.marketItems.length) {
-          throw new Error("没有识别到可入库的供需条目");
-        }
-        const result = saveParsedItems(materialized);
-        if (!result.stockCount && !result.marketCount) {
-          throw new Error("识别结果与当前列表重复，未新增。");
-        }
-        setAiParseMessage(
-          `${aiResult.isMock ? "离线解析" : "DeepSeek"}完成：新增 ${result.stockCount} 条供应、${result.marketCount} 条需求${result.skippedCount ? `，跳过 ${result.skippedCount} 条重复` : ""}。`,
-        );
-        setNotice({ tone: "success", text: `解析完成，新增 ${result.stockCount} 条供应、${result.marketCount} 条需求。` });
-        setActiveTab(result.stockCount ? "stock" : result.marketCount ? "market" : activeTab);
-      } catch (error) {
-        const fallback = materializeParsedItems([parseAiText(aiText)]);
-        const result = saveParsedItems(fallback);
-        setAiParseMessage(error instanceof Error ? `DeepSeek 解析失败，已用本地解析兜底：${error.message}` : "已用本地解析兜底。");
-        setNotice({
-          tone: result.stockCount || result.marketCount ? "warning" : "info",
-          text: result.stockCount || result.marketCount ? `本地兜底新增 ${result.stockCount} 条供应、${result.marketCount} 条需求。` : "本地兜底没有新增数据。",
-        });
-        setActiveTab(result.stockCount ? "stock" : result.marketCount ? "market" : activeTab);
-      } finally {
-        setIsAiParsing(false);
-      }
+  async function parseAssistantInput() {
+    const input = aiText.trim();
+    if (!input) {
+      setAiParseMessage("请先输入或粘贴需要解析的供需文本。");
+      setNotice({ tone: "warning", text: "货记输入为空。" });
       return;
     }
 
-    const parsed = manual;
-    const stock: StockItem = {
-      id: `stock-${Date.now()}`,
-      productCategory: parsed.productCategory,
-      title: parsed.title || `${productCategoryText(parsed.productCategory)} ${parsed.gpuModel || "待确认"}`,
-      gpuModel: parsed.gpuModel || "待确认",
-      gpuCount: toNumber(parsed.gpuCount, 8),
-      quantity: toNumber(parsed.quantity, 1),
-      quantityUnit: parsed.quantityUnit || quantityUnitForCategory(parsed.productCategory),
-      locationCity: parsed.locationCity || "待确认",
-      priceAmount: toOptionalNumber(parsed.priceAmount),
-      condition: "待确认",
-      availabilityType: "待确认",
-      tradeMode: parsed.tradeMode,
-      configItems: normalizeConfigItems(parsed.configItems, parsed.productCategory, {
-        gpuModel: parsed.gpuModel,
-        gpuCount: parsed.gpuCount,
-        condition: undefined,
-      }),
-      status: "UNVERIFIED",
-      source,
-      createdAt: new Date().toISOString(),
+    const overrides = {
+      postType: entryIntent === "AUTO" ? undefined : entryIntent,
+      tradeMode: entryMode === "AUTO" ? undefined : entryMode,
+      productCategory: entryCategory === "AUTO" ? undefined : entryCategory,
     };
-    saveStocks([stock, ...stocks]);
-    resetStockFilters();
-    setManual(createManualDraft("GOODS"));
-    setNotice({ tone: "success", text: "供应已保存。" });
-    setActiveTab("stock");
+    setIsAiParsing(true);
+    setNotice(null);
+    setAiParseMessage("正在解析为待确认结果...");
+    setChatMessages((messages) => [...messages, { id: `user-${Date.now()}`, role: "user", text: input }]);
+
+    try {
+      const aiResult = await parseWithAiGateway(buildPromptWithHints(input, overrides));
+      const parsedDrafts = createDraftsFromParsedItems(aiResult.items, "AI", overrides);
+      if (!parsedDrafts.length) throw new Error("没有识别到可确认的供需条目");
+      const result = appendDrafts(parsedDrafts);
+      const summary = countDrafts(parsedDrafts);
+      setAiText("");
+      setAiParseMessage(
+        `${aiResult.isMock ? "离线解析" : "DeepSeek"}完成：${summary.goods} 条供应、${summary.demands} 条需求进入待确认${result.skippedCount ? `，跳过 ${result.skippedCount} 条重复` : ""}。`,
+      );
+      setNotice({ tone: "success", text: `已生成 ${result.addedCount} 条待确认结果。` });
+      setChatMessages((messages) => [
+        ...messages,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          tone: "success",
+          text: `我拆出了 ${summary.goods} 条供应、${summary.demands} 条需求。先检查右侧字段，确认后再保存。`,
+        },
+      ]);
+    } catch (error) {
+      const fallbackDrafts = createDraftsFromParsedItems([parseAiText(input)], "MANUAL", overrides);
+      const result = appendDrafts(fallbackDrafts);
+      setAiParseMessage(error instanceof Error ? `DeepSeek 解析失败，已用本地解析生成待确认：${error.message}` : "已用本地解析生成待确认。");
+      setNotice({
+        tone: result.addedCount ? "warning" : "info",
+        text: result.addedCount ? `本地兜底生成 ${result.addedCount} 条待确认结果。` : "本地兜底没有新增待确认结果。",
+      });
+      setChatMessages((messages) => [
+        ...messages,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          tone: result.addedCount ? "warning" : "info",
+          text: result.addedCount ? `DeepSeek 没跑通，我先用本地规则拆了 ${result.addedCount} 条，你可以继续改字段。` : "这段内容和现有待确认结果重复，暂时没有新增。",
+        },
+      ]);
+    } finally {
+      setIsAiParsing(false);
+    }
   }
 
-  function submitManualEntry() {
-    if (manualIssue) {
-      setNotice({ tone: "warning", text: manualIssue });
-      return;
-    }
-
-    if (manualEntryType === "GOODS") {
-      createStock("MANUAL");
-      return;
-    }
-
-    publishDemand();
+  function appendDrafts(nextDrafts: TradeDraft[]) {
+    const newDrafts = dedupeNewTradeDrafts(nextDrafts, draftItems);
+    if (newDrafts.length) setDraftItems([...newDrafts, ...draftItems]);
+    return { addedCount: newDrafts.length, skippedCount: nextDrafts.length - newDrafts.length };
   }
 
-  function publishDemand() {
-    const post: MarketPost = {
-      id: `market-${Date.now()}`,
-      productCategory: manual.productCategory,
-      tradeMode: manual.tradeMode,
-      postType: "DEMAND",
-      title: manual.title || `${tradeModeText(manual.tradeMode)}求购 ${productCategoryText(manual.productCategory)} ${manual.gpuModel}`,
-      gpuModel: manual.gpuModel,
-      quantity: toNumber(manual.quantity, 1),
-      quantityUnit: manual.quantityUnit || quantityUnitForCategory(manual.productCategory),
-      locationCity: manual.locationCity,
-      priceAmount: toOptionalNumber(manual.priceAmount),
-      contactMethod: manual.contactMethod || "站内联系",
-      configItems: normalizeConfigItems(manual.configItems, manual.productCategory, {
-        gpuModel: manual.gpuModel,
-      }),
-      publishedAt: new Date().toISOString(),
-    };
-    saveMarket([post, ...marketPosts]);
-    resetMarketFilters();
-    setManual(createManualDraft("DEMAND"));
-    setNotice({ tone: "success", text: "需求已发布。" });
-    setActiveTab("market");
+  function updateDraftItem(id: string, patch: Partial<TradeDraft>) {
+    setDraftItems((items) => items.map((item) => (item.id === id ? applyDraftPatch(item, patch) : item)));
+  }
+
+  function removeDraftItem(id: string) {
+    setDraftItems((items) => items.filter((item) => item.id !== id));
+  }
+
+  function confirmDrafts(ids?: string[]) {
+    const selectedIds = ids ? new Set(ids) : null;
+    const selected = selectedIds ? draftItems.filter((item) => selectedIds.has(item.id)) : draftItems;
+    if (!selected.length) {
+      setNotice({ tone: "warning", text: "没有可保存的待确认结果。" });
+      return;
+    }
+    const invalid = selected.find(tradeDraftIssue);
+    if (invalid) {
+      setNotice({ tone: "warning", text: tradeDraftIssue(invalid) ?? "请先补齐必填字段。" });
+      return;
+    }
+    const result = saveParsedItems(materializeConfirmedDrafts(selected));
+    setDraftItems(draftItems.filter((item) => !selected.some((saved) => saved.id === item.id)));
+    setNotice({
+      tone: result.stockCount || result.marketCount ? "success" : "info",
+      text: result.stockCount || result.marketCount ? `已保存 ${result.stockCount} 条供应、${result.marketCount} 条需求。` : "选中的结果与现有数据重复，未新增。",
+    });
+    setChatMessages((messages) => [
+      ...messages,
+      {
+        id: `assistant-${Date.now()}`,
+        role: "assistant",
+        tone: result.stockCount || result.marketCount ? "success" : "info",
+        text: `确认完成：${result.stockCount} 条进入供应，${result.marketCount} 条进入需求${result.skippedCount ? `，${result.skippedCount} 条重复已跳过` : ""}。`,
+      },
+    ]);
   }
 
   return (
@@ -570,119 +601,112 @@ export default function App() {
           )}
 
           {activeTab === "input" && (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel title="AI 解析供需" icon={<Bot />}>
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-neutral-400">{aiLineCount ? `${aiLineCount} 行文本` : "空白文本"}</span>
-                  <div className="flex items-center gap-1">
-                    <ToolbarButton icon={<Sparkles />} label="示例" onClick={() => setAiText(AI_EXAMPLE_TEXT)} />
-                    <ToolbarButton icon={<Trash2 />} label="清空" onClick={() => setAiText("")} />
-                  </div>
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)]">
+              <Panel title="AI 录入助手" icon={<Bot />}>
+                <div className="max-h-72 space-y-2 overflow-y-auto rounded-md bg-[#f7f7f5] p-3">
+                  {chatMessages.map((message) => (
+                    <ChatBubble key={message.id} message={message} />
+                  ))}
                 </div>
-                <textarea
-                  value={aiText}
-                  onChange={(event) => setAiText(event.target.value)}
-                  className="min-h-72 w-full resize-y rounded-md border border-transparent bg-[#f7f7f5] p-3 text-sm leading-6 text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
-                  placeholder="粘贴微信群聊货源文本，DeepSeek 会按供应/需求、现货/期货/租赁、服务器/显卡/内存/硬盘/CPU/网络设备拆条结构化。"
-                />
-                {aiParseMessage && (
-                  <p className="mt-2 rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-600">{aiParseMessage}</p>
-                )}
-                <button
-                  type="button"
-                  onClick={() => createStock("AI")}
-                  disabled={isAiParsing}
-                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  {isAiParsing ? "解析中..." : "DeepSeek 解析并入库"}
-                </button>
+
+                <div className="mt-3 space-y-3">
+                  <ChipGroup
+                    label="类型"
+                    value={entryIntent}
+                    options={[
+                      { label: "自动识别", value: "AUTO" },
+                      { label: "供应", value: "GOODS" },
+                      { label: "需求", value: "DEMAND" },
+                    ]}
+                    onChange={(value) => setEntryIntent(value as QuickMarketType)}
+                  />
+                  <ChipGroup
+                    label="交易"
+                    value={entryMode}
+                    options={[{ label: "自动", value: "AUTO" }, ...tradeModeOptions]}
+                    onChange={(value) => setEntryMode(value as QuickTradeMode)}
+                  />
+                  <ChipGroup
+                    label="品类"
+                    value={entryCategory}
+                    options={[{ label: "自动", value: "AUTO" }, ...productCategoryOptions]}
+                    onChange={(value) => setEntryCategory(value as QuickProductCategory)}
+                  />
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-neutral-400">{aiLineCount ? `${aiLineCount} 行文本` : "空白输入"}</span>
+                    <div className="flex items-center gap-1">
+                      <ToolbarButton icon={<Sparkles />} label="示例" onClick={() => setAiText(AI_EXAMPLE_TEXT)} />
+                      <ToolbarButton icon={<Trash2 />} label="清空" onClick={() => setAiText("")} />
+                    </div>
+                  </div>
+                  <textarea
+                    value={aiText}
+                    onChange={(event) => setAiText(event.target.value)}
+                    className="min-h-36 w-full resize-y rounded-md border border-transparent bg-[#f7f7f5] p-3 text-sm leading-6 text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+                    placeholder="直接发一句，或粘贴整段微信群聊。比如：供应 深圳现货 5090 风扇卡 300张；需求 香港找 H200 整机 4台。"
+                  />
+                  {aiParseMessage && (
+                    <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-600">{aiParseMessage}</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={parseAssistantInput}
+                    disabled={isAiParsing}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+                  >
+                    <SendHorizontal className="h-4 w-4" />
+                    {isAiParsing ? "解析中..." : "发送并生成待确认"}
+                  </button>
+                </div>
               </Panel>
 
-              <Panel title="手工录入" icon={<Plus />}>
-                <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    <Segmented
-                      value={manualEntryType}
-                      options={[
-                        { label: "供应", value: "GOODS" },
-                        { label: "需求", value: "DEMAND" },
-                      ]}
-                      onChange={(value) => {
-                        setManualEntryType(value as MarketType);
-                        setNotice(null);
-                      }}
-                    />
+              <Panel title="待确认结果" icon={<ClipboardCheck />}>
+                <div className="mb-3 flex flex-col gap-2 border-b border-neutral-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="green">供应 {draftSummary.goods}</Badge>
+                    <Badge tone="orange">需求 {draftSummary.demands}</Badge>
+                    <Badge tone={draftSummary.incomplete ? "orange" : "default"}>待补 {draftSummary.incomplete}</Badge>
                   </div>
-                  <ToolbarButton icon={<RotateCcw />} label="重置" onClick={() => setManual(createManualDraft(manualEntryType))} />
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Badge tone={manualEntryType === "GOODS" ? "green" : "orange"}>
-                    {manualEntryType === "GOODS" ? "目标：供应" : "目标：需求"}
-                  </Badge>
-                  <span className={`text-xs font-medium ${manualIssue ? "text-amber-600" : "text-neutral-400"}`}>
-                    {manualIssue ?? "草稿完整，可提交"}
-                  </span>
-                </div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <TextField
-                    label="标题"
-                    value={manual.title}
-                    placeholder={manualEntryType === "GOODS" ? "可留空，自动生成供应标题" : "可留空，自动生成需求标题"}
-                    onChange={(value) => setManual({ ...manual, title: value })}
-                  />
-                  <SelectField
-                    label="交易大类"
-                    value={manual.tradeMode}
-                    options={tradeModeOptions}
-                    onChange={(value) => setManual({ ...manual, tradeMode: value as TradeMode })}
-                  />
-                  <SelectField
-                    label="品类"
-                    value={manual.productCategory}
-                    options={productCategoryOptions}
-                    onChange={(value) =>
-                      setManual({
-                        ...manual,
-                        productCategory: value as ProductCategory,
-                        quantityUnit: quantityUnitForCategory(value as ProductCategory),
-                        configItems: defaultConfig(value as ProductCategory),
-                      })
-                    }
-                  />
-                  <TextField label="型号 / 规格" value={manual.gpuModel} placeholder="H100 / 64G 5600 / PM9D3A" onChange={(value) => setManual({ ...manual, gpuModel: value })} />
-                  {manual.productCategory !== "MEMORY" && (
-                    <TextField label="卡数" value={manual.gpuCount} onChange={(value) => setManual({ ...manual, gpuCount: value })} />
-                  )}
-                  <TextField label="数量" value={manual.quantity} onChange={(value) => setManual({ ...manual, quantity: value })} />
-                  <TextField label="单位" value={manual.quantityUnit} onChange={(value) => setManual({ ...manual, quantityUnit: value })} />
-                  <TextField label="城市" value={manual.locationCity} placeholder="深圳 / 香港 / 上海" onChange={(value) => setManual({ ...manual, locationCity: value })} />
-                  <TextField
-                    label={manualEntryType === "GOODS" ? "对外价格" : "预算上限"}
-                    value={manual.priceAmount}
-                    onChange={(value) => setManual({ ...manual, priceAmount: value })}
-                  />
-                  {manualEntryType === "DEMAND" && (
-                    <TextField
-                      label="联系方式"
-                      value={manual.contactMethod}
-                      onChange={(value) => setManual({ ...manual, contactMethod: value })}
-                    />
+                  {draftItems.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setDraftItems([])}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        清空
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => confirmDrafts()}
+                        disabled={Boolean(draftSummary.incomplete)}
+                        className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        全部保存
+                      </button>
+                    </div>
                   )}
                 </div>
-                <ConfigEditor
-                  items={manual.configItems}
-                  onChange={(configItems) => setManual({ ...manual, configItems })}
-                />
-                <button
-                  type="button"
-                  onClick={submitManualEntry}
-                  disabled={Boolean(manualIssue)}
-                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
-                >
-                  {manualEntryType === "GOODS" ? <Database className="h-4 w-4" /> : <Megaphone className="h-4 w-4" />}
-                  {manualEntryType === "GOODS" ? "保存供应" : "发布需求"}
-                </button>
+
+                {!draftItems.length ? (
+                  <AssistantEmptyState />
+                ) : (
+                  <div className="space-y-4">
+                    {draftItems.map((draft, index) => (
+                      <DraftReviewItem
+                        key={draft.id}
+                        draft={draft}
+                        index={index}
+                        onChange={(patch) => updateDraftItem(draft.id, patch)}
+                        onRemove={() => removeDraftItem(draft.id)}
+                        onConfirm={() => confirmDrafts([draft.id])}
+                      />
+                    ))}
+                  </div>
+                )}
               </Panel>
             </div>
           )}
@@ -883,6 +907,166 @@ function ToolbarButton({ icon, label, onClick }: { icon: React.ReactNode; label:
     </button>
   );
 }
+
+const ChatBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
+  const isUser = message.role === "user";
+  const toneClass: Record<NoticeTone, string> = {
+    info: "bg-white text-neutral-600",
+    success: "bg-emerald-50 text-emerald-800",
+    warning: "bg-amber-50 text-amber-800",
+  };
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[88%] rounded-md px-3 py-2 text-sm leading-6 shadow-[0_0_0_1px_rgba(15,15,15,0.05)] ${
+          isUser ? "bg-neutral-900 text-white" : toneClass[message.tone ?? "info"]
+        }`}
+      >
+        {message.text}
+      </div>
+    </div>
+  );
+};
+
+function ChipGroup({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ label: string; value: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-neutral-500">{label}</p>
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`shrink-0 rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+              value === option.value ? "bg-neutral-900 text-white" : "bg-[#f1f1ef] text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AssistantEmptyState() {
+  return (
+    <div className="px-4 py-10 text-center">
+      <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md bg-[#f1f1ef] text-neutral-400">
+        <ClipboardCheck className="h-4 w-4" />
+      </div>
+      <p className="text-sm font-medium text-neutral-600">暂无待确认结果</p>
+      <p className="mt-1 text-xs font-medium text-neutral-400">发送一段供需文本后，结果会先出现在这里。</p>
+    </div>
+  );
+}
+
+const DraftReviewItem: React.FC<{
+  draft: TradeDraft;
+  index: number;
+  onChange: (patch: Partial<TradeDraft>) => void;
+  onRemove: () => void;
+  onConfirm: () => void;
+}> = ({
+  draft,
+  index,
+  onChange,
+  onRemove,
+  onConfirm,
+}) => {
+  const issue = tradeDraftIssue(draft);
+  return (
+    <section className="border-t border-neutral-100 pt-4 first:border-t-0 first:pt-0">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={draft.postType === "GOODS" ? "green" : "orange"}>{draft.postType === "GOODS" ? "供应" : "需求"}</Badge>
+            <Badge tone={tradeModeTone(draft.tradeMode)}>{tradeModeText(draft.tradeMode)}</Badge>
+            <Badge tone="blue">{productCategoryText(draft.productCategory)}</Badge>
+            <span className="text-xs font-medium text-neutral-400">#{index + 1}</span>
+          </div>
+          <p className="mt-1 truncate text-sm font-semibold text-neutral-900">{draft.title || `${productCategoryText(draft.productCategory)} ${draft.gpuModel}`}</p>
+          <p className={`mt-1 text-xs font-medium ${issue ? "text-amber-600" : "text-neutral-400"}`}>{issue ?? "字段完整，可保存"}</p>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onRemove}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            删除
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={Boolean(issue)}
+            className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+          >
+            <Check className="h-3.5 w-3.5" />
+            保存
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <SelectField
+          label="类型"
+          value={draft.postType}
+          options={[
+            { label: "供应", value: "GOODS" },
+            { label: "需求", value: "DEMAND" },
+          ]}
+          onChange={(value) => onChange({ postType: value as MarketType })}
+        />
+        <SelectField
+          label="交易大类"
+          value={draft.tradeMode}
+          options={tradeModeOptions}
+          onChange={(value) => onChange({ tradeMode: value as TradeMode })}
+        />
+        <SelectField
+          label="品类"
+          value={draft.productCategory}
+          options={productCategoryOptions}
+          onChange={(value) => onChange({ productCategory: value as ProductCategory })}
+        />
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <TextField label="标题" value={draft.title} placeholder="可留空，自动生成标题" onChange={(value) => onChange({ title: value })} />
+        <TextField label="型号 / 规格" value={draft.gpuModel} placeholder="H100 / 64G 5600 / PM9D3A" onChange={(value) => onChange({ gpuModel: value })} />
+        {draft.productCategory !== "MEMORY" && (
+          <TextField label="卡数" value={draft.gpuCount} onChange={(value) => onChange({ gpuCount: value })} />
+        )}
+        <TextField label="数量" value={draft.quantity} onChange={(value) => onChange({ quantity: value })} />
+        <TextField label="单位" value={draft.quantityUnit} onChange={(value) => onChange({ quantityUnit: value })} />
+        <TextField label="城市" value={draft.locationCity} placeholder="深圳 / 香港 / 上海" onChange={(value) => onChange({ locationCity: value })} />
+        <TextField
+          label={draft.postType === "GOODS" ? "对外价格" : "预算上限"}
+          value={draft.priceAmount}
+          onChange={(value) => onChange({ priceAmount: value })}
+        />
+        <TextField label="联系方式" value={draft.contactMethod} onChange={(value) => onChange({ contactMethod: value })} />
+      </div>
+
+      <details className="mt-3 border-t border-neutral-100 pt-3">
+        <summary className="cursor-pointer text-xs font-semibold text-neutral-500">详细配置单</summary>
+        <ConfigEditor items={draft.configItems} onChange={(configItems) => onChange({ configItems })} />
+      </details>
+    </section>
+  );
+};
 
 function InlineNotice({ tone, text, onDismiss }: { tone: NoticeTone; text: string; onDismiss: () => void }) {
   const toneClass: Record<NoticeTone, string> = {
@@ -1231,69 +1415,184 @@ async function parseWithAiGateway(text: string): Promise<{
   };
 }
 
-function materializeParsedItems(items: ParsedTradeItem[]): { stockItems: StockItem[]; marketItems: MarketPost[] } {
+function createDraftsFromParsedItems(items: ParsedTradeItem[], source: TradeDraft["source"], overrides: EntryOverrides = {}): TradeDraft[] {
+  const now = Date.now();
+  return items
+    .map((item, index) => {
+      const rawText = item.rawText || "";
+      const category = overrides.productCategory ?? normalizeProductCategoryValue(item.productCategory ?? `${item.title ?? ""} ${item.model ?? ""} ${rawText}`);
+      const postType = overrides.postType ?? normalizeMarketType(item.postType ?? rawText);
+      const tradeMode = overrides.tradeMode ?? normalizeTradeModeValue(item.tradeMode ?? rawText);
+      const model = item.model || item.gpuModel || parseModelText(`${item.title ?? ""} ${rawText}`, category) || "";
+      const locationCity = item.locationCity || parseLocationText(rawText);
+      const gpuCount = asDisplayText(item.gpuCount) || (category === "SERVER" ? "8" : "");
+      const configItems = normalizeConfigItems(item.configItems, category, {
+        gpuModel: model,
+        gpuCount,
+        condition: item.condition,
+        sourceContact: item.sourceContact,
+        rawText,
+      });
+      const draft: TradeDraft = {
+        id: `draft-${now}-${index}`,
+        postType,
+        productCategory: category,
+        tradeMode,
+        title: item.title || buildDraftTitle(postType, category, model, gpuCount, locationCity),
+        gpuModel: model,
+        gpuCount,
+        quantity: asDisplayText(item.quantity) || "1",
+        quantityUnit: item.quantityUnit || quantityUnitForCategory(category),
+        locationCity: locationCity || "待确认",
+        priceAmount: asDisplayText(item.priceAmount),
+        contactMethod: item.contactMethod || item.sourceContact || "站内联系",
+        configItems,
+        source,
+        rawText,
+      };
+      return applyDraftPatch(draft, overrides);
+    })
+    .filter((item) => item.title || item.gpuModel || item.rawText);
+}
+
+function applyDraftPatch(item: TradeDraft, patch: Partial<TradeDraft>): TradeDraft {
+  const productCategory = patch.productCategory ?? item.productCategory;
+  const categoryChanged = patch.productCategory && patch.productCategory !== item.productCategory;
+  const next: TradeDraft = { ...item, ...patch, productCategory };
+  if (categoryChanged) {
+    next.quantityUnit = quantityUnitForCategory(productCategory);
+    next.configItems = normalizeConfigItems(item.configItems, productCategory, {
+      gpuModel: next.gpuModel,
+      gpuCount: next.gpuCount,
+      rawText: next.rawText,
+    });
+  }
+  if (!next.title.trim()) {
+    next.title = buildDraftTitle(next.postType, productCategory, next.gpuModel, next.gpuCount, next.locationCity);
+  }
+  return next;
+}
+
+function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockItem[]; marketItems: MarketPost[] } {
   const stockItems: StockItem[] = [];
   const marketItems: MarketPost[] = [];
   const now = Date.now();
 
   items.forEach((item, index) => {
-    const rawText = item.rawText || "";
-    const category = normalizeProductCategoryValue(item.productCategory ?? `${item.title ?? ""} ${item.model ?? ""} ${rawText}`);
-    const postType = normalizeMarketType(item.postType ?? rawText);
-    const tradeMode = normalizeTradeModeValue(item.tradeMode ?? rawText);
-    const model = item.model || item.gpuModel || parseModelText(`${item.title ?? ""} ${rawText}`, category) || "待确认";
-    const quantity = toNumber(item.quantity, 1);
-    const quantityUnit = item.quantityUnit || quantityUnitForCategory(category);
-    const locationCity = item.locationCity || parseLocationText(rawText) || "待确认";
-    const configItems = normalizeConfigItems(item.configItems, category, {
-      gpuModel: model,
-      gpuCount: item.gpuCount,
-      condition: item.condition,
-      sourceContact: item.sourceContact,
-      rawText,
-    });
-    const title = item.title || buildParsedTitle(category, model, String(item.gpuCount ?? ""), locationCity);
-
-    if (postType === "DEMAND") {
+    const title = item.title || buildDraftTitle(item.postType, item.productCategory, item.gpuModel, item.gpuCount, item.locationCity);
+    if (item.postType === "DEMAND") {
       marketItems.push({
-        id: `market-ai-${now}-${index}`,
-        productCategory: category,
-        tradeMode,
+        id: `market-confirm-${now}-${index}`,
+        productCategory: item.productCategory,
+        tradeMode: item.tradeMode,
         postType: "DEMAND",
         title,
-        gpuModel: model,
-        quantity,
-        quantityUnit,
-        locationCity,
+        gpuModel: item.gpuModel || "待确认",
+        quantity: toNumber(item.quantity, 1),
+        quantityUnit: item.quantityUnit || quantityUnitForCategory(item.productCategory),
+        locationCity: item.locationCity || "待确认",
         priceAmount: toOptionalNumber(item.priceAmount),
-        contactMethod: item.contactMethod || item.sourceContact || "站内联系",
-        configItems,
+        contactMethod: item.contactMethod || "站内联系",
+        configItems: normalizeConfigItems(item.configItems, item.productCategory, {
+          gpuModel: item.gpuModel,
+          gpuCount: item.gpuCount,
+          rawText: item.rawText,
+        }),
         publishedAt: new Date(now + index).toISOString(),
       });
       return;
     }
 
     stockItems.push({
-      id: `stock-ai-${now}-${index}`,
-      productCategory: category,
+      id: `stock-confirm-${now}-${index}`,
+      productCategory: item.productCategory,
       title,
-      gpuModel: model,
-      gpuCount: toNumber(item.gpuCount, category === "SERVER" ? 8 : 0),
-      quantity,
-      quantityUnit,
-      locationCity,
+      gpuModel: item.gpuModel || "待确认",
+      gpuCount: toNumber(item.gpuCount, item.productCategory === "SERVER" ? 8 : 0),
+      quantity: toNumber(item.quantity, 1),
+      quantityUnit: item.quantityUnit || quantityUnitForCategory(item.productCategory),
+      locationCity: item.locationCity || "待确认",
       priceAmount: toOptionalNumber(item.priceAmount),
-      condition: item.condition || "待确认",
-      availabilityType: item.availabilityType || tradeModeText(tradeMode),
-      tradeMode,
-      configItems,
+      condition: configValue(item.configItems, "成色") || "待确认",
+      availabilityType: tradeModeText(item.tradeMode),
+      tradeMode: item.tradeMode,
+      configItems: normalizeConfigItems(item.configItems, item.productCategory, {
+        gpuModel: item.gpuModel,
+        gpuCount: item.gpuCount,
+        rawText: item.rawText,
+      }),
       status: "UNVERIFIED",
-      source: "AI",
+      source: item.source,
       createdAt: new Date(now + index).toISOString(),
     });
   });
 
   return { stockItems, marketItems };
+}
+
+function buildPromptWithHints(text: string, overrides: EntryOverrides): string {
+  const hints = [
+    overrides.postType ? `类型固定为：${overrides.postType === "GOODS" ? "供应" : "需求"}` : "",
+    overrides.tradeMode ? `交易大类固定为：${tradeModeText(overrides.tradeMode)}` : "",
+    overrides.productCategory ? `品类固定为：${productCategoryText(overrides.productCategory)}` : "",
+  ].filter(Boolean);
+  return hints.length ? `解析提示：${hints.join("；")}。\n\n原文：\n${text}` : text;
+}
+
+function buildDraftTitle(postType: MarketType, category: ProductCategory, model: string, gpuCount: string, city: string): string {
+  const verb = postType === "GOODS" ? "出" : "收";
+  const place = city && city !== "待确认" ? city : "";
+  if (category === "SERVER") return `${verb}${place}${model || "GPU"} ${gpuCount || "8"}卡服务器`.trim();
+  return `${verb}${place}${productCategoryText(category)} ${model || "待确认"}`.trim();
+}
+
+function countDrafts(items: TradeDraft[]): { goods: number; demands: number; incomplete: number } {
+  return items.reduce(
+    (summary, item) => ({
+      goods: summary.goods + (item.postType === "GOODS" ? 1 : 0),
+      demands: summary.demands + (item.postType === "DEMAND" ? 1 : 0),
+      incomplete: summary.incomplete + (tradeDraftIssue(item) ? 1 : 0),
+    }),
+    { goods: 0, demands: 0, incomplete: 0 },
+  );
+}
+
+function tradeDraftIssue(draft: TradeDraft): string | null {
+  if (!draft.gpuModel.trim()) return "请填写型号 / 规格";
+  if (!toNumber(draft.quantity, 0)) return "请填写有效数量";
+  if (!draft.locationCity.trim() || draft.locationCity === "待确认") return "请填写城市";
+  return null;
+}
+
+function dedupeNewTradeDrafts(incoming: TradeDraft[], existing: TradeDraft[]): TradeDraft[] {
+  const seen = new Set(existing.map(tradeDraftIdentity));
+  return incoming.filter((item) => {
+    const key = tradeDraftIdentity(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function tradeDraftIdentity(item: TradeDraft): string {
+  return normalizeIdentity(
+    [
+      item.postType,
+      item.productCategory,
+      item.tradeMode,
+      item.title,
+      item.gpuModel,
+      item.quantity,
+      item.quantityUnit,
+      item.locationCity,
+      item.priceAmount,
+      item.contactMethod,
+    ].join("|"),
+  );
+}
+
+function configValue(items: ConfigItem[], label: string): string {
+  return items.find((item) => item.label === label)?.value.trim() ?? "";
 }
 
 function parseAiText(text: string) {
@@ -1354,30 +1653,6 @@ const stockPriceOptions: Array<{ label: string; value: PriceFilter }> = [
   { label: "10-50万", value: "FROM_100000_TO_500000" },
   { label: "50万以上", value: "OVER_500000" },
 ];
-
-function createManualDraft(type: MarketType = "GOODS"): ManualDraft {
-  const productCategory: ProductCategory = "SERVER";
-  return {
-    productCategory,
-    tradeMode: "SPOT",
-    gpuModel: type === "GOODS" ? "H100" : "H200",
-    gpuCount: "8",
-    quantity: type === "GOODS" ? "1" : "4",
-    quantityUnit: quantityUnitForCategory(productCategory),
-    locationCity: type === "GOODS" ? "深圳" : "上海",
-    priceAmount: type === "GOODS" ? "1200000" : "",
-    title: "",
-    contactMethod: "站内联系",
-    configItems: defaultConfig(productCategory),
-  };
-}
-
-function manualDraftIssue(draft: ManualDraft): string | null {
-  if (!draft.gpuModel.trim()) return "请填写型号 / 规格";
-  if (!toNumber(draft.quantity, 0)) return "请填写有效数量";
-  if (!draft.locationCity.trim()) return "请填写城市";
-  return null;
-}
 
 function defaultConfig(category: ProductCategory): ConfigItem[] {
   const labels: Record<ProductCategory, string[]> = {
