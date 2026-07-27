@@ -55,6 +55,7 @@ interface StockItem {
   configItems: ConfigItem[];
   status: "UNVERIFIED" | "VERIFIED" | "SELLABLE" | "EXPIRED" | "SOLD_OUT";
   source: "AI" | "MANUAL";
+  sourceContact: string;
   createdAt: string;
 }
 
@@ -70,6 +71,7 @@ interface MarketPost {
   locationCity: string;
   priceAmount?: number;
   contactMethod: string;
+  sourceContact: string;
   configItems: ConfigItem[];
   publishedAt: string;
 }
@@ -114,6 +116,7 @@ interface TradeDraft {
   locationCity: string;
   priceAmount: string;
   contactMethod: string;
+  sourceContact: string;
   configItems: ConfigItem[];
   source: "AI" | "MANUAL";
   rawText: string;
@@ -179,6 +182,7 @@ const initialStocks: StockItem[] = [
     ],
     status: "SELLABLE",
     source: "AI",
+    sourceContact: "演示微信群-小林",
     createdAt: new Date().toISOString(),
   },
 ];
@@ -196,6 +200,7 @@ const initialMarket: MarketPost[] = [
     locationCity: "上海",
     priceAmount: 0,
     contactMethod: "站内联系",
+    sourceContact: "演示微信群-采购A",
     configItems: [
       { label: "品牌", value: "不限" },
       { label: "整机型号", value: "HGX H200" },
@@ -227,8 +232,10 @@ export default function App() {
   const [stockCategoryFilter, setStockCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
   const [stockCityFilter, setStockCityFilter] = useState("ALL");
   const [stockSourceFilter, setStockSourceFilter] = useState<StockItem["source"] | "ALL">("ALL");
+  const [stockSourceContactFilter, setStockSourceContactFilter] = useState("ALL");
   const [stockModeFilter, setStockModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [stockPriceFilter, setStockPriceFilter] = useState<PriceFilter>("ALL");
+  const [marketSourceContactFilter, setMarketSourceContactFilter] = useState("ALL");
   const [stockPage, setStockPage] = useState(1);
   const [marketPage, setMarketPage] = useState(1);
   const [draftItems, setDraftItems] = useState<TradeDraft[]>([]);
@@ -251,6 +258,7 @@ export default function App() {
         if (stockCategoryFilter !== "ALL" && item.productCategory !== stockCategoryFilter) return false;
         if (stockCityFilter !== "ALL" && item.locationCity !== stockCityFilter) return false;
         if (stockSourceFilter !== "ALL" && item.source !== stockSourceFilter) return false;
+        if (stockSourceContactFilter !== "ALL" && item.sourceContact !== stockSourceContactFilter) return false;
         if (stockModeFilter !== "ALL" && item.tradeMode !== stockModeFilter) return false;
         if (!matchesPriceFilter(item.priceAmount, stockPriceFilter)) return false;
         if (!q) return true;
@@ -258,6 +266,7 @@ export default function App() {
           item.title,
           item.gpuModel,
           item.locationCity,
+          item.sourceContact,
           item.status,
           item.source,
           stockSourceText(item.source),
@@ -270,13 +279,18 @@ export default function App() {
         ].some((value) => String(value).toLowerCase().includes(q));
       })
       .sort((left, right) => createdTimeValue(right.createdAt) - createdTimeValue(left.createdAt));
-  }, [query, stockCategoryFilter, stockCityFilter, stockModeFilter, stockPriceFilter, stockSourceFilter, stocks]);
+  }, [query, stockCategoryFilter, stockCityFilter, stockModeFilter, stockPriceFilter, stockSourceContactFilter, stockSourceFilter, stocks]);
 
   const stockCityOptions = useMemo(() => {
     const cities: string[] = Array.from(
       new Set<string>(stocks.map((item) => item.locationCity).filter((city) => city.trim().length > 0)),
     ).sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
     return [{ label: "全部城市", value: "ALL" }, ...cities.map((city) => ({ label: city, value: city }))];
+  }, [stocks]);
+
+  const stockSourceContactOptions = useMemo(() => {
+    const contacts = uniqueSortedLabels(stocks.map((item) => item.sourceContact).filter(Boolean));
+    return [{ label: "全部来源用户", value: "ALL" }, ...contacts.map((contact) => ({ label: contact, value: contact }))];
   }, [stocks]);
 
   const filteredMarket = useMemo(() => {
@@ -286,11 +300,14 @@ export default function App() {
       .filter((post) => {
         if (marketModeFilter !== "ALL" && post.tradeMode !== marketModeFilter) return false;
         if (marketCategoryFilter !== "ALL" && post.productCategory !== marketCategoryFilter) return false;
+        if (marketSourceContactFilter !== "ALL" && post.sourceContact !== marketSourceContactFilter) return false;
         if (!q) return true;
         return [
           post.title,
           post.gpuModel,
           post.locationCity,
+          post.sourceContact,
+          post.contactMethod,
           post.tradeMode,
           post.productCategory,
           productCategoryText(post.productCategory),
@@ -298,7 +315,12 @@ export default function App() {
         ].some((value) => String(value).toLowerCase().includes(q));
       })
       .sort((left, right) => createdTimeValue(right.publishedAt) - createdTimeValue(left.publishedAt));
-  }, [query, marketCategoryFilter, marketModeFilter, marketPosts]);
+  }, [query, marketCategoryFilter, marketModeFilter, marketPosts, marketSourceContactFilter]);
+
+  const marketSourceContactOptions = useMemo(() => {
+    const contacts = uniqueSortedLabels(marketPosts.filter((post) => post.postType === "DEMAND").map((post) => post.sourceContact).filter(Boolean));
+    return [{ label: "全部来源用户", value: "ALL" }, ...contacts.map((contact) => ({ label: contact, value: contact }))];
+  }, [marketPosts]);
 
   const stockCurrentPage = clampPage(stockPage, totalPagesFor(filteredStocks.length));
   const marketCurrentPage = clampPage(marketPage, totalPagesFor(filteredMarket.length));
@@ -346,6 +368,7 @@ export default function App() {
     setStockCategoryFilter("ALL");
     setStockCityFilter("ALL");
     setStockSourceFilter("ALL");
+    setStockSourceContactFilter("ALL");
     setStockModeFilter("ALL");
     setStockPriceFilter("ALL");
     setStockPage(1);
@@ -355,6 +378,7 @@ export default function App() {
     setQuery("");
     setMarketCategoryFilter("ALL");
     setMarketModeFilter("ALL");
+    setMarketSourceContactFilter("ALL");
     setMarketPage(1);
   }
 
@@ -547,7 +571,7 @@ export default function App() {
                   setStockPage(1);
                   setMarketPage(1);
                 }}
-                placeholder="搜索型号、城市、状态、配置"
+                placeholder="搜索型号、城市、来源用户、状态、配置"
                 className="w-full bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
               />
             </div>
@@ -555,7 +579,7 @@ export default function App() {
 
           {activeTab === "stock" && (
             <div className="rounded-md bg-white p-3 shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
                 <FilterSelect
                   label="品类"
                   value={stockCategoryFilter}
@@ -575,11 +599,20 @@ export default function App() {
                   }}
                 />
                 <FilterSelect
-                  label="来源"
+                  label="录入方式"
                   value={stockSourceFilter}
                   options={stockSourceOptions}
                   onChange={(value) => {
                     setStockSourceFilter(value as StockItem["source"] | "ALL");
+                    setStockPage(1);
+                  }}
+                />
+                <FilterSelect
+                  label="来源用户"
+                  value={stockSourceContactFilter}
+                  options={stockSourceContactOptions}
+                  onChange={(value) => {
+                    setStockSourceContactFilter(value);
                     setStockPage(1);
                   }}
                 />
@@ -603,7 +636,7 @@ export default function App() {
                 />
               </div>
               <div className="mt-3 flex flex-col gap-2 text-xs font-medium text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
-                <span>已显示 {filteredStocks.length} 条，按录入时间最新在前</span>
+                <span>已显示 {filteredStocks.length} 条，按录入时间最新在前，来源用户必填</span>
                 <button
                   type="button"
                   onClick={resetStockFilters}
@@ -694,7 +727,7 @@ export default function App() {
                 ) : (
                   <div className="space-y-4">
                     <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-500">
-                      完整条目可直接批量保存；缺字段的条目不会丢，补齐型号、数量或城市后就能保存。当前显示第 {draftCurrentPage} 页。
+                      完整条目可直接批量保存；缺字段的条目不会丢，补齐来源用户、型号、数量或城市后就能保存。当前显示第 {draftCurrentPage} 页。
                     </p>
                     {pagedDrafts.map((draft, index) => (
                       <DraftReviewItem
@@ -739,6 +772,7 @@ export default function App() {
                         {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
                         {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
                       </p>
+                      <p className="mt-1 text-xs font-medium text-neutral-500">来源用户：{stock.sourceContact}</p>
                       <p className="mt-1 text-xs font-medium text-neutral-400">录入时间：{formatHourTime(stock.createdAt)}</p>
                       <ConfigSheet items={stock.configItems} />
                     </div>
@@ -767,7 +801,7 @@ export default function App() {
           {activeTab === "market" && (
             <div className="space-y-3">
               <div className="rounded-md bg-white p-3 shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
-                <div className="grid gap-2 xl:grid-cols-2">
+                <div className="grid gap-2 xl:grid-cols-3">
                   <Segmented
                     value={marketCategoryFilter}
                     options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
@@ -784,9 +818,18 @@ export default function App() {
                       setMarketPage(1);
                     }}
                   />
+                  <FilterSelect
+                    label="来源用户"
+                    value={marketSourceContactFilter}
+                    options={marketSourceContactOptions}
+                    onChange={(value) => {
+                      setMarketSourceContactFilter(value);
+                      setMarketPage(1);
+                    }}
+                  />
                 </div>
                 <div className="mt-3 flex flex-col gap-2 text-xs font-medium text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
-                  <span>已显示 {filteredMarket.length} 条需求，按创建时间最新在前</span>
+                  <span>已显示 {filteredMarket.length} 条需求，按创建时间最新在前，来源用户必填</span>
                   <button
                     type="button"
                     onClick={resetMarketFilters}
@@ -814,6 +857,7 @@ export default function App() {
                         {post.gpuModel} / {post.quantity}{post.quantityUnit} / {post.locationCity}
                         {post.priceAmount ? ` / ${formatMoney(post.priceAmount)}` : ""}
                       </p>
+                      <p className="mt-1 text-xs font-medium text-neutral-500">来源用户：{post.sourceContact}</p>
                       <p className="mt-1 text-xs font-medium text-neutral-400">创建时间：{formatHourTime(post.publishedAt)}</p>
                       <ConfigSheet items={post.configItems} />
                       <p className="mt-1 text-xs text-neutral-500">联系方式：{post.contactMethod}</p>
@@ -971,6 +1015,9 @@ const DraftReviewItem: React.FC<{
             <Badge tone={draft.postType === "GOODS" ? "green" : "orange"}>{draft.postType === "GOODS" ? "供应" : "需求"}</Badge>
             <Badge tone={tradeModeTone(draft.tradeMode)}>{tradeModeText(draft.tradeMode)}</Badge>
             <Badge tone="blue">{productCategoryText(draft.productCategory)}</Badge>
+            <Badge tone={draft.sourceContact && draft.sourceContact !== "未知来源" ? "default" : "orange"}>
+              来源 {draft.sourceContact && draft.sourceContact !== "未知来源" ? draft.sourceContact : "待确认"}
+            </Badge>
             <span className="text-xs font-medium text-neutral-400">#{index + 1}</span>
           </div>
           <p className="mt-1 truncate text-sm font-semibold text-neutral-900">{draft.title || `${productCategoryText(draft.productCategory)} ${draft.gpuModel}`}</p>
@@ -1029,6 +1076,7 @@ const DraftReviewItem: React.FC<{
       </div>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <TextField label="标题" value={draft.title} placeholder="可留空，自动生成标题" onChange={(value) => onChange({ title: value })} />
+        <TextField label="来源用户" value={draft.sourceContact} placeholder="微信群发言人" onChange={(value) => onChange({ sourceContact: value })} />
         <TextField label="型号 / 规格" value={draft.gpuModel} placeholder="H100 / 64G 5600 / PM9D3A" onChange={(value) => onChange({ gpuModel: value })} />
         {draft.productCategory !== "MEMORY" && (
           <TextField label="卡数" value={draft.gpuCount} onChange={(value) => onChange({ gpuCount: value })} />
@@ -1410,11 +1458,12 @@ function createDraftsFromParsedItems(items: ParsedTradeItem[], source: TradeDraf
       const model = item.model || item.gpuModel || parseModelText(`${item.title ?? ""} ${rawText}`, category) || "";
       const locationCity = item.locationCity || parseLocationText(rawText);
       const gpuCount = asDisplayText(item.gpuCount) || (category === "SERVER" ? "8" : "");
+      const sourceContact = normalizeSourceContact(item.sourceContact, item.configItems, rawText);
       const configItems = normalizeConfigItems(item.configItems, category, {
         gpuModel: model,
         gpuCount,
         condition: item.condition,
-        sourceContact: item.sourceContact,
+        sourceContact,
         rawText,
       });
       const draft: TradeDraft = {
@@ -1429,7 +1478,8 @@ function createDraftsFromParsedItems(items: ParsedTradeItem[], source: TradeDraf
         quantityUnit: item.quantityUnit || quantityUnitForCategory(category),
         locationCity: locationCity || "待确认",
         priceAmount: asDisplayText(item.priceAmount),
-        contactMethod: item.contactMethod || item.sourceContact || "站内联系",
+        contactMethod: item.contactMethod || "站内联系",
+        sourceContact,
         configItems,
         source,
         rawText,
@@ -1448,6 +1498,7 @@ function applyDraftPatch(item: TradeDraft, patch: Partial<TradeDraft>): TradeDra
     next.configItems = normalizeConfigItems(item.configItems, productCategory, {
       gpuModel: next.gpuModel,
       gpuCount: next.gpuCount,
+      sourceContact: next.sourceContact,
       rawText: next.rawText,
     });
   }
@@ -1464,6 +1515,7 @@ function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockIte
 
   items.forEach((item, index) => {
     const title = item.title || buildDraftTitle(item.postType, item.productCategory, item.gpuModel, item.gpuCount, item.locationCity);
+    const sourceContact = normalizeSourceContact(item.sourceContact, item.configItems, item.rawText);
     if (item.postType === "DEMAND") {
       marketItems.push({
         id: `market-confirm-${now}-${index}`,
@@ -1477,9 +1529,11 @@ function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockIte
         locationCity: item.locationCity || "待确认",
         priceAmount: toOptionalNumber(item.priceAmount),
         contactMethod: item.contactMethod || "站内联系",
+        sourceContact,
         configItems: normalizeConfigItems(item.configItems, item.productCategory, {
           gpuModel: item.gpuModel,
           gpuCount: item.gpuCount,
+          sourceContact,
           rawText: item.rawText,
         }),
         publishedAt: new Date(now + index).toISOString(),
@@ -1500,9 +1554,11 @@ function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockIte
       condition: configValue(item.configItems, "成色") || "待确认",
       availabilityType: tradeModeText(item.tradeMode),
       tradeMode: item.tradeMode,
+      sourceContact,
       configItems: normalizeConfigItems(item.configItems, item.productCategory, {
         gpuModel: item.gpuModel,
         gpuCount: item.gpuCount,
+        sourceContact,
         rawText: item.rawText,
       }),
       status: "UNVERIFIED",
@@ -1540,6 +1596,7 @@ function tradeDraftIssue(draft: TradeDraft): string | null {
 
 function tradeDraftMissingFields(draft: TradeDraft): string[] {
   const fields: string[] = [];
+  if (!draft.sourceContact.trim() || draft.sourceContact === "未知来源") fields.push("来源用户");
   if (!draft.gpuModel.trim()) fields.push("型号");
   if (!toNumber(draft.quantity, 0)) fields.push("数量");
   if (!draft.locationCity.trim() || draft.locationCity === "待确认") fields.push("城市");
@@ -1564,6 +1621,7 @@ function tradeDraftIdentity(item: TradeDraft): string {
       item.tradeMode,
       item.title,
       item.gpuModel,
+      item.sourceContact,
       item.quantity,
       item.quantityUnit,
       item.locationCity,
@@ -1602,6 +1660,7 @@ function parseAiText(text: string) {
   const city = text.match(/(深圳|上海|北京|广州|杭州|香港|苏州|成都)/)?.[1] ?? "";
   const gpuCount = text.match(/(\d+)\s*卡/)?.[1] ?? "8";
   const condition = text.includes("全新") ? "全新" : "待确认";
+  const sourceContact = parseSourceContactFromText(text) || "未知来源";
   return {
     postType: normalizeMarketType(text),
     productCategory,
@@ -1615,8 +1674,16 @@ function parseAiText(text: string) {
     condition,
     availabilityType: text.includes("现货") ? "现货" : "待确认",
     tradeMode: parseTradeMode(text),
+    contactMethod: "站内联系",
+    sourceContact,
     rawText: text,
-    configItems: extractConfigItems(text, productCategory, gpuModel, gpuCount, condition),
+    configItems: normalizeConfigItems(extractConfigItems(text, productCategory, gpuModel, gpuCount, condition), productCategory, {
+      gpuModel,
+      gpuCount,
+      condition,
+      sourceContact,
+      rawText: text,
+    }),
   };
 }
 
@@ -1637,7 +1704,7 @@ const productCategoryOptions: Array<{ label: string; value: ProductCategory }> =
 ];
 
 const stockSourceOptions: Array<{ label: string; value: StockItem["source"] | "ALL" }> = [
-  { label: "全部来源", value: "ALL" },
+  { label: "全部录入方式", value: "ALL" },
   { label: "AI解析", value: "AI" },
   { label: "手工录入", value: "MANUAL" },
 ];
@@ -1746,16 +1813,19 @@ function normalizeConfigItems(
   const seedValues = seedConfigValues(category, seed);
   const rawByLabel = new Map(rawItems.map((item) => [item.label, item.value]));
   const base = defaultConfig(category);
+  const sourceContact = normalizeSourceContact(seed.sourceContact, rawItems, seed.rawText);
   const merged = base.map((item) => {
     const rawValue = rawByLabel.get(item.label);
     const value = rawValue?.trim() ? rawValue : seedValues[item.label] ?? rawValue ?? item.value;
     return { label: item.label, value };
   });
-  const extra = rawItems.filter((item) => !base.some((baseItem) => baseItem.label === item.label));
-  const sourceContact = asDisplayText(seed.sourceContact);
+  const extra = rawItems
+    .filter((item) => !base.some((baseItem) => baseItem.label === item.label))
+    .map((item) => (isSourceContactLabel(item.label) ? { ...item, label: "来源", value: sourceContact } : item));
   const rawText = asDisplayText(seed.rawText);
+  const hasSourceLabel = rawItems.some((item) => isSourceContactLabel(item.label));
   const traceItems = [
-    ...(sourceContact && !rawByLabel.has("来源") ? [{ label: "来源", value: sourceContact }] : []),
+    ...(sourceContact && !hasSourceLabel ? [{ label: "来源", value: sourceContact }] : []),
     ...(rawText && !rawByLabel.has("原文") ? [{ label: "原文", value: rawText }] : []),
   ];
   return [...merged, ...extra, ...traceItems];
@@ -1965,6 +2035,7 @@ function stockIdentity(item: StockItem): string {
       item.tradeMode,
       item.title,
       item.gpuModel,
+      item.sourceContact,
       item.quantity,
       item.quantityUnit,
       item.locationCity,
@@ -1981,6 +2052,7 @@ function marketIdentity(item: MarketPost): string {
       item.tradeMode,
       item.title,
       item.gpuModel,
+      item.sourceContact,
       item.quantity,
       item.quantityUnit,
       item.locationCity,
@@ -2064,6 +2136,47 @@ function asDisplayText(value: unknown): string {
   return String(value).trim();
 }
 
+function normalizeSourceContact(value: unknown, configItems?: unknown, rawText?: unknown): string {
+  return (
+    cleanSourceContact(asDisplayText(value)) ||
+    cleanSourceContact(sourceContactFromConfig(configItems)) ||
+    cleanSourceContact(parseSourceContactFromText(asDisplayText(rawText))) ||
+    "未知来源"
+  );
+}
+
+function sourceContactFromConfig(items: unknown): string {
+  if (!Array.isArray(items)) return "";
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const label = asDisplayText(record.label);
+    if (isSourceContactLabel(label)) return asDisplayText(record.value);
+  }
+  return "";
+}
+
+function parseSourceContactFromText(text: string): string {
+  const match = text.match(/^([^:：\n]{1,80})[:：]\s*(?:\S|$)/m);
+  const candidate = cleanSourceContact(match?.[1] ?? "");
+  if (/^(出|收|求购|找|找货|价格|数量|型号|城市|联系方式?|联系人)$/.test(candidate)) return "";
+  return candidate;
+}
+
+function isSourceContactLabel(label: string): boolean {
+  return /^(来源|来源用户|说话人|发言人|微信用户)$/.test(label.trim());
+}
+
+function cleanSourceContact(value: string): string {
+  return value.replace(/[:：]\s*$/, "").trim();
+}
+
+function uniqueSortedLabels(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => cleanSourceContact(value)).filter(Boolean))).sort((left, right) =>
+    left.localeCompare(right, "zh-Hans-CN"),
+  );
+}
+
 function load<T>(key: string, fallback: T): T {
   try {
     const value = localStorage.getItem(key);
@@ -2076,15 +2189,18 @@ function load<T>(key: string, fallback: T): T {
 function normalizeStocks(items: StockItem[]): StockItem[] {
   return items.map((item) => {
     const productCategory = item.productCategory ?? parseProductCategory(`${item.title} ${item.gpuModel}`);
+    const sourceContact = normalizeSourceContact(item.sourceContact, item.configItems, item.title);
     return {
       ...item,
       productCategory,
       tradeMode: item.tradeMode ?? parseTradeMode(`${item.title} ${item.availabilityType ?? ""}`),
       quantityUnit: item.quantityUnit ?? quantityUnitForCategory(productCategory),
+      sourceContact,
       configItems: normalizeConfigItems(item.configItems, productCategory, {
         gpuModel: item.gpuModel,
         gpuCount: item.gpuCount,
         condition: item.condition,
+        sourceContact,
       }),
     };
   });
@@ -2093,13 +2209,16 @@ function normalizeStocks(items: StockItem[]): StockItem[] {
 function normalizeMarketPosts(items: MarketPost[]): MarketPost[] {
   return items.map((item) => {
     const productCategory = item.productCategory ?? parseProductCategory(`${item.title} ${item.gpuModel}`);
+    const sourceContact = normalizeSourceContact(item.sourceContact, item.configItems, item.title);
     return {
       ...item,
       productCategory,
       tradeMode: item.tradeMode ?? parseTradeMode(item.title),
       quantityUnit: item.quantityUnit ?? quantityUnitForCategory(productCategory),
+      sourceContact,
       configItems: normalizeConfigItems(item.configItems, productCategory, {
         gpuModel: item.gpuModel,
+        sourceContact,
       }),
     };
   });

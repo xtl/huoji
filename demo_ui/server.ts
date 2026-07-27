@@ -136,7 +136,7 @@ async function callDeepSeek(rawText: string): Promise<{
 
   return {
     model: data.model ?? model,
-    result: normalizeEnvelope(parseJsonObject(content)),
+    result: normalizeEnvelope(parseJsonObject(content), rawText),
     tokenUsage: data.usage ?? {},
   };
 }
@@ -162,7 +162,7 @@ const DEEPSEEK_SYSTEM_PROMPT = `
       "condition": "全新|拆新|二手|原箱|待确认",
       "availabilityType": "现货|期货|小期货|租赁|待确认",
       "contactMethod": "联系人或手机号，缺失写站内联系",
-      "sourceContact": "说话人名称",
+      "sourceContact": "来源用户/微信发言人，必填",
       "rawText": "原文中最相关的一行或几行",
       "confidence": number,
       "configItems": [{"label": "品牌/容量/频率/接口/质保等", "value": "值"}]
@@ -174,25 +174,28 @@ const DEEPSEEK_SYSTEM_PROMPT = `
 抽取规则：
 1. “出、出售、供应、现货出、含税出、明价出、甩货”是 GOODS；“收、求购、找货、找、现款找、批量收、高价收、天价收”是 DEMAND。
 2. “租赁、出租、租用”对应 RENTAL；“期货、小期货、预售、4-6周、8月”对应 FUTURES；“现货、秒发、当天可发”对应 SPOT。
-3. 一段消息里有多行 SKU 时拆成多条 item；重复转发的完全相同 SKU 只保留一条。
-4. 不要编造未出现的信息；价格如“34X万、12xx、33XXX、25+”不确定时 priceAmount 写 null，并把原价格文本放进 configItems 的“价格线索”。
-5. 供应和需求都要抽；不是服务器的内存、硬盘/SSD、CPU、网卡/交换机也要抽，不能只抽 GPU。
+3. sourceContact 是必填字段，必须优先从微信群聊天记录的说话人行提取，例如“Leo~D:”或“AI&GPU_阿琳:”。同一个说话人下面的每一条 SKU 都继承这个说话人。
+4. 不要把手机号、品牌、群名、城市、货源标题当作 sourceContact；手机号应进入 contactMethod。只有确实没有说话人时，sourceContact 才写“未知来源”，并在 warnings 里提醒。
+5. 一段消息里有多行 SKU 时拆成多条 item；重复转发的完全相同 SKU 只保留一条，但不同 sourceContact 的同款货要保留为不同 item。
+6. 不要编造未出现的信息；价格如“34X万、12xx、33XXX、25+”不确定时 priceAmount 写 null，并把原价格文本放进 configItems 的“价格线索”。
+7. 供应和需求都要抽；不是服务器的内存、硬盘/SSD、CPU、网卡/交换机也要抽，不能只抽 GPU。
 `.trim();
 
-function normalizeEnvelope(value: unknown): ExtractionEnvelope {
+function normalizeEnvelope(value: unknown, inputText = ""): ExtractionEnvelope {
   const record = isRecord(value) ? value : {};
   const rawItems = Array.isArray(record.items) ? record.items : Array.isArray(value) ? value : [];
-  const items = rawItems.map(normalizeItem).filter((item): item is ExtractedTradeItem => Boolean(item));
+  const items = rawItems.map((item) => normalizeItem(item, inputText)).filter((item): item is ExtractedTradeItem => Boolean(item));
   return buildEnvelope(items, Array.isArray(record.warnings) ? record.warnings.map(String) : []);
 }
 
-function normalizeItem(value: unknown): ExtractedTradeItem | null {
+function normalizeItem(value: unknown, inputText = ""): ExtractedTradeItem | null {
   if (!isRecord(value)) return null;
   const rawText = asText(value.rawText ?? value.raw_text);
   const title = asText(value.title);
   const model = asText(value.model ?? value.gpuModel ?? value.gpu_model);
   const category = normalizeCategory(value.productCategory ?? value.product_category ?? `${title} ${model} ${rawText}`);
   const postType = normalizePostType(value.postType ?? value.post_type ?? rawText);
+  const sourceContact = normalizeSourceContact(value.sourceContact ?? value.source_contact, value.configItems ?? value.config_items, rawText, inputText);
   if (!title && !model && !rawText) return null;
 
   return {
@@ -209,10 +212,10 @@ function normalizeItem(value: unknown): ExtractedTradeItem | null {
     condition: asText(value.condition) || parseCondition(`${title} ${rawText}`),
     availabilityType: asText(value.availabilityType ?? value.availability_type) || availabilityText(normalizeTradeMode(rawText)),
     contactMethod: asText(value.contactMethod ?? value.contact_method) || "站内联系",
-    sourceContact: asText(value.sourceContact ?? value.source_contact),
+    sourceContact,
     rawText,
     confidence: clampNumber(asNumber(value.confidence), 0.5, 0.99, 0.82),
-    configItems: normalizeConfigItems(value.configItems ?? value.config_items, category, `${title} ${model} ${rawText}`),
+    configItems: normalizeConfigItems(value.configItems ?? value.config_items, category, `${title} ${model} ${rawText}`, sourceContact),
   };
 }
 
@@ -281,6 +284,7 @@ function parseTradeLine(line: string, speaker: string, contextIntent: PostType |
       ],
       category,
       line,
+      sourceContact,
     ),
   };
 }
@@ -421,6 +425,59 @@ function parseContact(text: string): string {
   return firstMatch(text, /1[3-9]\d[\s-]?\d{4}[\s-]?\d{4}/) || "站内联系";
 }
 
+function normalizeSourceContact(value: unknown, configItems?: unknown, rawText?: unknown, inputText?: string): string {
+  return (
+    cleanSourceContact(asText(value)) ||
+    cleanSourceContact(sourceContactFromConfig(configItems)) ||
+    cleanSourceContact(parseSourceContactFromText(asText(rawText))) ||
+    cleanSourceContact(findSourceContactForRawText(asText(rawText), inputText ?? "")) ||
+    "未知来源"
+  );
+}
+
+function sourceContactFromConfig(items: unknown): string {
+  if (!Array.isArray(items)) return "";
+  for (const item of items) {
+    if (!isRecord(item)) continue;
+    const label = asText(item.label);
+    if (isSourceContactLabel(label)) return asText(item.value);
+  }
+  return "";
+}
+
+function parseSourceContactFromText(text: string): string {
+  const match = text.match(/^([^:：\n]{1,80})[:：]\s*(?:\S|$)/m);
+  const candidate = cleanSourceContact(match?.[1] ?? "");
+  if (/^(出|收|求购|找|找货|价格|数量|型号|城市|联系方式?|联系人)$/.test(candidate)) return "";
+  return candidate;
+}
+
+function findSourceContactForRawText(itemText: string, inputText: string): string {
+  const compactItem = itemText.replace(/\s+/g, "");
+  if (!compactItem || !inputText.trim()) return "";
+  for (const block of splitSpeakerBlocks(inputText)) {
+    const speaker = cleanSourceContact(block.speaker);
+    if (!speaker || speaker === "未知来源") continue;
+    const compactBlock = block.lines.join("\n").replace(/\s+/g, "");
+    if (compactBlock.includes(compactItem) || compactItem.includes(compactBlock)) return speaker;
+    const hasSharedLine = itemText
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/\s+/g, ""))
+      .filter((line) => line.length >= 4)
+      .some((line) => compactBlock.includes(line));
+    if (hasSharedLine) return speaker;
+  }
+  return "";
+}
+
+function isSourceContactLabel(label: string): boolean {
+  return /^(来源|来源用户|说话人|发言人|微信用户)$/.test(label.trim());
+}
+
+function cleanSourceContact(value: string): string {
+  return value.replace(/[:：]\s*$/, "").trim();
+}
+
 function configFromText(text: string, category: ProductCategory): ConfigItem[] {
   const items: ConfigItem[] = [];
   const brand = firstMatch(text, /三星|Samsung|SK|海力士|Hynix|镁光|Micron|长鑫|华为|Dell|戴尔|浪潮|超微|Supermicro|华勤|H3C|HPE|希捷|西数|东芝|Intel|英特尔|NVIDIA|英伟达|华硕|ASUS|技嘉|MSI/i);
@@ -450,7 +507,7 @@ function configFromText(text: string, category: ProductCategory): ConfigItem[] {
   return items;
 }
 
-function normalizeConfigItems(value: unknown, category: ProductCategory, rawText: string): ConfigItem[] {
+function normalizeConfigItems(value: unknown, category: ProductCategory, rawText: string, sourceContact = ""): ConfigItem[] {
   const sourceItems = Array.isArray(value)
     ? value
         .map((item) => {
@@ -461,6 +518,15 @@ function normalizeConfigItems(value: unknown, category: ProductCategory, rawText
         })
         .filter((item): item is ConfigItem => Boolean(item))
     : configFromText(rawText, category);
+  const cleanSource = cleanSourceContact(sourceContact);
+  if (cleanSource) {
+    const sourceIndex = sourceItems.findIndex((item) => isSourceContactLabel(item.label));
+    if (sourceIndex >= 0) {
+      sourceItems[sourceIndex] = { label: "来源", value: cleanSource };
+    } else {
+      sourceItems.push({ label: "来源", value: cleanSource });
+    }
+  }
   const seen = new Set<string>();
   return sourceItems.filter((item) => {
     const key = `${item.label}:${item.value}`;
@@ -476,6 +542,9 @@ function pushMatch(items: ConfigItem[], label: string, text: string, pattern: Re
 }
 
 function buildEnvelope(items: ExtractedTradeItem[], warnings: string[]): ExtractionEnvelope {
+  const sourceWarnings = items.some((item) => item.sourceContact === "未知来源")
+    ? ["部分条目没有识别到微信来源用户，请在待确认结果中补齐。"]
+    : [];
   return {
     summary: {
       total: items.length,
@@ -483,7 +552,7 @@ function buildEnvelope(items: ExtractedTradeItem[], warnings: string[]): Extract
       demandCount: items.filter((item) => item.postType === "DEMAND").length,
     },
     items,
-    warnings,
+    warnings: [...warnings, ...sourceWarnings],
   };
 }
 
@@ -494,6 +563,7 @@ function dedupeItems(items: ExtractedTradeItem[]): ExtractedTradeItem[] {
       item.postType,
       item.tradeMode,
       item.productCategory,
+      item.sourceContact,
       item.model.toLowerCase(),
       item.quantity ?? "",
       item.locationCity,
