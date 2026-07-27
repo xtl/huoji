@@ -341,11 +341,11 @@ export default function App() {
     (summary, item) => ({
       goods: summary.goods + (item.postType === "GOODS" ? 1 : 0),
       demands: summary.demands + (item.postType === "DEMAND" ? 1 : 0),
-      incomplete: summary.incomplete + (tradeDraftIssue(item) ? 1 : 0),
+      incomplete: summary.incomplete + (tradeDraftMissingFields(item).length ? 1 : 0),
     }),
     { goods: 0, demands: 0, incomplete: 0 },
   );
-  const saveableDraftCount = draftItems.length - draftSummary.incomplete;
+  const saveableDraftCount = draftItems.length;
 
   function saveStocks(next: StockItem[]) {
     setStocks(next);
@@ -475,17 +475,12 @@ export default function App() {
     setNotice({ tone: "info", text: "已清空待确认结果。" });
   }
 
-  function confirmDrafts(ids?: string[], options: { validOnly?: boolean } = {}) {
+  function confirmDrafts(ids?: string[]) {
     const selectedIds = ids ? new Set(ids) : null;
     const targetItems = selectedIds ? draftItems.filter((item) => selectedIds.has(item.id)) : draftItems;
-    const selected = options.validOnly ? targetItems.filter((item) => !tradeDraftIssue(item)) : targetItems;
+    const selected = targetItems;
     if (!selected.length) {
-      setNotice({ tone: "warning", text: options.validOnly ? "没有字段完整的待确认结果可保存。" : "没有可保存的待确认结果。" });
-      return;
-    }
-    const invalid = selected.find(tradeDraftIssue);
-    if (invalid) {
-      setNotice({ tone: "warning", text: tradeDraftIssue(invalid) ?? "请先补齐必填字段。" });
+      setNotice({ tone: "warning", text: "没有可保存的待确认结果。" });
       return;
     }
     const result = saveParsedItems(materializeConfirmedDrafts(selected));
@@ -630,7 +625,7 @@ export default function App() {
                 />
               </div>
               <div className="mt-3 flex flex-col gap-2 text-xs font-medium text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
-                <span>已显示 {filteredStocks.length} 条，按录入时间最新在前，来源用户必填</span>
+                <span>已显示 {filteredStocks.length} 条，按录入时间最新在前，来源用户优先保留</span>
                 <button
                   type="button"
                   onClick={resetStockFilters}
@@ -691,7 +686,7 @@ export default function App() {
                     <Badge tone="green">供应 {draftSummary.goods}</Badge>
                     <Badge tone="orange">需求 {draftSummary.demands}</Badge>
                     <Badge tone="blue">可保存 {saveableDraftCount}</Badge>
-                    <Badge tone={draftSummary.incomplete ? "orange" : "default"}>缺字段 {draftSummary.incomplete}</Badge>
+                    <Badge tone={draftSummary.incomplete ? "orange" : "default"}>待补字段 {draftSummary.incomplete}</Badge>
                   </div>
                   {draftItems.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1">
@@ -705,12 +700,12 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => confirmDrafts(undefined, { validOnly: true })}
+                        onClick={() => confirmDrafts()}
                         disabled={!saveableDraftCount}
                         className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
                       >
                         <Check className="h-3.5 w-3.5" />
-                        保存完整项
+                        批量保存
                       </button>
                     </div>
                   )}
@@ -721,7 +716,7 @@ export default function App() {
                 ) : (
                   <div className="space-y-4">
                     <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-500">
-                      完整条目可直接批量保存；缺字段的条目不会丢，补齐来源用户、型号、数量或城市后就能保存。当前显示第 {draftCurrentPage} 页。
+                      可以直接保存；缺字段会以“待确认 / 未知来源”保留，后续再补也不会丢。当前显示第 {draftCurrentPage} 页。
                     </p>
                     {pagedDrafts.map((draft, index) => (
                       <DraftReviewItem
@@ -762,7 +757,7 @@ export default function App() {
                       <Badge tone={statusTone(stock.status)}>{statusText(stock.status)}</Badge>
                     </div>
                     <p className="mt-2 text-sm text-neutral-600">
-                      {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
+                      {stockSpecText(stock)} / {quantityText(stock.quantity, stock.quantityUnit)} / {stock.locationCity}
                       {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
                     </p>
                     <p className="mt-1 text-xs font-medium text-neutral-500">来源用户：{stock.sourceContact}</p>
@@ -815,7 +810,7 @@ export default function App() {
                   />
                 </div>
                 <div className="mt-3 flex flex-col gap-2 text-xs font-medium text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
-                  <span>已显示 {filteredMarket.length} 条需求，按创建时间最新在前，来源用户必填</span>
+                  <span>已显示 {filteredMarket.length} 条需求，按创建时间最新在前，来源用户优先保留</span>
                   <button
                     type="button"
                     onClick={resetMarketFilters}
@@ -840,7 +835,7 @@ export default function App() {
                         <h2 className="font-semibold text-neutral-950">{post.title}</h2>
                       </div>
                       <p className="mt-2 text-sm text-neutral-600">
-                        {post.gpuModel} / {post.quantity}{post.quantityUnit} / {post.locationCity}
+                        {post.gpuModel} / {quantityText(post.quantity, post.quantityUnit)} / {post.locationCity}
                         {post.priceAmount ? ` / ${formatMoney(post.priceAmount)}` : ""}
                       </p>
                       <p className="mt-1 text-xs font-medium text-neutral-500">来源用户：{post.sourceContact}</p>
@@ -991,8 +986,8 @@ const DraftReviewItem: React.FC<{
   onRemove,
   onConfirm,
 }) => {
-  const issue = tradeDraftIssue(draft);
   const missingFields = tradeDraftMissingFields(draft);
+  const hasMissingFields = missingFields.length > 0;
   return (
     <section className="border-t border-neutral-100 pt-4 first:border-t-0 first:pt-0">
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -1008,8 +1003,8 @@ const DraftReviewItem: React.FC<{
           </div>
           <p className="mt-1 truncate text-sm font-semibold text-neutral-900">{draft.title || `${productCategoryText(draft.productCategory)} ${draft.gpuModel}`}</p>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <span className={`text-xs font-medium ${issue ? "text-amber-600" : "text-neutral-400"}`}>
-              {issue ? "补齐字段后可保存" : "字段完整，可保存"}
+            <span className={`text-xs font-medium ${hasMissingFields ? "text-amber-600" : "text-neutral-400"}`}>
+              {hasMissingFields ? "信息不完整，可先保存" : "字段完整，可保存"}
             </span>
             {missingFields.map((field) => (
               <Badge key={field} tone="orange">{`缺${field}`}</Badge>
@@ -1028,11 +1023,10 @@ const DraftReviewItem: React.FC<{
           <button
             type="button"
             onClick={onConfirm}
-            disabled={Boolean(issue)}
-            className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+            className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
           >
             <Check className="h-3.5 w-3.5" />
-            {issue ? "补齐后保存" : "保存"}
+            保存
           </button>
         </div>
       </div>
@@ -1430,7 +1424,7 @@ function createDraftsFromParsedItems(items: ParsedTradeItem[], source: TradeDraf
         title: item.title || buildDraftTitle(postType, category, model, gpuCount, locationCity),
         gpuModel: model,
         gpuCount,
-        quantity: asDisplayText(item.quantity) || "1",
+        quantity: asDisplayText(item.quantity),
         quantityUnit: item.quantityUnit || quantityUnitForCategory(category),
         locationCity: locationCity || "待确认",
         priceAmount: asDisplayText(item.priceAmount),
@@ -1480,7 +1474,7 @@ function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockIte
         postType: "DEMAND",
         title,
         gpuModel: item.gpuModel || "待确认",
-        quantity: toNumber(item.quantity, 1),
+        quantity: toNumber(item.quantity, 0),
         quantityUnit: item.quantityUnit || quantityUnitForCategory(item.productCategory),
         locationCity: item.locationCity || "待确认",
         priceAmount: toOptionalNumber(item.priceAmount),
@@ -1503,7 +1497,7 @@ function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockIte
       title,
       gpuModel: item.gpuModel || "待确认",
       gpuCount: toNumber(item.gpuCount, item.productCategory === "SERVER" ? 8 : 0),
-      quantity: toNumber(item.quantity, 1),
+      quantity: toNumber(item.quantity, 0),
       quantityUnit: item.quantityUnit || quantityUnitForCategory(item.productCategory),
       locationCity: item.locationCity || "待确认",
       priceAmount: toOptionalNumber(item.priceAmount),
@@ -1538,16 +1532,10 @@ function countDrafts(items: TradeDraft[]): { goods: number; demands: number; inc
     (summary, item) => ({
       goods: summary.goods + (item.postType === "GOODS" ? 1 : 0),
       demands: summary.demands + (item.postType === "DEMAND" ? 1 : 0),
-      incomplete: summary.incomplete + (tradeDraftIssue(item) ? 1 : 0),
+      incomplete: summary.incomplete + (tradeDraftMissingFields(item).length ? 1 : 0),
     }),
     { goods: 0, demands: 0, incomplete: 0 },
   );
-}
-
-function tradeDraftIssue(draft: TradeDraft): string | null {
-  const missingFields = tradeDraftMissingFields(draft);
-  if (missingFields.length) return `请补齐：${missingFields.join("、")}`;
-  return null;
 }
 
 function tradeDraftMissingFields(draft: TradeDraft): string[] {
@@ -1611,7 +1599,7 @@ function parseAiText(text: string) {
   const productCategory = parseProductCategory(text);
   const gpuModel = parseModelText(text, productCategory);
   const quantityMatch = text.match(/(\d+(?:\.\d+)?)\s*(台|套|块|张|条|根|片)/);
-  const quantity = quantityMatch?.[1] ?? "1";
+  const quantity = quantityMatch?.[1] ?? "";
   const price = text.match(/价格?\s*(\d+(?:\.\d+)?)\s*(万)?/)?.[1] ?? "";
   const city = text.match(/(深圳|上海|北京|广州|杭州|香港|苏州|成都)/)?.[1] ?? "";
   const gpuCount = text.match(/(\d+)\s*卡/)?.[1] ?? "8";
@@ -2046,6 +2034,10 @@ function quantityUnitForCategory(category: ProductCategory): string {
     OTHER: "个",
   };
   return map[category];
+}
+
+function quantityText(quantity: number, unit: string): string {
+  return quantity > 0 ? `${quantity}${unit}` : "数量待确认";
 }
 
 function stockSpecText(stock: StockItem): string {
