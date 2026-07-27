@@ -132,6 +132,14 @@ interface EntryOverrides {
   productCategory?: ProductCategory;
 }
 
+interface SaveParsedResult {
+  stockCount: number;
+  marketCount: number;
+  refreshedStockCount: number;
+  refreshedMarketCount: number;
+  refreshedCount: number;
+}
+
 interface AiStructureResponse {
   data?: {
     summary?: { total?: number; goodsCount?: number; demandCount?: number };
@@ -350,21 +358,23 @@ export default function App() {
     setMarketPage(1);
   }
 
-  function saveParsedItems(materialized: { stockItems: StockItem[]; marketItems: MarketPost[] }) {
-    const newStockItems = dedupeNewStockItems(materialized.stockItems, stocks);
-    const newMarketItems = dedupeNewMarketPosts(materialized.marketItems, marketPosts);
-    if (newStockItems.length) {
-      saveStocks([...newStockItems, ...stocks]);
+  function saveParsedItems(materialized: { stockItems: StockItem[]; marketItems: MarketPost[] }): SaveParsedResult {
+    const stockResult = upsertStockItems(materialized.stockItems, stocks);
+    const marketResult = upsertMarketPosts(materialized.marketItems, marketPosts);
+    if (materialized.stockItems.length) {
+      saveStocks(stockResult.items);
       resetStockFilters();
     }
-    if (newMarketItems.length) {
-      saveMarket([...newMarketItems, ...marketPosts]);
+    if (materialized.marketItems.length) {
+      saveMarket(marketResult.items);
       resetMarketFilters();
     }
     return {
-      stockCount: newStockItems.length,
-      marketCount: newMarketItems.length,
-      skippedCount: materialized.stockItems.length + materialized.marketItems.length - newStockItems.length - newMarketItems.length,
+      stockCount: stockResult.createdCount,
+      marketCount: marketResult.createdCount,
+      refreshedStockCount: stockResult.refreshedCount,
+      refreshedMarketCount: marketResult.refreshedCount,
+      refreshedCount: stockResult.refreshedCount + marketResult.refreshedCount,
     };
   }
 
@@ -390,7 +400,7 @@ export default function App() {
       const summary = countDrafts(parsedDrafts);
       setAiText("");
       setAiParseMessage(
-        `${aiResult.isMock ? "离线解析" : "DeepSeek"}完成：${summary.goods} 条供应、${summary.demands} 条需求进入待确认${result.skippedCount ? `，跳过 ${result.skippedCount} 条重复` : ""}。`,
+        `${aiResult.isMock ? "离线解析" : "DeepSeek"}完成：${summary.goods} 条供应、${summary.demands} 条需求进入待确认${result.mergedCount ? `，合并 ${result.mergedCount} 条重复待确认` : ""}。`,
       );
       setNotice({ tone: "success", text: `已生成 ${result.addedCount} 条待确认结果。` });
       setChatMessages((messages) => [
@@ -430,7 +440,7 @@ export default function App() {
       setDraftItems([...newDrafts, ...draftItems]);
       setDraftPage(1);
     }
-    return { addedCount: newDrafts.length, skippedCount: nextDrafts.length - newDrafts.length };
+    return { addedCount: newDrafts.length, mergedCount: nextDrafts.length - newDrafts.length };
   }
 
   function updateDraftItem(id: string, patch: Partial<TradeDraft>) {
@@ -463,17 +473,18 @@ export default function App() {
     const result = saveParsedItems(materializeConfirmedDrafts(selected));
     setDraftItems(draftItems.filter((item) => !selected.some((saved) => saved.id === item.id)));
     setDraftPage(1);
+    const changedCount = result.stockCount + result.marketCount + result.refreshedCount;
     setNotice({
-      tone: result.stockCount || result.marketCount ? "success" : "info",
-      text: result.stockCount || result.marketCount ? `已批量保存 ${result.stockCount} 条供应、${result.marketCount} 条需求。` : "选中的结果与现有数据重复，未新增。",
+      tone: changedCount ? "success" : "info",
+      text: saveResultNoticeText(result),
     });
     setChatMessages((messages) => [
       ...messages,
       {
         id: `assistant-${Date.now()}`,
         role: "assistant",
-        tone: result.stockCount || result.marketCount ? "success" : "info",
-        text: `确认完成：${result.stockCount} 条进入供应，${result.marketCount} 条进入需求${result.skippedCount ? `，${result.skippedCount} 条重复已跳过` : ""}。`,
+        tone: changedCount ? "success" : "info",
+        text: saveResultChatText(result),
       },
     ]);
   }
@@ -1566,6 +1577,22 @@ function configValue(items: ConfigItem[], label: string): string {
   return items.find((item) => item.label === label)?.value.trim() ?? "";
 }
 
+function saveResultNoticeText(result: SaveParsedResult): string {
+  const createdCount = result.stockCount + result.marketCount;
+  if (!createdCount && !result.refreshedCount) return "没有可保存的变化。";
+  const createdText = createdCount ? `新增 ${result.stockCount} 条供应、${result.marketCount} 条需求` : "";
+  const refreshedText = result.refreshedCount ? `刷新 ${result.refreshedCount} 条重复的最新时间` : "";
+  return `${[createdText, refreshedText].filter(Boolean).join("，")}。`;
+}
+
+function saveResultChatText(result: SaveParsedResult): string {
+  const parts = [`${result.stockCount} 条进入供应`, `${result.marketCount} 条进入需求`];
+  if (result.refreshedCount) {
+    parts.push(`${result.refreshedCount} 条重复已刷新为最新时间`);
+  }
+  return `确认完成：${parts.join("，")}。`;
+}
+
 function parseAiText(text: string) {
   const productCategory = parseProductCategory(text);
   const gpuModel = parseModelText(text, productCategory);
@@ -1881,24 +1908,54 @@ function clampPage(page: number, totalPages: number): number {
   return Math.min(Math.floor(page), totalPages);
 }
 
-function dedupeNewStockItems(incoming: StockItem[], existing: StockItem[]): StockItem[] {
-  const seen = new Set(existing.map(stockIdentity));
-  return incoming.filter((item) => {
+function upsertStockItems(incoming: StockItem[], existing: StockItem[]): { items: StockItem[]; createdCount: number; refreshedCount: number } {
+  const existingByKey = new Map(existing.map((item) => [stockIdentity(item), item]));
+  const refreshedById = new Map<string, StockItem>();
+  const createdItems: StockItem[] = [];
+  const createdKeys = new Set<string>();
+
+  incoming.forEach((item) => {
     const key = stockIdentity(item);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+    const matched = existingByKey.get(key);
+    if (matched) {
+      refreshedById.set(matched.id, { ...matched, createdAt: item.createdAt });
+      return;
+    }
+    if (createdKeys.has(key)) return;
+    createdKeys.add(key);
+    createdItems.push(item);
   });
+
+  return {
+    items: [...createdItems, ...existing.map((item) => refreshedById.get(item.id) ?? item)].sort((left, right) => createdTimeValue(right.createdAt) - createdTimeValue(left.createdAt)),
+    createdCount: createdItems.length,
+    refreshedCount: refreshedById.size,
+  };
 }
 
-function dedupeNewMarketPosts(incoming: MarketPost[], existing: MarketPost[]): MarketPost[] {
-  const seen = new Set(existing.map(marketIdentity));
-  return incoming.filter((item) => {
+function upsertMarketPosts(incoming: MarketPost[], existing: MarketPost[]): { items: MarketPost[]; createdCount: number; refreshedCount: number } {
+  const existingByKey = new Map(existing.map((item) => [marketIdentity(item), item]));
+  const refreshedById = new Map<string, MarketPost>();
+  const createdItems: MarketPost[] = [];
+  const createdKeys = new Set<string>();
+
+  incoming.forEach((item) => {
     const key = marketIdentity(item);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+    const matched = existingByKey.get(key);
+    if (matched) {
+      refreshedById.set(matched.id, { ...matched, publishedAt: item.publishedAt });
+      return;
+    }
+    if (createdKeys.has(key)) return;
+    createdKeys.add(key);
+    createdItems.push(item);
   });
+
+  return {
+    items: [...createdItems, ...existing.map((item) => refreshedById.get(item.id) ?? item)].sort((left, right) => createdTimeValue(right.publishedAt) - createdTimeValue(left.publishedAt)),
+    createdCount: createdItems.length,
+    refreshedCount: refreshedById.size,
+  };
 }
 
 function stockIdentity(item: StockItem): string {
