@@ -1,14 +1,20 @@
 import React, { useMemo, useState } from "react";
 import {
+  AlertCircle,
   Bot,
   Boxes,
   Check,
+  CircleOff,
   Compass,
   Database,
   Megaphone,
+  MessageCircle,
   Plus,
+  RotateCcw,
   Search,
   Sparkles,
+  Trash2,
+  X,
 } from "lucide-react";
 
 type TabKey = "input" | "stock" | "market";
@@ -16,8 +22,11 @@ type MarketType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
 type PriceFilter = "ALL" | "HAS_PRICE" | "NO_PRICE" | "UNDER_10000" | "FROM_10000_TO_100000" | "FROM_100000_TO_500000" | "OVER_500000";
+type BadgeTone = "default" | "blue" | "green" | "orange" | "red";
+type NoticeTone = "info" | "success" | "warning";
 
 const LIST_PAGE_SIZE = 30;
+const AI_EXAMPLE_TEXT = "深圳现货 H100 8卡服务器 2台 全新 价格120万";
 const pageMeta: Record<TabKey, { title: string; crumb: string }> = {
   input: { title: "货记", crumb: "录入" },
   stock: { title: "我的货源", crumb: "供应" },
@@ -84,6 +93,25 @@ interface ParsedTradeItem {
   rawText?: string;
   confidence?: number;
   configItems?: ConfigItem[];
+}
+
+interface ManualDraft {
+  productCategory: ProductCategory;
+  tradeMode: TradeMode;
+  gpuModel: string;
+  gpuCount: string;
+  quantity: string;
+  quantityUnit: string;
+  locationCity: string;
+  priceAmount: string;
+  title: string;
+  contactMethod: string;
+  configItems: ConfigItem[];
+}
+
+interface NoticeState {
+  tone: NoticeTone;
+  text: string;
 }
 
 interface AiStructureResponse {
@@ -166,7 +194,7 @@ export default function App() {
   const [marketPosts, setMarketPosts] = useState<MarketPost[]>(() =>
     normalizeMarketPosts(load("huoji_web_market", initialMarket)),
   );
-  const [aiText, setAiText] = useState("深圳现货 H100 8卡服务器 2台 全新 价格120万");
+  const [aiText, setAiText] = useState(AI_EXAMPLE_TEXT);
   const [query, setQuery] = useState("");
   const [marketModeFilter, setMarketModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [marketCategoryFilter, setMarketCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
@@ -180,19 +208,8 @@ export default function App() {
   const [manualEntryType, setManualEntryType] = useState<MarketType>("GOODS");
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [aiParseMessage, setAiParseMessage] = useState("");
-  const [manual, setManual] = useState({
-    productCategory: "SERVER" as ProductCategory,
-    tradeMode: "SPOT" as TradeMode,
-    gpuModel: "H100",
-    gpuCount: "8",
-    quantity: "1",
-    quantityUnit: "台",
-    locationCity: "深圳",
-    priceAmount: "1200000",
-    title: "",
-    contactMethod: "站内联系",
-    configItems: defaultConfig("SERVER"),
-  });
+  const [manual, setManual] = useState<ManualDraft>(() => createManualDraft());
+  const [notice, setNotice] = useState<NoticeState | null>(null);
 
   const filteredStocks = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -246,7 +263,8 @@ export default function App() {
           productCategoryText(post.productCategory),
           ...post.configItems.flatMap((config) => [config.label, config.value]),
         ].some((value) => String(value).toLowerCase().includes(q));
-      });
+      })
+      .sort((left, right) => createdTimeValue(right.publishedAt) - createdTimeValue(left.publishedAt));
   }, [query, marketCategoryFilter, marketModeFilter, marketPosts]);
 
   const stockCurrentPage = clampPage(stockPage, totalPagesFor(filteredStocks.length));
@@ -256,6 +274,14 @@ export default function App() {
   const demandCount = marketPosts.filter((post) => post.postType === "DEMAND").length;
   const verifiedStockCount = stocks.filter((item) => item.status === "VERIFIED" || item.status === "SELLABLE").length;
   const activePage = pageMeta[activeTab];
+  const activeSummary =
+    activeTab === "input"
+      ? `${stocks.length} 条供应 / ${demandCount} 条需求`
+      : activeTab === "stock"
+        ? `${filteredStocks.length} 条供应`
+        : `${filteredMarket.length} 条需求`;
+  const aiLineCount = aiText.trim() ? aiText.trim().split(/\r?\n/).filter(Boolean).length : 0;
+  const manualIssue = manualDraftIssue(manual);
 
   function saveStocks(next: StockItem[]) {
     setStocks(next);
@@ -267,38 +293,80 @@ export default function App() {
     localStorage.setItem("huoji_web_market", JSON.stringify(next));
   }
 
+  function updateStockStatus(stockId: string, status: StockItem["status"]) {
+    saveStocks(stocks.map((item) => (item.id === stockId ? { ...item, status } : item)));
+    setNotice({ tone: "success", text: status === "EXPIRED" ? "已标记为失效货源。" : "已恢复为供应中。" });
+  }
+
+  function resetStockFilters() {
+    setQuery("");
+    setStockCategoryFilter("ALL");
+    setStockCityFilter("ALL");
+    setStockSourceFilter("ALL");
+    setStockModeFilter("ALL");
+    setStockPriceFilter("ALL");
+    setStockPage(1);
+  }
+
+  function resetMarketFilters() {
+    setQuery("");
+    setMarketCategoryFilter("ALL");
+    setMarketModeFilter("ALL");
+    setMarketPage(1);
+  }
+
+  function saveParsedItems(materialized: { stockItems: StockItem[]; marketItems: MarketPost[] }) {
+    const newStockItems = dedupeNewStockItems(materialized.stockItems, stocks);
+    const newMarketItems = dedupeNewMarketPosts(materialized.marketItems, marketPosts);
+    if (newStockItems.length) {
+      saveStocks([...newStockItems, ...stocks]);
+      resetStockFilters();
+    }
+    if (newMarketItems.length) {
+      saveMarket([...newMarketItems, ...marketPosts]);
+      resetMarketFilters();
+    }
+    return {
+      stockCount: newStockItems.length,
+      marketCount: newMarketItems.length,
+      skippedCount: materialized.stockItems.length + materialized.marketItems.length - newStockItems.length - newMarketItems.length,
+    };
+  }
+
   async function createStock(source: "AI" | "MANUAL") {
     if (source === "AI") {
       if (!aiText.trim()) {
         setAiParseMessage("请先粘贴需要解析的货源文本。");
+        setNotice({ tone: "warning", text: "AI 解析文本为空。" });
         return;
       }
       setIsAiParsing(true);
       setAiParseMessage("正在调用 DeepSeek 结构化解析...");
+      setNotice(null);
       try {
         const aiResult = await parseWithAiGateway(aiText);
         const materialized = materializeParsedItems(aiResult.items);
         if (!materialized.stockItems.length && !materialized.marketItems.length) {
           throw new Error("没有识别到可入库的供需条目");
         }
-        if (materialized.stockItems.length) {
-          saveStocks([...materialized.stockItems, ...stocks]);
-          setStockPage(1);
-        }
-        if (materialized.marketItems.length) {
-          saveMarket([...materialized.marketItems, ...marketPosts]);
-          setMarketPage(1);
+        const result = saveParsedItems(materialized);
+        if (!result.stockCount && !result.marketCount) {
+          throw new Error("识别结果与当前列表重复，未新增。");
         }
         setAiParseMessage(
-          `${aiResult.isMock ? "离线解析" : "DeepSeek"}完成：${materialized.stockItems.length} 条供应进入我的货源，${materialized.marketItems.length} 条需求进入广场。`,
+          `${aiResult.isMock ? "离线解析" : "DeepSeek"}完成：新增 ${result.stockCount} 条供应、${result.marketCount} 条需求${result.skippedCount ? `，跳过 ${result.skippedCount} 条重复` : ""}。`,
         );
-        setActiveTab(materialized.stockItems.length ? "stock" : "market");
+        setNotice({ tone: "success", text: `解析完成，新增 ${result.stockCount} 条供应、${result.marketCount} 条需求。` });
+        setActiveTab(result.stockCount ? "stock" : result.marketCount ? "market" : activeTab);
       } catch (error) {
         const fallback = materializeParsedItems([parseAiText(aiText)]);
-        saveStocks([...fallback.stockItems, ...stocks]);
-        setStockPage(1);
+        const result = saveParsedItems(fallback);
         setAiParseMessage(error instanceof Error ? `DeepSeek 解析失败，已用本地解析兜底：${error.message}` : "已用本地解析兜底。");
-        setActiveTab("stock");
+        setNotice({
+          tone: result.stockCount || result.marketCount ? "warning" : "info",
+          text: result.stockCount || result.marketCount ? `本地兜底新增 ${result.stockCount} 条供应、${result.marketCount} 条需求。` : "本地兜底没有新增数据。",
+        });
+        setActiveTab(result.stockCount ? "stock" : result.marketCount ? "market" : activeTab);
       } finally {
         setIsAiParsing(false);
       }
@@ -329,11 +397,18 @@ export default function App() {
       createdAt: new Date().toISOString(),
     };
     saveStocks([stock, ...stocks]);
-    setStockPage(1);
+    resetStockFilters();
+    setManual(createManualDraft("GOODS"));
+    setNotice({ tone: "success", text: "供应已保存到我的货源。" });
     setActiveTab("stock");
   }
 
   function submitManualEntry() {
+    if (manualIssue) {
+      setNotice({ tone: "warning", text: manualIssue });
+      return;
+    }
+
     if (manualEntryType === "GOODS") {
       createStock("MANUAL");
       return;
@@ -361,7 +436,9 @@ export default function App() {
       publishedAt: new Date().toISOString(),
     };
     saveMarket([post, ...marketPosts]);
-    setMarketPage(1);
+    resetMarketFilters();
+    setManual(createManualDraft("DEMAND"));
+    setNotice({ tone: "success", text: "需求已发布到广场。" });
     setActiveTab("market");
   }
 
@@ -397,7 +474,10 @@ export default function App() {
             <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-8">
               <div className="min-w-0">
                 <p className="mb-1 text-xs font-medium text-neutral-500">货记 / {activePage.crumb}</p>
-                <h2 className="truncate text-xl font-semibold tracking-normal text-neutral-950 md:text-2xl">{activePage.title}</h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="truncate text-xl font-semibold tracking-normal text-neutral-950 md:text-2xl">{activePage.title}</h2>
+                  <span className="rounded-[5px] bg-[#f1f1ef] px-2 py-0.5 text-xs font-medium text-neutral-500">{activeSummary}</span>
+                </div>
               </div>
               <div className="hidden items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-sm md:flex">
                 <Check className="h-3.5 w-3.5 text-emerald-600" />
@@ -407,6 +487,8 @@ export default function App() {
           </header>
 
           <section className="mx-auto max-w-6xl space-y-4 px-4 py-5 md:px-8 md:py-7">
+
+          {notice && <InlineNotice tone={notice.tone} text={notice.text} onDismiss={() => setNotice(null)} />}
 
           {activeTab !== "input" && (
             <div className="group flex items-center gap-2 rounded-md border border-transparent bg-white px-3 py-2 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)] focus-within:shadow-[0_0_0_1px_rgba(15,15,15,0.22)]">
@@ -477,16 +559,10 @@ export default function App() {
                 <span>已显示 {filteredStocks.length} 条，按录入时间最新在前</span>
                 <button
                   type="button"
-                  onClick={() => {
-                    setStockCategoryFilter("ALL");
-                    setStockCityFilter("ALL");
-                    setStockSourceFilter("ALL");
-                    setStockModeFilter("ALL");
-                    setStockPriceFilter("ALL");
-                    setStockPage(1);
-                  }}
-                  className="self-start rounded-md px-2 py-1 font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 sm:self-auto"
+                  onClick={resetStockFilters}
+                  className="inline-flex items-center gap-1 self-start rounded-md px-2 py-1 font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 sm:self-auto"
                 >
+                  <RotateCcw className="h-3.5 w-3.5" />
                   清空筛选
                 </button>
               </div>
@@ -496,6 +572,13 @@ export default function App() {
           {activeTab === "input" && (
             <div className="grid gap-4 lg:grid-cols-2">
               <Panel title="AI 解析供需" icon={<Bot />}>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-neutral-400">{aiLineCount ? `${aiLineCount} 行文本` : "空白文本"}</span>
+                  <div className="flex items-center gap-1">
+                    <ToolbarButton icon={<Sparkles />} label="示例" onClick={() => setAiText(AI_EXAMPLE_TEXT)} />
+                    <ToolbarButton icon={<Trash2 />} label="清空" onClick={() => setAiText("")} />
+                  </div>
+                </div>
                 <textarea
                   value={aiText}
                   onChange={(event) => setAiText(event.target.value)}
@@ -517,16 +600,37 @@ export default function App() {
               </Panel>
 
               <Panel title="手工录入" icon={<Plus />}>
-                <Segmented
-                  value={manualEntryType}
-                  options={[
-                    { label: "供应", value: "GOODS" },
-                    { label: "需求", value: "DEMAND" },
-                  ]}
-                  onChange={(value) => setManualEntryType(value as MarketType)}
-                />
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <Segmented
+                      value={manualEntryType}
+                      options={[
+                        { label: "供应", value: "GOODS" },
+                        { label: "需求", value: "DEMAND" },
+                      ]}
+                      onChange={(value) => {
+                        setManualEntryType(value as MarketType);
+                        setNotice(null);
+                      }}
+                    />
+                  </div>
+                  <ToolbarButton icon={<RotateCcw />} label="重置" onClick={() => setManual(createManualDraft(manualEntryType))} />
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge tone={manualEntryType === "GOODS" ? "green" : "orange"}>
+                    {manualEntryType === "GOODS" ? "目标：我的货源" : "目标：需求广场"}
+                  </Badge>
+                  <span className={`text-xs font-medium ${manualIssue ? "text-amber-600" : "text-neutral-400"}`}>
+                    {manualIssue ?? "草稿完整，可提交"}
+                  </span>
+                </div>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <TextField label="标题" value={manual.title} onChange={(value) => setManual({ ...manual, title: value })} />
+                  <TextField
+                    label="标题"
+                    value={manual.title}
+                    placeholder={manualEntryType === "GOODS" ? "可留空，自动生成供应标题" : "可留空，自动生成需求标题"}
+                    onChange={(value) => setManual({ ...manual, title: value })}
+                  />
                   <SelectField
                     label="交易大类"
                     value={manual.tradeMode}
@@ -546,13 +650,13 @@ export default function App() {
                       })
                     }
                   />
-                  <TextField label="型号 / 规格" value={manual.gpuModel} onChange={(value) => setManual({ ...manual, gpuModel: value })} />
+                  <TextField label="型号 / 规格" value={manual.gpuModel} placeholder="H100 / 64G 5600 / PM9D3A" onChange={(value) => setManual({ ...manual, gpuModel: value })} />
                   {manual.productCategory !== "MEMORY" && (
                     <TextField label="卡数" value={manual.gpuCount} onChange={(value) => setManual({ ...manual, gpuCount: value })} />
                   )}
                   <TextField label="数量" value={manual.quantity} onChange={(value) => setManual({ ...manual, quantity: value })} />
                   <TextField label="单位" value={manual.quantityUnit} onChange={(value) => setManual({ ...manual, quantityUnit: value })} />
-                  <TextField label="城市" value={manual.locationCity} onChange={(value) => setManual({ ...manual, locationCity: value })} />
+                  <TextField label="城市" value={manual.locationCity} placeholder="深圳 / 香港 / 上海" onChange={(value) => setManual({ ...manual, locationCity: value })} />
                   <TextField
                     label={manualEntryType === "GOODS" ? "对外价格" : "预算上限"}
                     value={manual.priceAmount}
@@ -573,7 +677,8 @@ export default function App() {
                 <button
                   type="button"
                   onClick={submitManualEntry}
-                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800"
+                  disabled={Boolean(manualIssue)}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
                 >
                   {manualEntryType === "GOODS" ? <Database className="h-4 w-4" /> : <Megaphone className="h-4 w-4" />}
                   {manualEntryType === "GOODS" ? "保存到我的货源" : "发布需求到广场"}
@@ -593,10 +698,10 @@ export default function App() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h2 className="font-semibold text-neutral-950">{stock.title}</h2>
-                        <Badge>{productCategoryText(stock.productCategory)}</Badge>
-                        <Badge>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
-                        <Badge>{tradeModeText(stock.tradeMode)}</Badge>
-                        <Badge>{statusText(stock.status)}</Badge>
+                        <Badge tone="blue">{productCategoryText(stock.productCategory)}</Badge>
+                        <Badge tone={stock.source === "AI" ? "green" : "default"}>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
+                        <Badge tone={tradeModeTone(stock.tradeMode)}>{tradeModeText(stock.tradeMode)}</Badge>
+                        <Badge tone={statusTone(stock.status)}>{statusText(stock.status)}</Badge>
                       </div>
                       <p className="mt-2 text-sm text-neutral-600">
                         {stockSpecText(stock)} / {stock.quantity}{stock.quantityUnit} / {stock.locationCity}
@@ -607,19 +712,23 @@ export default function App() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => saveStocks(stocks.map((item) => (item.id === stock.id ? { ...item, status: "EXPIRED" } : item)))}
-                      className="self-start rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 md:self-auto"
+                      onClick={() => updateStockStatus(stock.id, stock.status === "EXPIRED" ? "SELLABLE" : "EXPIRED")}
+                      className="inline-flex items-center gap-1 self-start rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 md:self-auto"
                     >
-                      标记失效
+                      {stock.status === "EXPIRED" ? <RotateCcw className="h-4 w-4" /> : <CircleOff className="h-4 w-4" />}
+                      {stock.status === "EXPIRED" ? "恢复供应" : "标记失效"}
                     </button>
                   </div>
                 </article>
               ))}
-              <Pagination
-                total={filteredStocks.length}
-                page={stockCurrentPage}
-                onPageChange={setStockPage}
-              />
+              {!pagedStocks.length && <EmptyState title="暂无符合条件的货源" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
+              {filteredStocks.length > 0 && (
+                <Pagination
+                  total={filteredStocks.length}
+                  page={stockCurrentPage}
+                  onPageChange={setStockPage}
+                />
+              )}
             </div>
           )}
 
@@ -644,6 +753,17 @@ export default function App() {
                     }}
                   />
                 </div>
+                <div className="mt-3 flex flex-col gap-2 text-xs font-medium text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
+                  <span>已显示 {filteredMarket.length} 条需求，按创建时间最新在前</span>
+                  <button
+                    type="button"
+                    onClick={resetMarketFilters}
+                    className="inline-flex items-center gap-1 self-start rounded-md px-2 py-1 font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 sm:self-auto"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    清空筛选
+                  </button>
+                </div>
               </div>
               {pagedMarket.map((post) => (
                 <article
@@ -653,9 +773,9 @@ export default function App() {
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge>需求</Badge>
-                        <Badge>{tradeModeText(post.tradeMode)}</Badge>
-                        <Badge>{productCategoryText(post.productCategory)}</Badge>
+                        <Badge tone="orange">需求</Badge>
+                        <Badge tone={tradeModeTone(post.tradeMode)}>{tradeModeText(post.tradeMode)}</Badge>
+                        <Badge tone="blue">{productCategoryText(post.productCategory)}</Badge>
                         <h2 className="font-semibold text-neutral-950">{post.title}</h2>
                       </div>
                       <p className="mt-2 text-sm text-neutral-600">
@@ -666,17 +786,25 @@ export default function App() {
                       <ConfigSheet items={post.configItems} />
                       <p className="mt-1 text-xs text-neutral-500">联系方式：{post.contactMethod}</p>
                     </div>
-                    <button type="button" className="self-start rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 md:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setNotice({ tone: "info", text: `联系方式：${post.contactMethod}` })}
+                      className="inline-flex items-center gap-1 self-start rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 md:self-auto"
+                    >
+                      <MessageCircle className="h-4 w-4" />
                       联系
                     </button>
                   </div>
                 </article>
               ))}
-              <Pagination
-                total={filteredMarket.length}
-                page={marketCurrentPage}
-                onPageChange={setMarketPage}
-              />
+              {!pagedMarket.length && <EmptyState title="暂无符合条件的需求" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
+              {filteredMarket.length > 0 && (
+                <Pagination
+                  total={filteredMarket.length}
+                  page={marketCurrentPage}
+                  onPageChange={setMarketPage}
+                />
+              )}
             </div>
           )}
           </section>
@@ -743,14 +871,61 @@ function SideMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function ToolbarButton({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+    >
+      {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-3.5 w-3.5" })}
+      {label}
+    </button>
+  );
+}
+
+function InlineNotice({ tone, text, onDismiss }: { tone: NoticeTone; text: string; onDismiss: () => void }) {
+  const toneClass: Record<NoticeTone, string> = {
+    info: "bg-white text-neutral-600 shadow-[0_0_0_1px_rgba(15,15,15,0.06)]",
+    success: "bg-emerald-50 text-emerald-800 shadow-[0_0_0_1px_rgba(5,150,105,0.16)]",
+    warning: "bg-amber-50 text-amber-800 shadow-[0_0_0_1px_rgba(217,119,6,0.16)]",
+  };
+  return (
+    <div className={`flex items-start gap-2 rounded-md px-3 py-2 text-sm font-medium ${toneClass[tone]}`}>
+      {tone === "success" ? <Check className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+      <span className="min-w-0 flex-1">{text}</span>
+      <button
+        type="button"
+        title="关闭提示"
+        aria-label="关闭提示"
+        onClick={onDismiss}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-70 transition hover:bg-white/70 hover:opacity-100"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-medium text-neutral-500">{label}</span>
       <input
         value={value}
+        placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+        className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
       />
     </label>
   );
@@ -881,6 +1056,25 @@ function Pagination({
   );
 }
 
+function EmptyState({ title, actionLabel, onAction }: { title: string; actionLabel: string; onAction: () => void }) {
+  return (
+    <div className="rounded-md bg-white px-4 py-10 text-center shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
+      <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md bg-[#f1f1ef] text-neutral-400">
+        <Search className="h-4 w-4" />
+      </div>
+      <p className="text-sm font-medium text-neutral-600">{title}</p>
+      <button
+        type="button"
+        onClick={onAction}
+        className="mt-3 inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+      >
+        <Plus className="h-4 w-4" />
+        {actionLabel}
+      </button>
+    </div>
+  );
+}
+
 function ConfigEditor({
   items,
   onChange,
@@ -888,24 +1082,59 @@ function ConfigEditor({
   items: ConfigItem[];
   onChange: (items: ConfigItem[]) => void;
 }) {
+  function updateConfigItem(index: number, patch: Partial<ConfigItem>) {
+    onChange(items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
+  }
+
+  function removeConfigItem(index: number) {
+    onChange(items.filter((_, itemIndex) => itemIndex !== index));
+  }
+
   return (
     <div className="mt-4 border-t border-neutral-100 pt-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-xs font-semibold text-neutral-500">详细配置单</p>
-        <span className="text-xs font-medium text-neutral-400">按当前品类保存</span>
+        <button
+          type="button"
+          onClick={() => onChange([...items, { label: "自定义", value: "" }])}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          添加配置
+        </button>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="hidden grid-cols-[minmax(104px,0.42fr)_minmax(0,1fr)_32px] gap-2 pb-1 text-xs font-medium text-neutral-400 sm:grid">
+        <span>配置项</span>
+        <span>内容</span>
+        <span />
+      </div>
+      <div className="grid gap-2">
         {items.map((item, index) => (
-          <label key={`${item.label}-${index}`} className="block">
-            <span className="mb-1 block text-xs font-medium text-neutral-500">{item.label}</span>
+          <div key={`${item.label}-${index}`} className="grid gap-2 sm:grid-cols-[minmax(104px,0.42fr)_minmax(0,1fr)_32px]">
             <input
-              value={item.value}
-              onChange={(event) =>
-                onChange(items.map((config, configIndex) => (configIndex === index ? { ...config, value: event.target.value } : config)))
-              }
-              className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+              aria-label={`配置项 ${index + 1}`}
+              value={item.label}
+              placeholder="配置项"
+              onChange={(event) => updateConfigItem(index, { label: event.target.value })}
+              className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
             />
-          </label>
+            <input
+              aria-label={`${item.label || "配置"} 内容`}
+              value={item.value}
+              placeholder="内容"
+              onChange={(event) => updateConfigItem(index, { value: event.target.value })}
+              className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+            />
+            <button
+              type="button"
+              title="删除配置项"
+              aria-label={`删除配置项 ${item.label || index + 1}`}
+              onClick={() => removeConfigItem(index)}
+              className="flex h-9 w-9 items-center justify-center rounded-md text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
         ))}
       </div>
     </div>
@@ -923,7 +1152,9 @@ function ConfigSheet({ items }: { items: ConfigItem[] }) {
         {visibleItems.map((item, index) => (
           <div key={`${item.label}-${index}`} className="grid grid-cols-[72px_1fr] gap-2 border-b border-neutral-100 py-2 text-sm">
             <dt className="font-medium text-neutral-400">{item.label}</dt>
-            <dd className="break-words text-neutral-800">{item.value}</dd>
+            <dd className="break-words text-neutral-800" title={item.value.length > 96 ? item.value : undefined}>
+              {compactConfigValue(item.value)}
+            </dd>
           </div>
         ))}
       </dl>
@@ -961,8 +1192,15 @@ function Segmented({
   );
 }
 
-function Badge({ children }: { children: React.ReactNode }) {
-  return <span className="rounded-[5px] bg-[#f1f1ef] px-1.5 py-0.5 text-xs font-medium text-neutral-500">{children}</span>;
+function Badge({ children, tone = "default" }: { children: React.ReactNode; tone?: BadgeTone }) {
+  const toneClass: Record<BadgeTone, string> = {
+    default: "bg-[#f1f1ef] text-neutral-500",
+    blue: "bg-sky-50 text-sky-700",
+    green: "bg-emerald-50 text-emerald-700",
+    orange: "bg-amber-50 text-amber-700",
+    red: "bg-rose-50 text-rose-700",
+  };
+  return <span className={`rounded-[5px] px-1.5 py-0.5 text-xs font-medium ${toneClass[tone]}`}>{children}</span>;
 }
 
 async function parseWithAiGateway(text: string): Promise<{
@@ -1068,6 +1306,7 @@ function parseAiText(text: string) {
   const gpuCount = text.match(/(\d+)\s*卡/)?.[1] ?? "8";
   const condition = text.includes("全新") ? "全新" : "待确认";
   return {
+    postType: normalizeMarketType(text),
     productCategory,
     title: buildParsedTitle(productCategory, gpuModel, gpuCount, city),
     gpuModel,
@@ -1079,6 +1318,7 @@ function parseAiText(text: string) {
     condition,
     availabilityType: text.includes("现货") ? "现货" : "待确认",
     tradeMode: parseTradeMode(text),
+    rawText: text,
     configItems: extractConfigItems(text, productCategory, gpuModel, gpuCount, condition),
   };
 }
@@ -1114,6 +1354,30 @@ const stockPriceOptions: Array<{ label: string; value: PriceFilter }> = [
   { label: "10-50万", value: "FROM_100000_TO_500000" },
   { label: "50万以上", value: "OVER_500000" },
 ];
+
+function createManualDraft(type: MarketType = "GOODS"): ManualDraft {
+  const productCategory: ProductCategory = "SERVER";
+  return {
+    productCategory,
+    tradeMode: "SPOT",
+    gpuModel: type === "GOODS" ? "H100" : "H200",
+    gpuCount: "8",
+    quantity: type === "GOODS" ? "1" : "4",
+    quantityUnit: quantityUnitForCategory(productCategory),
+    locationCity: type === "GOODS" ? "深圳" : "上海",
+    priceAmount: type === "GOODS" ? "1200000" : "",
+    title: "",
+    contactMethod: "站内联系",
+    configItems: defaultConfig(productCategory),
+  };
+}
+
+function manualDraftIssue(draft: ManualDraft): string | null {
+  if (!draft.gpuModel.trim()) return "请填写型号 / 规格";
+  if (!toNumber(draft.quantity, 0)) return "请填写有效数量";
+  if (!draft.locationCity.trim()) return "请填写城市";
+  return null;
+}
 
 function defaultConfig(category: ProductCategory): ConfigItem[] {
   const labels: Record<ProductCategory, string[]> = {
@@ -1329,6 +1593,15 @@ function tradeModeText(mode: TradeMode): string {
   return map[mode];
 }
 
+function tradeModeTone(mode: TradeMode): BadgeTone {
+  const map: Record<TradeMode, BadgeTone> = {
+    SPOT: "green",
+    FUTURES: "orange",
+    RENTAL: "blue",
+  };
+  return map[mode];
+}
+
 function stockSourceText(source: StockItem["source"]): string {
   const map: Record<StockItem["source"], string> = {
     AI: "AI解析",
@@ -1360,6 +1633,62 @@ function totalPagesFor(total: number): number {
 function clampPage(page: number, totalPages: number): number {
   if (!Number.isFinite(page) || page < 1) return 1;
   return Math.min(Math.floor(page), totalPages);
+}
+
+function dedupeNewStockItems(incoming: StockItem[], existing: StockItem[]): StockItem[] {
+  const seen = new Set(existing.map(stockIdentity));
+  return incoming.filter((item) => {
+    const key = stockIdentity(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeNewMarketPosts(incoming: MarketPost[], existing: MarketPost[]): MarketPost[] {
+  const seen = new Set(existing.map(marketIdentity));
+  return incoming.filter((item) => {
+    const key = marketIdentity(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function stockIdentity(item: StockItem): string {
+  return normalizeIdentity(
+    [
+      item.productCategory,
+      item.tradeMode,
+      item.title,
+      item.gpuModel,
+      item.quantity,
+      item.quantityUnit,
+      item.locationCity,
+      item.priceAmount ?? "",
+    ].join("|"),
+  );
+}
+
+function marketIdentity(item: MarketPost): string {
+  return normalizeIdentity(
+    [
+      item.postType,
+      item.productCategory,
+      item.tradeMode,
+      item.title,
+      item.gpuModel,
+      item.quantity,
+      item.quantityUnit,
+      item.locationCity,
+      item.priceAmount ?? "",
+      item.contactMethod,
+    ].join("|"),
+  );
+}
+
+function normalizeIdentity(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, "");
 }
 
 function productCategoryText(category: ProductCategory): string {
@@ -1420,6 +1749,11 @@ function captureModelFamily(text: string): string {
 
 function cleanConfigValue(value: string): string {
   return value.replace(/^(是|为|配置|含|带)\s*/, "").trim();
+}
+
+function compactConfigValue(value: string): string {
+  const clean = value.replace(/\s+/g, " ").trim();
+  return clean.length > 96 ? `${clean.slice(0, 96)}...` : clean;
 }
 
 function asDisplayText(value: unknown): string {
@@ -1485,6 +1819,17 @@ function statusText(status: StockItem["status"]): string {
     SELLABLE: "供应中",
     EXPIRED: "已失效",
     SOLD_OUT: "已售罄",
+  };
+  return map[status];
+}
+
+function statusTone(status: StockItem["status"]): BadgeTone {
+  const map: Record<StockItem["status"], BadgeTone> = {
+    UNVERIFIED: "orange",
+    VERIFIED: "green",
+    SELLABLE: "green",
+    EXPIRED: "red",
+    SOLD_OUT: "red",
   };
   return map[status];
 }
