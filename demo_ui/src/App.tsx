@@ -16,6 +16,7 @@ type TabKey = "input" | "stock" | "market";
 type MarketType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
+type PriceFilter = "ALL" | "HAS_PRICE" | "NO_PRICE" | "UNDER_10000" | "FROM_10000_TO_100000" | "FROM_100000_TO_500000" | "OVER_500000";
 
 interface ConfigItem {
   label: string;
@@ -164,6 +165,11 @@ export default function App() {
   const [marketModeFilter, setMarketModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [marketTypeFilter, setMarketTypeFilter] = useState<MarketType | "ALL">("ALL");
   const [marketCategoryFilter, setMarketCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
+  const [stockCategoryFilter, setStockCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
+  const [stockCityFilter, setStockCityFilter] = useState("ALL");
+  const [stockSourceFilter, setStockSourceFilter] = useState<StockItem["source"] | "ALL">("ALL");
+  const [stockModeFilter, setStockModeFilter] = useState<TradeMode | "ALL">("ALL");
+  const [stockPriceFilter, setStockPriceFilter] = useState<PriceFilter>("ALL");
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [aiParseMessage, setAiParseMessage] = useState("");
   const [manual, setManual] = useState({
@@ -192,17 +198,38 @@ export default function App() {
 
   const filteredStocks = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return stocks;
-    return stocks.filter((item) =>
-      [
-        item.title,
-        item.gpuModel,
-        item.locationCity,
-        item.status,
-        ...item.configItems.flatMap((config) => [config.label, config.value]),
-      ].some((value) => String(value).toLowerCase().includes(q)),
-    );
-  }, [query, stocks]);
+    return stocks
+      .filter((item) => {
+        if (stockCategoryFilter !== "ALL" && item.productCategory !== stockCategoryFilter) return false;
+        if (stockCityFilter !== "ALL" && item.locationCity !== stockCityFilter) return false;
+        if (stockSourceFilter !== "ALL" && item.source !== stockSourceFilter) return false;
+        if (stockModeFilter !== "ALL" && item.tradeMode !== stockModeFilter) return false;
+        if (!matchesPriceFilter(item.priceAmount, stockPriceFilter)) return false;
+        if (!q) return true;
+        return [
+          item.title,
+          item.gpuModel,
+          item.locationCity,
+          item.status,
+          item.source,
+          stockSourceText(item.source),
+          item.tradeMode,
+          tradeModeText(item.tradeMode),
+          item.productCategory,
+          productCategoryText(item.productCategory),
+          item.priceAmount,
+          ...item.configItems.flatMap((config) => [config.label, config.value]),
+        ].some((value) => String(value).toLowerCase().includes(q));
+      })
+      .sort((left, right) => createdTimeValue(right.createdAt) - createdTimeValue(left.createdAt));
+  }, [query, stockCategoryFilter, stockCityFilter, stockModeFilter, stockPriceFilter, stockSourceFilter, stocks]);
+
+  const stockCityOptions = useMemo(() => {
+    const cities: string[] = Array.from(
+      new Set<string>(stocks.map((item) => item.locationCity).filter((city) => city.trim().length > 0)),
+    ).sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
+    return [{ label: "全部城市", value: "ALL" }, ...cities.map((city) => ({ label: city, value: city }))];
+  }, [stocks]);
 
   const filteredMarket = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -375,9 +402,62 @@ export default function App() {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索型号、城市、状态"
+                placeholder="搜索型号、城市、状态、配置"
                 className="w-full bg-transparent text-sm outline-none"
               />
+            </div>
+          )}
+
+          {activeTab === "stock" && (
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                <FilterSelect
+                  label="品类"
+                  value={stockCategoryFilter}
+                  options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
+                  onChange={(value) => setStockCategoryFilter(value as ProductCategory | "ALL")}
+                />
+                <FilterSelect
+                  label="城市"
+                  value={stockCityFilter}
+                  options={stockCityOptions}
+                  onChange={setStockCityFilter}
+                />
+                <FilterSelect
+                  label="来源"
+                  value={stockSourceFilter}
+                  options={stockSourceOptions}
+                  onChange={(value) => setStockSourceFilter(value as StockItem["source"] | "ALL")}
+                />
+                <FilterSelect
+                  label="交易大类"
+                  value={stockModeFilter}
+                  options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
+                  onChange={(value) => setStockModeFilter(value as TradeMode | "ALL")}
+                />
+                <FilterSelect
+                  label="价格"
+                  value={stockPriceFilter}
+                  options={stockPriceOptions}
+                  onChange={(value) => setStockPriceFilter(value as PriceFilter)}
+                />
+              </div>
+              <div className="mt-3 flex flex-col gap-2 text-xs font-semibold text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+                <span>已显示 {filteredStocks.length} 条，按录入时间最新在前</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStockCategoryFilter("ALL");
+                    setStockCityFilter("ALL");
+                    setStockSourceFilter("ALL");
+                    setStockModeFilter("ALL");
+                    setStockPriceFilter("ALL");
+                  }}
+                  className="self-start rounded-md border border-slate-200 px-2 py-1 font-bold text-slate-600 sm:self-auto"
+                >
+                  清空筛选
+                </button>
+              </div>
             </div>
           )}
 
@@ -681,6 +761,35 @@ function SelectField({
   );
 }
 
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ label: string; value: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-black text-slate-500">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-sm font-semibold outline-none focus:border-slate-500"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function ConfigEditor({
   items,
   onChange,
@@ -908,6 +1017,22 @@ const productCategoryOptions: Array<{ label: string; value: ProductCategory }> =
   { label: "其他配件", value: "OTHER" },
 ];
 
+const stockSourceOptions: Array<{ label: string; value: StockItem["source"] | "ALL" }> = [
+  { label: "全部来源", value: "ALL" },
+  { label: "AI解析", value: "AI" },
+  { label: "手工录入", value: "MANUAL" },
+];
+
+const stockPriceOptions: Array<{ label: string; value: PriceFilter }> = [
+  { label: "全部价格", value: "ALL" },
+  { label: "有价格", value: "HAS_PRICE" },
+  { label: "未填价格", value: "NO_PRICE" },
+  { label: "1万以下", value: "UNDER_10000" },
+  { label: "1-10万", value: "FROM_10000_TO_100000" },
+  { label: "10-50万", value: "FROM_100000_TO_500000" },
+  { label: "50万以上", value: "OVER_500000" },
+];
+
 function defaultConfig(category: ProductCategory): ConfigItem[] {
   const labels: Record<ProductCategory, string[]> = {
     SERVER: ["品牌", "整机型号", "GPU", "GPU数量", "CPU", "内存", "硬盘", "网络", "电源", "质保"],
@@ -1120,6 +1245,30 @@ function tradeModeText(mode: TradeMode): string {
     RENTAL: "租赁",
   };
   return map[mode];
+}
+
+function stockSourceText(source: StockItem["source"]): string {
+  const map: Record<StockItem["source"], string> = {
+    AI: "AI解析",
+    MANUAL: "手工录入",
+  };
+  return map[source];
+}
+
+function matchesPriceFilter(amount: number | undefined, filter: PriceFilter): boolean {
+  if (filter === "ALL") return true;
+  if (filter === "HAS_PRICE") return Boolean(amount && amount > 0);
+  if (filter === "NO_PRICE") return !amount || amount <= 0;
+  if (!amount || amount <= 0) return false;
+  if (filter === "UNDER_10000") return amount < 10000;
+  if (filter === "FROM_10000_TO_100000") return amount >= 10000 && amount < 100000;
+  if (filter === "FROM_100000_TO_500000") return amount >= 100000 && amount < 500000;
+  return amount >= 500000;
+}
+
+function createdTimeValue(value: string): number {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
 }
 
 function productCategoryText(category: ProductCategory): string {
