@@ -1,19 +1,24 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Bot,
   Boxes,
+  Building2,
   Check,
   ClipboardCheck,
   Compass,
   Database,
+  LogOut,
   MessageCircle,
+  Phone,
   Plus,
   RotateCcw,
   Search,
   SendHorizontal,
+  ShieldCheck,
   Sparkles,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 
@@ -24,8 +29,11 @@ type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "N
 type PriceFilter = "ALL" | "HAS_PRICE" | "NO_PRICE" | "UNDER_10000" | "FROM_10000_TO_100000" | "FROM_100000_TO_500000" | "OVER_500000";
 type BadgeTone = "default" | "blue" | "green" | "orange" | "red";
 type NoticeTone = "info" | "success" | "warning";
+type WorkspaceType = "PERSONAL" | "ENTERPRISE";
+type WorkspaceCollection = "stocks" | "market";
 
 const LIST_PAGE_SIZE = 30;
+const AUTH_STORAGE_KEY = "huoji_auth_session";
 const AI_EXAMPLE_TEXT = "深圳现货 H100 8卡服务器 2台 全新 价格120万";
 const pageMeta: Record<TabKey, { title: string; crumb: string }> = {
   input: { title: "货记", crumb: "录入" },
@@ -153,6 +161,43 @@ interface AiStructureResponse {
   error?: string;
 }
 
+interface UserProfile {
+  id: string;
+  phone: string;
+  maskedPhone: string;
+  displayName: string;
+  status: "ACTIVE" | "DISABLED";
+}
+
+interface WorkspaceSummary {
+  id: string;
+  name: string;
+  type: WorkspaceType;
+  status: "ACTIVE" | "SUSPENDED";
+  planCode: string;
+  role: "OWNER" | "ADMIN" | "MEMBER";
+  dataScope: "PERSONAL" | "WORKSPACE";
+}
+
+interface AuthSession {
+  token: string;
+  user: UserProfile;
+  workspaces: WorkspaceSummary[];
+  currentWorkspaceId: string;
+  enterprise?: {
+    status: "RESERVED" | "ACTIVE";
+    supportedWorkspaceType: WorkspaceType;
+  };
+  expiresAt: string;
+}
+
+interface SmsRequestResponse {
+  success?: boolean;
+  expiresInSeconds?: number;
+  debugCode?: string;
+  error?: string;
+}
+
 const initialStocks: StockItem[] = [
   {
     id: "stock-demo-1",
@@ -218,11 +263,14 @@ const initialMarket: MarketPost[] = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("input");
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
+  const currentWorkspace = authSession?.workspaces.find((workspace) => workspace.id === authSession.currentWorkspaceId) ?? null;
+  const currentWorkspaceId = currentWorkspace?.id ?? "";
   const [stocks, setStocks] = useState<StockItem[]>(() =>
-    normalizeStocks(load("huoji_web_stocks", initialStocks)),
+    normalizeStocks(loadWorkspaceCollection(authSession, "stocks", "huoji_web_stocks", initialStocks)),
   );
   const [marketPosts, setMarketPosts] = useState<MarketPost[]>(() =>
-    normalizeMarketPosts(load("huoji_web_market", initialMarket)),
+    normalizeMarketPosts(loadWorkspaceCollection(authSession, "market", "huoji_web_market", initialMarket)),
   );
   const [aiText, setAiText] = useState(AI_EXAMPLE_TEXT);
   const [query, setQuery] = useState("");
@@ -249,6 +297,17 @@ export default function App() {
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [aiParseMessage, setAiParseMessage] = useState("");
   const [notice, setNotice] = useState<NoticeState | null>(null);
+
+  useEffect(() => {
+    if (!authSession) return;
+    setStocks(normalizeStocks(loadWorkspaceCollection(authSession, "stocks", "huoji_web_stocks", initialStocks)));
+    setMarketPosts(normalizeMarketPosts(loadWorkspaceCollection(authSession, "market", "huoji_web_market", initialMarket)));
+    setDraftItems([]);
+    setQuery("");
+    setStockPage(1);
+    setMarketPage(1);
+    setDraftPage(1);
+  }, [authSession?.currentWorkspaceId]);
 
   const filteredStocks = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -349,12 +408,31 @@ export default function App() {
 
   function saveStocks(next: StockItem[]) {
     setStocks(next);
-    localStorage.setItem("huoji_web_stocks", JSON.stringify(next));
+    saveWorkspaceCollection(currentWorkspaceId, "stocks", next);
   }
 
   function saveMarket(next: MarketPost[]) {
     setMarketPosts(next);
-    localStorage.setItem("huoji_web_market", JSON.stringify(next));
+    saveWorkspaceCollection(currentWorkspaceId, "market", next);
+  }
+
+  function handleLogin(nextSession: AuthSession) {
+    persistAuthSession(nextSession);
+    setStocks(normalizeStocks(loadWorkspaceCollection(nextSession, "stocks", "huoji_web_stocks", initialStocks)));
+    setMarketPosts(normalizeMarketPosts(loadWorkspaceCollection(nextSession, "market", "huoji_web_market", initialMarket)));
+    setDraftItems([]);
+    setQuery("");
+    setStockPage(1);
+    setMarketPage(1);
+    setDraftPage(1);
+    setAuthSession(nextSession);
+    setNotice({ tone: "success", text: "已进入个人空间。" });
+  }
+
+  function handleLogout() {
+    if (authSession?.token) void logoutAuthSession(authSession.token);
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    setAuthSession(null);
   }
 
   function resetStockFilters() {
@@ -502,6 +580,10 @@ export default function App() {
     ]);
   }
 
+  if (!authSession || !currentWorkspace) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   return (
     <div className="min-h-screen bg-[#fbfbfa] text-neutral-950">
       <div className="mx-auto grid min-h-screen max-w-[1440px] md:grid-cols-[248px_1fr]">
@@ -515,6 +597,8 @@ export default function App() {
               <p className="truncate text-xs text-neutral-500">AI 硬件供需台账</p>
             </div>
           </div>
+
+          <WorkspaceSwitcher currentWorkspace={currentWorkspace} />
 
           <nav className="space-y-1">
             <NavButton active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
@@ -533,15 +617,26 @@ export default function App() {
           <header className="sticky top-0 z-30 border-b border-neutral-200/70 bg-[#fbfbfa]/90 backdrop-blur">
             <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-8">
               <div className="min-w-0">
-                <p className="mb-1 text-xs font-medium text-neutral-500">货记 / {activePage.crumb}</p>
+                <p className="mb-1 text-xs font-medium text-neutral-500">货记 / {workspaceTypeText(currentWorkspace.type)} / {activePage.crumb}</p>
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="truncate text-xl font-semibold tracking-normal text-neutral-950 md:text-2xl">{activePage.title}</h2>
                   <span className="rounded-[5px] bg-[#f1f1ef] px-2 py-0.5 text-xs font-medium text-neutral-500">{activeSummary}</span>
                 </div>
               </div>
-              <div className="hidden items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-sm md:flex">
-                <Check className="h-3.5 w-3.5 text-emerald-600" />
-                本地原型运行中
+              <div className="flex shrink-0 items-center gap-2">
+                <div className="hidden items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-sm sm:flex">
+                  <UserRound className="h-3.5 w-3.5 text-neutral-500" />
+                  {authSession.user.maskedPhone}
+                </div>
+                <button
+                  type="button"
+                  title="退出登录"
+                  aria-label="退出登录"
+                  onClick={handleLogout}
+                  className="flex h-9 w-9 items-center justify-center rounded-md bg-white text-neutral-500 shadow-[0_0_0_1px_rgba(15,15,15,0.08)] transition hover:bg-neutral-100 hover:text-neutral-900"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
               </div>
             </div>
           </header>
@@ -873,6 +968,169 @@ export default function App() {
         <MobileTab active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
         <MobileTab active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
       </nav>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [debugCode, setDebugCode] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const normalizedPhone = normalizePhoneInput(phone);
+
+  async function handleRequestCode() {
+    if (!normalizedPhone) {
+      setError("请输入有效的 11 位手机号。");
+      return;
+    }
+    setIsSending(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await requestSmsCode(normalizedPhone);
+      setDebugCode(result.debugCode ?? "");
+      if (result.debugCode) setCode(result.debugCode);
+      setMessage(result.debugCode ? "验证码已生成，可直接登录。" : "验证码已发送。");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "验证码发送失败。");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!normalizedPhone || !code.trim()) {
+      setError("请输入手机号和验证码。");
+      return;
+    }
+    setIsLoggingIn(true);
+    setError("");
+    try {
+      onLogin(await loginWithSmsCode(normalizedPhone, code.trim()));
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "登录失败。");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#fbfbfa] px-4 py-8 text-neutral-950">
+      <main className="grid w-full max-w-5xl gap-4 md:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
+        <section className="rounded-md bg-white p-5 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] md:p-6">
+          <div className="mb-6 flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-900 text-white">
+              <Database className="h-4 w-4" />
+            </div>
+            <div>
+              <h1 className="text-base font-semibold text-neutral-950">货记</h1>
+              <p className="text-xs font-medium text-neutral-500">AI 硬件供需台账</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div className="rounded-md bg-[#f7f7f5] p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <UserRound className="h-4 w-4 text-neutral-500" />
+                <span className="text-sm font-semibold text-neutral-900">个人空间</span>
+                <Badge tone="green">当前开放</Badge>
+              </div>
+              <p className="text-xs leading-5 text-neutral-500">手机号登录后自动创建个人空间，供应、需求和待确认结果按空间隔离保存。</p>
+            </div>
+            <div className="rounded-md bg-[#f7f7f5] p-3 opacity-80">
+              <div className="mb-2 flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-neutral-500" />
+                <span className="text-sm font-semibold text-neutral-900">企业空间</span>
+                <Badge>架构预留</Badge>
+              </div>
+              <p className="text-xs leading-5 text-neutral-500">企业成员、角色权限、企业货源池和审批流先按 workspace 体系预留，不影响个人版使用。</p>
+            </div>
+          </div>
+        </section>
+
+        <form onSubmit={handleLogin} className="rounded-md bg-white p-5 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] md:p-6">
+          <div className="mb-5">
+            <h2 className="text-lg font-semibold text-neutral-950">手机号登录</h2>
+            <p className="mt-1 text-xs font-medium text-neutral-500">登录后进入你的个人空间。</p>
+          </div>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-neutral-500">手机号</span>
+            <div className="flex items-center gap-2 rounded-md bg-[#f7f7f5] px-3 py-2 transition focus-within:bg-white focus-within:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]">
+              <Phone className="h-4 w-4 text-neutral-400" />
+              <input
+                value={phone}
+                inputMode="tel"
+                placeholder="请输入 11 位手机号"
+                onChange={(event) => setPhone(event.target.value)}
+                className="min-w-0 flex-1 bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
+              />
+            </div>
+          </label>
+          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-neutral-500">短信验证码</span>
+              <div className="flex items-center gap-2 rounded-md bg-[#f7f7f5] px-3 py-2 transition focus-within:bg-white focus-within:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]">
+                <ShieldCheck className="h-4 w-4 text-neutral-400" />
+                <input
+                  value={code}
+                  inputMode="numeric"
+                  placeholder="6 位验证码"
+                  onChange={(event) => setCode(event.target.value)}
+                  className="min-w-0 flex-1 bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
+                />
+              </div>
+            </label>
+            <button
+              type="button"
+              onClick={handleRequestCode}
+              disabled={isSending || !normalizedPhone}
+              className="self-end rounded-md bg-[#f1f1ef] px-3 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isSending ? "发送中..." : "获取验证码"}
+            </button>
+          </div>
+          {debugCode && <p className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">原型验证码：{debugCode}</p>}
+          {message && !debugCode && <p className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">{message}</p>}
+          {error && <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{error}</p>}
+          <button
+            type="submit"
+            disabled={isLoggingIn || !normalizedPhone || !code.trim()}
+            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+          >
+            <Check className="h-4 w-4" />
+            {isLoggingIn ? "登录中..." : "进入个人空间"}
+          </button>
+        </form>
+      </main>
+    </div>
+  );
+}
+
+function WorkspaceSwitcher({ currentWorkspace }: { currentWorkspace: WorkspaceSummary }) {
+  return (
+    <div className="mb-5 space-y-1 border-y border-neutral-200/80 py-3">
+      <button type="button" className="flex w-full items-center gap-2 rounded-md bg-white px-2.5 py-2 text-left shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
+        <UserRound className="h-4 w-4 shrink-0 text-neutral-500" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold text-neutral-900">{currentWorkspace.name}</span>
+          <span className="block text-xs font-medium text-neutral-400">个人版 · {currentWorkspace.role === "OWNER" ? "所有者" : "成员"}</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        disabled
+        className="flex w-full cursor-not-allowed items-center gap-2 rounded-md px-2.5 py-2 text-left opacity-60"
+      >
+        <Building2 className="h-4 w-4 shrink-0 text-neutral-500" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold text-neutral-700">企业空间</span>
+          <span className="block text-xs font-medium text-neutral-400">企业版 · 待开通</span>
+        </span>
+      </button>
     </div>
   );
 }
@@ -2023,6 +2281,10 @@ function productCategoryText(category: ProductCategory): string {
   return map[category];
 }
 
+function workspaceTypeText(type: WorkspaceType): string {
+  return type === "PERSONAL" ? "个人空间" : "企业空间";
+}
+
 function quantityUnitForCategory(category: ProductCategory): string {
   const map: Record<ProductCategory, string> = {
     SERVER: "台",
@@ -2082,6 +2344,82 @@ function compactConfigValue(value: string): string {
 function asDisplayText(value: unknown): string {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+}
+
+function loadAuthSession(): AuthSession | null {
+  const session = load<AuthSession | null>(AUTH_STORAGE_KEY, null);
+  if (!session?.token || !session.currentWorkspaceId || !Array.isArray(session.workspaces)) return null;
+  return session;
+}
+
+function persistAuthSession(session: AuthSession): void {
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+}
+
+async function requestSmsCode(phone: string): Promise<SmsRequestResponse> {
+  const response = await fetch("/api/auth/sms/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone }),
+  });
+  const payload = (await response.json()) as SmsRequestResponse;
+  if (!response.ok) throw new Error(payload.error || "验证码发送失败。");
+  return payload;
+}
+
+async function loginWithSmsCode(phone: string, code: string): Promise<AuthSession> {
+  const response = await fetch("/api/auth/sms/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone, code }),
+  });
+  const payload = (await response.json()) as AuthSession & { error?: string };
+  if (!response.ok) throw new Error(payload.error || "登录失败。");
+  return payload;
+}
+
+async function logoutAuthSession(token: string): Promise<void> {
+  await fetch("/api/auth/logout", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  }).catch(() => undefined);
+}
+
+function normalizePhoneInput(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  return /^1[3-9]\d{9}$/.test(digits) ? digits : "";
+}
+
+function workspaceStorageKey(workspaceId: string, collection: WorkspaceCollection): string {
+  return `huoji_web_${workspaceId}_${collection}`;
+}
+
+function loadWorkspaceCollection<T>(
+  session: AuthSession | null,
+  collection: WorkspaceCollection,
+  legacyKey: string,
+  fallback: T,
+): T {
+  const workspaceId = session?.currentWorkspaceId;
+  if (!workspaceId) return fallback;
+  const scopedKey = workspaceStorageKey(workspaceId, collection);
+  try {
+    const scopedValue = localStorage.getItem(scopedKey);
+    if (scopedValue) return JSON.parse(scopedValue) as T;
+    const legacyValue = localStorage.getItem(legacyKey);
+    if (legacyValue) {
+      localStorage.setItem(scopedKey, legacyValue);
+      return JSON.parse(legacyValue) as T;
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
+}
+
+function saveWorkspaceCollection<T>(workspaceId: string, collection: WorkspaceCollection, value: T): void {
+  if (!workspaceId) return;
+  localStorage.setItem(workspaceStorageKey(workspaceId, collection), JSON.stringify(value));
 }
 
 function normalizeSourceContact(value: unknown, configItems?: unknown, rawText?: unknown): string {

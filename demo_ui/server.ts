@@ -6,6 +6,7 @@
 import dotenv from "dotenv";
 import express from "express";
 import path from "path";
+import { randomUUID } from "crypto";
 import { createServer as createViteServer } from "vite";
 
 dotenv.config();
@@ -19,6 +20,7 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 type PostType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
+type WorkspaceType = "PERSONAL" | "ENTERPRISE";
 
 interface ConfigItem {
   label: string;
@@ -54,6 +56,117 @@ interface ExtractionEnvelope {
   items: ExtractedTradeItem[];
   warnings: string[];
 }
+
+interface DemoUser {
+  id: string;
+  phone: string;
+  displayName: string;
+  status: "ACTIVE" | "DISABLED";
+  createdAt: string;
+}
+
+interface DemoWorkspace {
+  id: string;
+  name: string;
+  type: WorkspaceType;
+  status: "ACTIVE" | "SUSPENDED";
+  planCode: string;
+  ownerUserId: string;
+  createdAt: string;
+}
+
+interface DemoMembership {
+  userId: string;
+  workspaceId: string;
+  role: "OWNER" | "ADMIN" | "MEMBER";
+  dataScope: "PERSONAL" | "WORKSPACE";
+  status: "ACTIVE" | "DISABLED";
+}
+
+interface DemoSession {
+  token: string;
+  userId: string;
+  currentWorkspaceId: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+interface SmsChallenge {
+  phone: string;
+  code: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+const SMS_TTL_MS = 5 * 60 * 1000;
+const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+const smsChallenges = new Map<string, SmsChallenge>();
+const usersByPhone = new Map<string, DemoUser>();
+const usersById = new Map<string, DemoUser>();
+const workspacesById = new Map<string, DemoWorkspace>();
+const memberships: DemoMembership[] = [];
+const sessions = new Map<string, DemoSession>();
+
+app.post("/api/auth/sms/request", (req, res) => {
+  const phone = normalizePhone(asText(req.body?.phone));
+  if (!phone) {
+    return res.status(400).json({ error: "请输入有效的 11 位手机号。" });
+  }
+
+  const code = process.env.SMS_DEV_CODE || createSmsCode();
+  smsChallenges.set(phone, {
+    phone,
+    code,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + SMS_TTL_MS,
+  });
+
+  return res.json({
+    success: true,
+    expiresInSeconds: SMS_TTL_MS / 1000,
+    debugCode: process.env.SMS_PROVIDER === "real" ? undefined : code,
+  });
+});
+
+app.post("/api/auth/sms/login", (req, res) => {
+  const phone = normalizePhone(asText(req.body?.phone));
+  const code = asText(req.body?.code);
+  if (!phone || !code) {
+    return res.status(400).json({ error: "请输入手机号和短信验证码。" });
+  }
+
+  const challenge = smsChallenges.get(phone);
+  if (!challenge || challenge.expiresAt < Date.now()) {
+    return res.status(400).json({ error: "验证码已过期，请重新获取。" });
+  }
+  if (challenge.code !== code) {
+    return res.status(400).json({ error: "验证码不正确。" });
+  }
+
+  smsChallenges.delete(phone);
+  const { user, personalWorkspace } = ensurePersonalAccount(phone);
+  const session: DemoSession = {
+    token: randomUUID(),
+    userId: user.id,
+    currentWorkspaceId: personalWorkspace.id,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + SESSION_TTL_MS,
+  };
+  sessions.set(session.token, session);
+  return res.json(buildAuthPayload(session));
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const session = readSession(req.headers.authorization);
+  if (!session) return res.status(401).json({ error: "登录已失效，请重新登录。" });
+  return res.json(buildAuthPayload(session));
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const token = parseBearerToken(req.headers.authorization);
+  if (token) sessions.delete(token);
+  return res.json({ success: true });
+});
 
 app.post("/api/structure", async (req, res) => {
   const rawText = asText(req.body?.text);
@@ -423,6 +536,124 @@ function parseCondition(text: string): string {
 
 function parseContact(text: string): string {
   return firstMatch(text, /1[3-9]\d[\s-]?\d{4}[\s-]?\d{4}/) || "站内联系";
+}
+
+function ensurePersonalAccount(phone: string): { user: DemoUser; personalWorkspace: DemoWorkspace } {
+  const existingUser = usersByPhone.get(phone);
+  if (existingUser) {
+    const personalWorkspace =
+      workspacesById.get(personalWorkspaceId(existingUser.id)) ?? createPersonalWorkspace(existingUser);
+    return { user: existingUser, personalWorkspace };
+  }
+
+  const now = new Date().toISOString();
+  const user: DemoUser = {
+    id: `usr_${randomUUID()}`,
+    phone,
+    displayName: maskPhone(phone),
+    status: "ACTIVE",
+    createdAt: now,
+  };
+  usersByPhone.set(phone, user);
+  usersById.set(user.id, user);
+  const personalWorkspace = createPersonalWorkspace(user);
+  return { user, personalWorkspace };
+}
+
+function createPersonalWorkspace(user: DemoUser): DemoWorkspace {
+  const now = new Date().toISOString();
+  const workspace: DemoWorkspace = {
+    id: personalWorkspaceId(user.id),
+    name: `${maskPhone(user.phone)} 的个人空间`,
+    type: "PERSONAL",
+    status: "ACTIVE",
+    planCode: "personal_free",
+    ownerUserId: user.id,
+    createdAt: now,
+  };
+  workspacesById.set(workspace.id, workspace);
+  memberships.push({
+    userId: user.id,
+    workspaceId: workspace.id,
+    role: "OWNER",
+    dataScope: "PERSONAL",
+    status: "ACTIVE",
+  });
+  return workspace;
+}
+
+function buildAuthPayload(session: DemoSession) {
+  const user = usersById.get(session.userId);
+  if (!user) return { error: "用户不存在。" };
+  const userMemberships = memberships.filter((item) => item.userId === user.id && item.status === "ACTIVE");
+  const workspaces = userMemberships
+    .map((membership) => {
+      const workspace = workspacesById.get(membership.workspaceId);
+      if (!workspace) return null;
+      return {
+        id: workspace.id,
+        name: workspace.name,
+        type: workspace.type,
+        status: workspace.status,
+        planCode: workspace.planCode,
+        role: membership.role,
+        dataScope: membership.dataScope,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    token: session.token,
+    user: {
+      id: user.id,
+      phone: user.phone,
+      maskedPhone: maskPhone(user.phone),
+      displayName: user.displayName,
+      status: user.status,
+    },
+    workspaces,
+    currentWorkspaceId: session.currentWorkspaceId,
+    enterprise: {
+      status: "RESERVED",
+      supportedWorkspaceType: "ENTERPRISE",
+    },
+    expiresAt: new Date(session.expiresAt).toISOString(),
+  };
+}
+
+function readSession(authorization: unknown): DemoSession | null {
+  const token = parseBearerToken(authorization);
+  if (!token) return null;
+  const session = sessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt < Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+function parseBearerToken(authorization: unknown): string {
+  const value = asText(authorization);
+  const match = value.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+function normalizePhone(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  return /^1[3-9]\d{9}$/.test(digits) ? digits : "";
+}
+
+function createSmsCode(): string {
+  return `${Math.floor(100000 + Math.random() * 900000)}`;
+}
+
+function personalWorkspaceId(userId: string): string {
+  return `wsp_personal_${userId.replace(/^usr_/, "")}`;
+}
+
+function maskPhone(phone: string): string {
+  return phone.replace(/^(\d{3})\d{4}(\d{4})$/, "$1****$2");
 }
 
 function normalizeSourceContact(value: unknown, configItems?: unknown, rawText?: unknown, inputText?: string): string {
