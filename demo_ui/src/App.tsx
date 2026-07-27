@@ -29,8 +29,8 @@ const LIST_PAGE_SIZE = 30;
 const AI_EXAMPLE_TEXT = "深圳现货 H100 8卡服务器 2台 全新 价格120万";
 const pageMeta: Record<TabKey, { title: string; crumb: string }> = {
   input: { title: "货记", crumb: "录入" },
-  stock: { title: "我的货源", crumb: "供应" },
-  market: { title: "广场", crumb: "需求" },
+  stock: { title: "供应", crumb: "供应" },
+  market: { title: "需求", crumb: "需求" },
 };
 
 interface ConfigItem {
@@ -399,7 +399,7 @@ export default function App() {
     saveStocks([stock, ...stocks]);
     resetStockFilters();
     setManual(createManualDraft("GOODS"));
-    setNotice({ tone: "success", text: "供应已保存到我的货源。" });
+    setNotice({ tone: "success", text: "供应已保存。" });
     setActiveTab("stock");
   }
 
@@ -438,7 +438,7 @@ export default function App() {
     saveMarket([post, ...marketPosts]);
     resetMarketFilters();
     setManual(createManualDraft("DEMAND"));
-    setNotice({ tone: "success", text: "需求已发布到广场。" });
+    setNotice({ tone: "success", text: "需求已发布。" });
     setActiveTab("market");
   }
 
@@ -458,14 +458,14 @@ export default function App() {
 
           <nav className="space-y-1">
             <NavButton active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
-            <NavButton active={activeTab === "stock"} icon={<Boxes />} label="我的货源" onClick={() => setActiveTab("stock")} />
-            <NavButton active={activeTab === "market"} icon={<Compass />} label="广场" onClick={() => setActiveTab("market")} />
+            <NavButton active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
+            <NavButton active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
           </nav>
 
           <div className="mt-6 space-y-2 border-t border-neutral-200/80 pt-4">
             <SideMetric label="我的供应" value={`${stocks.length}`} />
             <SideMetric label="已核实" value={`${verifiedStockCount}`} />
-            <SideMetric label="需求广场" value={`${demandCount}`} />
+            <SideMetric label="需求" value={`${demandCount}`} />
           </div>
         </aside>
 
@@ -618,7 +618,7 @@ export default function App() {
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Badge tone={manualEntryType === "GOODS" ? "green" : "orange"}>
-                    {manualEntryType === "GOODS" ? "目标：我的货源" : "目标：需求广场"}
+                    {manualEntryType === "GOODS" ? "目标：供应" : "目标：需求"}
                   </Badge>
                   <span className={`text-xs font-medium ${manualIssue ? "text-amber-600" : "text-neutral-400"}`}>
                     {manualIssue ?? "草稿完整，可提交"}
@@ -681,7 +681,7 @@ export default function App() {
                   className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
                 >
                   {manualEntryType === "GOODS" ? <Database className="h-4 w-4" /> : <Megaphone className="h-4 w-4" />}
-                  {manualEntryType === "GOODS" ? "保存到我的货源" : "发布需求到广场"}
+                  {manualEntryType === "GOODS" ? "保存供应" : "发布需求"}
                 </button>
               </Panel>
             </div>
@@ -813,8 +813,8 @@ export default function App() {
 
       <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t border-neutral-200 bg-white/95 shadow-[0_-8px_24px_rgba(15,15,15,0.05)] backdrop-blur md:hidden">
         <MobileTab active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
-        <MobileTab active={activeTab === "stock"} icon={<Boxes />} label="我的货源" onClick={() => setActiveTab("stock")} />
-        <MobileTab active={activeTab === "market"} icon={<Compass />} label="广场" onClick={() => setActiveTab("market")} />
+        <MobileTab active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
+        <MobileTab active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
       </nav>
     </div>
   );
