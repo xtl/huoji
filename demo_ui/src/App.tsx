@@ -230,6 +230,7 @@ export default function App() {
   const [entryMode, setEntryMode] = useState<QuickTradeMode>("AUTO");
   const [entryCategory, setEntryCategory] = useState<QuickProductCategory>("AUTO");
   const [draftItems, setDraftItems] = useState<TradeDraft[]>([]);
+  const [draftPage, setDraftPage] = useState(1);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "assistant-welcome",
@@ -299,8 +300,10 @@ export default function App() {
 
   const stockCurrentPage = clampPage(stockPage, totalPagesFor(filteredStocks.length));
   const marketCurrentPage = clampPage(marketPage, totalPagesFor(filteredMarket.length));
+  const draftCurrentPage = clampPage(draftPage, totalPagesFor(draftItems.length));
   const pagedStocks = filteredStocks.slice((stockCurrentPage - 1) * LIST_PAGE_SIZE, stockCurrentPage * LIST_PAGE_SIZE);
   const pagedMarket = filteredMarket.slice((marketCurrentPage - 1) * LIST_PAGE_SIZE, marketCurrentPage * LIST_PAGE_SIZE);
+  const pagedDrafts = draftItems.slice((draftCurrentPage - 1) * LIST_PAGE_SIZE, draftCurrentPage * LIST_PAGE_SIZE);
   const demandCount = marketPosts.filter((post) => post.postType === "DEMAND").length;
   const verifiedStockCount = stocks.filter((item) => item.status === "VERIFIED" || item.status === "SELLABLE").length;
   const activePage = pageMeta[activeTab];
@@ -319,6 +322,7 @@ export default function App() {
     }),
     { goods: 0, demands: 0, incomplete: 0 },
   );
+  const saveableDraftCount = draftItems.length - draftSummary.incomplete;
 
   function saveStocks(next: StockItem[]) {
     setStocks(next);
@@ -432,7 +436,10 @@ export default function App() {
 
   function appendDrafts(nextDrafts: TradeDraft[]) {
     const newDrafts = dedupeNewTradeDrafts(nextDrafts, draftItems);
-    if (newDrafts.length) setDraftItems([...newDrafts, ...draftItems]);
+    if (newDrafts.length) {
+      setDraftItems([...newDrafts, ...draftItems]);
+      setDraftPage(1);
+    }
     return { addedCount: newDrafts.length, skippedCount: nextDrafts.length - newDrafts.length };
   }
 
@@ -444,11 +451,18 @@ export default function App() {
     setDraftItems((items) => items.filter((item) => item.id !== id));
   }
 
-  function confirmDrafts(ids?: string[]) {
+  function clearDraftItems() {
+    setDraftItems([]);
+    setDraftPage(1);
+    setNotice({ tone: "info", text: "已清空待确认结果。" });
+  }
+
+  function confirmDrafts(ids?: string[], options: { validOnly?: boolean } = {}) {
     const selectedIds = ids ? new Set(ids) : null;
-    const selected = selectedIds ? draftItems.filter((item) => selectedIds.has(item.id)) : draftItems;
+    const targetItems = selectedIds ? draftItems.filter((item) => selectedIds.has(item.id)) : draftItems;
+    const selected = options.validOnly ? targetItems.filter((item) => !tradeDraftIssue(item)) : targetItems;
     if (!selected.length) {
-      setNotice({ tone: "warning", text: "没有可保存的待确认结果。" });
+      setNotice({ tone: "warning", text: options.validOnly ? "没有字段完整的待确认结果可保存。" : "没有可保存的待确认结果。" });
       return;
     }
     const invalid = selected.find(tradeDraftIssue);
@@ -458,9 +472,10 @@ export default function App() {
     }
     const result = saveParsedItems(materializeConfirmedDrafts(selected));
     setDraftItems(draftItems.filter((item) => !selected.some((saved) => saved.id === item.id)));
+    setDraftPage(1);
     setNotice({
       tone: result.stockCount || result.marketCount ? "success" : "info",
-      text: result.stockCount || result.marketCount ? `已保存 ${result.stockCount} 条供应、${result.marketCount} 条需求。` : "选中的结果与现有数据重复，未新增。",
+      text: result.stockCount || result.marketCount ? `已批量保存 ${result.stockCount} 条供应、${result.marketCount} 条需求。` : "选中的结果与现有数据重复，未新增。",
     });
     setChatMessages((messages) => [
       ...messages,
@@ -666,13 +681,14 @@ export default function App() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone="green">供应 {draftSummary.goods}</Badge>
                     <Badge tone="orange">需求 {draftSummary.demands}</Badge>
+                    <Badge tone="blue">可保存 {saveableDraftCount}</Badge>
                     <Badge tone={draftSummary.incomplete ? "orange" : "default"}>待补 {draftSummary.incomplete}</Badge>
                   </div>
                   {draftItems.length > 0 && (
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => setDraftItems([])}
+                        onClick={clearDraftItems}
                         className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -680,12 +696,12 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => confirmDrafts()}
-                        disabled={Boolean(draftSummary.incomplete)}
+                        onClick={() => confirmDrafts(undefined, { validOnly: true })}
+                        disabled={!saveableDraftCount}
                         className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
                       >
                         <Check className="h-3.5 w-3.5" />
-                        全部保存
+                        保存完整项
                       </button>
                     </div>
                   )}
@@ -695,16 +711,26 @@ export default function App() {
                   <AssistantEmptyState />
                 ) : (
                   <div className="space-y-4">
-                    {draftItems.map((draft, index) => (
+                    <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-500">
+                      完整条目可直接批量保存，缺型号、数量或城市的条目会留在这里继续补。当前显示第 {draftCurrentPage} 页。
+                    </p>
+                    {pagedDrafts.map((draft, index) => (
                       <DraftReviewItem
                         key={draft.id}
                         draft={draft}
-                        index={index}
+                        index={(draftCurrentPage - 1) * LIST_PAGE_SIZE + index}
                         onChange={(patch) => updateDraftItem(draft.id, patch)}
                         onRemove={() => removeDraftItem(draft.id)}
                         onConfirm={() => confirmDrafts([draft.id])}
                       />
                     ))}
+                    {draftItems.length > LIST_PAGE_SIZE && (
+                      <Pagination
+                        total={draftItems.length}
+                        page={draftCurrentPage}
+                        onPageChange={setDraftPage}
+                      />
+                    )}
                   </div>
                 )}
               </Panel>
