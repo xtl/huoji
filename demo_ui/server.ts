@@ -6,7 +6,7 @@
 import dotenv from "dotenv";
 import express from "express";
 import path from "path";
-import { randomUUID } from "crypto";
+import { createHash, createHmac, randomUUID } from "crypto";
 import { createServer as createViteServer } from "vite";
 
 dotenv.config();
@@ -106,7 +106,14 @@ interface SmsChallenge {
   expiresAt: number;
 }
 
+interface SmsDeliveryResult {
+  provider: "mock" | "tencentcloud";
+  isMock: boolean;
+  requestId?: string;
+}
+
 const SMS_TTL_MS = 5 * 60 * 1000;
+const SMS_RESEND_COOLDOWN_MS = Number(process.env.SMS_RESEND_COOLDOWN_SECONDS ?? 60) * 1000;
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const smsChallenges = new Map<string, SmsChallenge>();
 const usersByPhone = new Map<string, DemoUser>();
@@ -115,13 +122,29 @@ const workspacesById = new Map<string, DemoWorkspace>();
 const memberships: DemoMembership[] = [];
 const sessions = new Map<string, DemoSession>();
 
-app.post("/api/auth/sms/request", (req, res) => {
+app.post("/api/auth/sms/request", async (req, res) => {
   const phone = normalizePhone(asText(req.body?.phone));
   if (!phone) {
     return res.status(400).json({ error: "请输入有效的 11 位手机号。" });
   }
 
-  const code = process.env.SMS_DEV_CODE || createSmsCode();
+  const existing = smsChallenges.get(phone);
+  if (existing && existing.expiresAt > Date.now() && Date.now() - existing.createdAt < SMS_RESEND_COOLDOWN_MS) {
+    const retryAfterSeconds = Math.ceil((SMS_RESEND_COOLDOWN_MS - (Date.now() - existing.createdAt)) / 1000);
+    return res.status(429).json({ error: `验证码发送太频繁，请 ${retryAfterSeconds} 秒后再试。`, retryAfterSeconds });
+  }
+
+  const smsProvider = String(process.env.SMS_PROVIDER ?? "mock").toLowerCase();
+  const code = smsProvider === "mock" && process.env.SMS_DEV_CODE ? process.env.SMS_DEV_CODE : createSmsCode();
+  let delivery: SmsDeliveryResult;
+  try {
+    delivery = await deliverSmsCode(phone, code, smsProvider);
+  } catch (error) {
+    return res.status(502).json({
+      error: error instanceof Error ? error.message : "短信发送失败，请稍后再试。",
+    });
+  }
+
   smsChallenges.set(phone, {
     phone,
     code,
@@ -132,7 +155,9 @@ app.post("/api/auth/sms/request", (req, res) => {
   return res.json({
     success: true,
     expiresInSeconds: SMS_TTL_MS / 1000,
-    debugCode: process.env.SMS_PROVIDER === "real" ? undefined : code,
+    provider: delivery.provider,
+    requestId: delivery.requestId,
+    debugCode: delivery.isMock ? code : undefined,
   });
 });
 
@@ -654,6 +679,151 @@ function normalizePhone(value: string): string {
 
 function createSmsCode(): string {
   return `${Math.floor(100000 + Math.random() * 900000)}`;
+}
+
+async function deliverSmsCode(phone: string, code: string, provider = String(process.env.SMS_PROVIDER ?? "mock").toLowerCase()): Promise<SmsDeliveryResult> {
+  if (provider === "mock") {
+    return { provider: "mock", isMock: true };
+  }
+  if (provider === "tencentcloud") {
+    const requestId = await sendTencentCloudSms(phone, code);
+    return { provider: "tencentcloud", isMock: false, requestId };
+  }
+  throw new Error(`不支持的短信服务商：${provider}`);
+}
+
+async function sendTencentCloudSms(phone: string, code: string): Promise<string | undefined> {
+  const secretId = requiredEnv("TENCENTCLOUD_SECRET_ID");
+  const secretKey = requiredEnv("TENCENTCLOUD_SECRET_KEY");
+  const smsSdkAppId = requiredEnv("TENCENT_SMS_SDK_APP_ID");
+  const signName = requiredEnv("TENCENT_SMS_SIGN_NAME");
+  const templateId = requiredEnv("TENCENT_SMS_TEMPLATE_ID");
+  const endpoint = process.env.TENCENT_SMS_ENDPOINT || "sms.tencentcloudapi.com";
+  const region = process.env.TENCENT_SMS_REGION || "ap-guangzhou";
+  const service = "sms";
+  const action = "SendSms";
+  const version = "2021-01-11";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const params = buildTencentSmsTemplateParams(code);
+  const payload = JSON.stringify({
+    PhoneNumberSet: [`+86${phone}`],
+    SmsSdkAppId: smsSdkAppId,
+    SignName: signName,
+    TemplateId: templateId,
+    TemplateParamSet: params,
+    SessionContext: `login_${phone}_${timestamp}`,
+  });
+  const authorization = createTencentCloudAuthorization({
+    secretId,
+    secretKey,
+    endpoint,
+    service,
+    action,
+    timestamp,
+    payload,
+  });
+
+  const response = await fetch(`https://${endpoint}/`, {
+    method: "POST",
+    headers: {
+      Authorization: authorization,
+      "Content-Type": "application/json; charset=utf-8",
+      Host: endpoint,
+      "X-TC-Action": action,
+      "X-TC-Version": version,
+      "X-TC-Timestamp": String(timestamp),
+      "X-TC-Region": region,
+    },
+    body: payload,
+  });
+  const text = await response.text();
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`腾讯云短信返回非 JSON 响应：${text.slice(0, 180)}`);
+  }
+
+  const responseBody = isRecord(data) && isRecord(data.Response) ? data.Response : {};
+  const requestId = asText(responseBody.RequestId);
+  if (isRecord(responseBody.Error)) {
+    const codeText = asText(responseBody.Error.Code);
+    const message = asText(responseBody.Error.Message);
+    throw new Error(`腾讯云短信发送失败：${codeText || response.status} ${message || response.statusText}`);
+  }
+  if (!response.ok) {
+    throw new Error(`腾讯云短信请求失败：HTTP ${response.status} ${response.statusText}`);
+  }
+
+  const statusSet = Array.isArray(responseBody.SendStatusSet) ? responseBody.SendStatusSet : [];
+  const firstStatus = statusSet.find(isRecord);
+  const sendCode = asText(firstStatus?.Code);
+  if (sendCode && sendCode !== "Ok") {
+    const message = asText(firstStatus?.Message);
+    throw new Error(`腾讯云短信发送失败：${sendCode} ${message}`);
+  }
+
+  return requestId || undefined;
+}
+
+function buildTencentSmsTemplateParams(code: string): string[] {
+  const ttlMinutes = String(Math.ceil(SMS_TTL_MS / 60_000));
+  const format = (process.env.TENCENT_SMS_TEMPLATE_PARAMS || "code")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return format.map((item) => {
+    if (item === "code") return code;
+    if (item === "ttl" || item === "minutes") return ttlMinutes;
+    return item.replace(/\{code\}/g, code).replace(/\{ttl\}/g, ttlMinutes);
+  });
+}
+
+function createTencentCloudAuthorization(input: {
+  secretId: string;
+  secretKey: string;
+  endpoint: string;
+  service: string;
+  action: string;
+  timestamp: number;
+  payload: string;
+}): string {
+  const algorithm = "TC3-HMAC-SHA256";
+  const contentType = "application/json; charset=utf-8";
+  const canonicalRequest = [
+    "POST",
+    "/",
+    "",
+    `content-type:${contentType}\nhost:${input.endpoint}\nx-tc-action:${input.action.toLowerCase()}\n`,
+    "content-type;host;x-tc-action",
+    sha256Hex(input.payload),
+  ].join("\n");
+  const date = new Date(input.timestamp * 1000).toISOString().slice(0, 10);
+  const credentialScope = `${date}/${input.service}/tc3_request`;
+  const stringToSign = [algorithm, String(input.timestamp), credentialScope, sha256Hex(canonicalRequest)].join("\n");
+  const secretDate = hmacSha256(`TC3${input.secretKey}`, date);
+  const secretService = hmacSha256(secretDate, input.service);
+  const secretSigning = hmacSha256(secretService, "tc3_request");
+  const signature = hmacSha256Hex(secretSigning, stringToSign);
+  return `${algorithm} Credential=${input.secretId}/${credentialScope}, SignedHeaders=content-type;host;x-tc-action, Signature=${signature}`;
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function hmacSha256(key: string | Buffer, value: string): Buffer {
+  return createHmac("sha256", key).update(value, "utf8").digest();
+}
+
+function hmacSha256Hex(key: string | Buffer, value: string): string {
+  return createHmac("sha256", key).update(value, "utf8").digest("hex");
+}
+
+function requiredEnv(key: string): string {
+  const value = process.env[key]?.trim();
+  if (!value) throw new Error(`缺少环境变量：${key}`);
+  return value;
 }
 
 function personalWorkspaceId(userId: string): string {
