@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Bot,
@@ -31,6 +31,7 @@ type BadgeTone = "default" | "blue" | "green" | "orange" | "red";
 type NoticeTone = "info" | "success" | "warning";
 type WorkspaceType = "PERSONAL" | "ENTERPRISE";
 type WorkspaceCollection = "stocks" | "market";
+type CaptchaStatus = "disabled" | "loading" | "ready" | "error";
 
 const LIST_PAGE_SIZE = 30;
 const AUTH_STORAGE_KEY = "huoji_auth_session";
@@ -194,8 +195,57 @@ interface AuthSession {
 interface SmsRequestResponse {
   success?: boolean;
   expiresInSeconds?: number;
+  provider?: string;
+  requestId?: string;
   debugCode?: string;
   error?: string;
+}
+
+interface CaptchaConfig {
+  enabled: boolean;
+  provider: "aliyun" | "none";
+  region?: string;
+  prefix?: string;
+  sceneId?: string;
+  mode?: "popup" | "embed";
+  scriptUrl?: string;
+}
+
+interface AliyunCaptchaInstance {
+  show?: () => void;
+  hide?: () => void;
+  startTracelessVerification?: () => void;
+}
+
+interface AliyunCaptchaError {
+  code?: string;
+  msg?: string;
+}
+
+interface AliyunCaptchaOptions {
+  SceneId: string;
+  mode: "popup" | "embed";
+  element: string;
+  button: string;
+  success: (captchaVerifyParam: string) => void;
+  fail?: (result: unknown) => void;
+  getInstance: (instance: AliyunCaptchaInstance) => void;
+  slideStyle?: { width: number; height: number };
+  language?: string;
+  timeout?: number;
+  delayBeforeSuccess?: boolean;
+  onError?: (errorInfo: AliyunCaptchaError) => void;
+  onClose?: (reason: string) => void;
+}
+
+declare global {
+  interface Window {
+    AliyunCaptchaConfig?: {
+      region: string;
+      prefix: string;
+    };
+    initAliyunCaptcha?: (options: AliyunCaptchaOptions) => void;
+  }
 }
 
 const initialStocks: StockItem[] = [
@@ -980,10 +1030,111 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
   const [error, setError] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [captchaConfig, setCaptchaConfig] = useState<CaptchaConfig | null>(null);
+  const [captchaStatus, setCaptchaStatus] = useState<CaptchaStatus>("disabled");
+  const captchaInstanceRef = useRef<AliyunCaptchaInstance | null>(null);
+  const pendingCaptchaRef = useRef(false);
+  const phoneRef = useRef("");
   const normalizedPhone = normalizePhoneInput(phone);
+  const captchaElementId = "aliyun-captcha-element";
+  const captchaButtonId = "aliyun-captcha-trigger";
 
-  async function handleRequestCode() {
-    if (!normalizedPhone) {
+  useEffect(() => {
+    phoneRef.current = normalizedPhone;
+  }, [normalizedPhone]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCaptchaConfig()
+      .then((config) => {
+        if (cancelled) return;
+        setCaptchaConfig(config);
+        setCaptchaStatus(config.enabled ? "loading" : "disabled");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCaptchaConfig({ enabled: false, provider: "none" });
+          setCaptchaStatus("disabled");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!captchaConfig?.enabled) return;
+    if (!captchaConfig.prefix || !captchaConfig.sceneId) {
+      setCaptchaStatus("error");
+      setError("安全验证配置不完整，请检查阿里云验证码 2.0 参数。");
+      return;
+    }
+
+    let cancelled = false;
+    setCaptchaStatus("loading");
+    window.AliyunCaptchaConfig = {
+      region: captchaConfig.region || "cn",
+      prefix: captchaConfig.prefix,
+    };
+
+    loadAliyunCaptchaScript(captchaConfig.scriptUrl)
+      .then(() => {
+        if (cancelled) return;
+        if (!window.initAliyunCaptcha) throw new Error("阿里云验证码脚本加载失败。");
+        window.initAliyunCaptcha({
+          SceneId: captchaConfig.sceneId || "",
+          mode: captchaConfig.mode || "popup",
+          element: `#${captchaElementId}`,
+          button: `#${captchaButtonId}`,
+          success: (captchaVerifyParam) => {
+            pendingCaptchaRef.current = false;
+            captchaInstanceRef.current?.hide?.();
+            void sendSmsCode(captchaVerifyParam);
+          },
+          fail: () => {
+            pendingCaptchaRef.current = false;
+            setIsSending(false);
+            setError("安全验证未通过，请重试。");
+          },
+          getInstance: (instance) => {
+            captchaInstanceRef.current = instance;
+            setCaptchaStatus("ready");
+          },
+          slideStyle: { width: 360, height: 40 },
+          language: "cn",
+          timeout: 5000,
+          delayBeforeSuccess: false,
+          onError: (errorInfo) => {
+            setCaptchaStatus("error");
+            setIsSending(false);
+            setError(`安全验证加载失败：${errorInfo.msg || errorInfo.code || "请刷新页面重试。"}`);
+          },
+          onClose: (reason) => {
+            if (reason === "userDismiss") {
+              pendingCaptchaRef.current = false;
+              setIsSending(false);
+              setMessage("");
+            }
+          },
+        });
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setCaptchaStatus("error");
+          setIsSending(false);
+          setError(loadError instanceof Error ? loadError.message : "安全验证加载失败，请刷新页面重试。");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      pendingCaptchaRef.current = false;
+    };
+  }, [captchaConfig?.enabled, captchaConfig?.mode, captchaConfig?.prefix, captchaConfig?.region, captchaConfig?.sceneId, captchaConfig?.scriptUrl]);
+
+  async function sendSmsCode(captchaVerifyParam?: string) {
+    const targetPhone = phoneRef.current;
+    if (!targetPhone) {
       setError("请输入有效的 11 位手机号。");
       return;
     }
@@ -991,7 +1142,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
     setError("");
     setMessage("");
     try {
-      const result = await requestSmsCode(normalizedPhone);
+      const result = await requestSmsCode(targetPhone, captchaVerifyParam);
       setDebugCode(result.debugCode ?? "");
       if (result.debugCode) setCode(result.debugCode);
       setMessage(result.debugCode ? "验证码已生成，可直接登录。" : "验证码已发送。");
@@ -1000,6 +1151,33 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
     } finally {
       setIsSending(false);
     }
+  }
+
+  async function handleRequestCode() {
+    if (!normalizedPhone) {
+      setError("请输入有效的 11 位手机号。");
+      return;
+    }
+    setError("");
+    setMessage("");
+    if (captchaConfig?.enabled) {
+      if (captchaStatus === "loading") {
+        setError("安全验证组件加载中，请稍后再试。");
+        return;
+      }
+      if (captchaStatus !== "ready" || !captchaInstanceRef.current) {
+        setError("安全验证暂不可用，请刷新页面重试。");
+        return;
+      }
+      pendingCaptchaRef.current = true;
+      setIsSending(true);
+      setMessage("请先完成安全验证。");
+      captchaInstanceRef.current.show?.();
+      document.getElementById(captchaButtonId)?.click();
+      return;
+    }
+
+    await sendSmsCode();
   }
 
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
@@ -1093,6 +1271,17 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
               {isSending ? "发送中..." : "获取验证码"}
             </button>
           </div>
+          {captchaConfig?.enabled && (
+            <div className="mt-3">
+              <div id={captchaElementId} />
+              <button id={captchaButtonId} type="button" className="sr-only" tabIndex={-1}>
+                安全验证
+              </button>
+              <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-500">
+                {captchaStatus === "ready" ? "已启用阿里云安全验证。" : captchaStatus === "loading" ? "安全验证加载中。" : "安全验证暂不可用。"}
+              </p>
+            </div>
+          )}
           {debugCode && <p className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">原型验证码：{debugCode}</p>}
           {message && !debugCode && <p className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">{message}</p>}
           {error && <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{error}</p>}
@@ -2356,11 +2545,41 @@ function persistAuthSession(session: AuthSession): void {
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
 }
 
-async function requestSmsCode(phone: string): Promise<SmsRequestResponse> {
+async function fetchCaptchaConfig(): Promise<CaptchaConfig> {
+  const response = await fetch("/api/auth/captcha/config");
+  const payload = (await response.json()) as CaptchaConfig & { error?: string };
+  if (!response.ok) throw new Error(payload.error || "安全验证配置读取失败。");
+  return payload;
+}
+
+async function loadAliyunCaptchaScript(scriptUrl?: string): Promise<void> {
+  const src = scriptUrl || "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
+  const existing = document.querySelector<HTMLScriptElement>(`script[data-huoji-captcha="aliyun"]`);
+  if (existing) {
+    if (window.initAliyunCaptcha) return;
+    await new Promise<void>((resolve, reject) => {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("阿里云验证码脚本加载失败。")), { once: true });
+    });
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.dataset.huojiCaptcha = "aliyun";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("阿里云验证码脚本加载失败。"));
+    document.head.appendChild(script);
+  });
+}
+
+async function requestSmsCode(phone: string, captchaVerifyParam?: string): Promise<SmsRequestResponse> {
   const response = await fetch("/api/auth/sms/request", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ phone }),
+    body: JSON.stringify({ phone, captchaVerifyParam }),
   });
   const payload = (await response.json()) as SmsRequestResponse;
   if (!response.ok) throw new Error(payload.error || "验证码发送失败。");

@@ -25,6 +25,10 @@ app.get("/api/health", (_, res) => {
   });
 });
 
+app.get("/api/auth/captcha/config", (_, res) => {
+  res.json(getCaptchaPublicConfig());
+});
+
 type PostType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
@@ -112,6 +116,16 @@ interface SmsDeliveryResult {
   requestId?: string;
 }
 
+interface CaptchaPublicConfig {
+  enabled: boolean;
+  provider: "aliyun" | "none";
+  region?: string;
+  prefix?: string;
+  sceneId?: string;
+  mode?: "popup" | "embed";
+  scriptUrl?: string;
+}
+
 const SMS_TTL_MS = 5 * 60 * 1000;
 const SMS_RESEND_COOLDOWN_MS = Number(process.env.SMS_RESEND_COOLDOWN_SECONDS ?? 60) * 1000;
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -132,6 +146,14 @@ app.post("/api/auth/sms/request", async (req, res) => {
   if (existing && existing.expiresAt > Date.now() && Date.now() - existing.createdAt < SMS_RESEND_COOLDOWN_MS) {
     const retryAfterSeconds = Math.ceil((SMS_RESEND_COOLDOWN_MS - (Date.now() - existing.createdAt)) / 1000);
     return res.status(429).json({ error: `验证码发送太频繁，请 ${retryAfterSeconds} 秒后再试。`, retryAfterSeconds });
+  }
+
+  try {
+    await verifyCaptchaIfRequired(asText(req.body?.captchaVerifyParam));
+  } catch (error) {
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "安全验证失败，请重新验证。",
+    });
   }
 
   const smsProvider = String(process.env.SMS_PROVIDER ?? "mock").toLowerCase();
@@ -681,6 +703,135 @@ function createSmsCode(): string {
   return `${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
+function getCaptchaPublicConfig(): CaptchaPublicConfig {
+  const provider = String(process.env.CAPTCHA_PROVIDER ?? "none").toLowerCase();
+  if (provider !== "aliyun") {
+    return { enabled: false, provider: "none" };
+  }
+
+  const prefix = process.env.ALIYUN_CAPTCHA_PREFIX?.trim();
+  const sceneId = process.env.ALIYUN_CAPTCHA_SCENE_ID?.trim();
+  return {
+    enabled: Boolean(prefix && sceneId),
+    provider: "aliyun",
+    region: process.env.ALIYUN_CAPTCHA_REGION || "cn",
+    prefix,
+    sceneId,
+    mode: process.env.ALIYUN_CAPTCHA_MODE === "embed" ? "embed" : "popup",
+    scriptUrl: process.env.ALIYUN_CAPTCHA_SCRIPT_URL || "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js",
+  };
+}
+
+async function verifyCaptchaIfRequired(captchaVerifyParam: string): Promise<void> {
+  const provider = String(process.env.CAPTCHA_PROVIDER ?? "none").toLowerCase();
+  if (provider === "none" || provider === "mock" || !provider) return;
+  if (provider !== "aliyun") throw new Error(`不支持的安全验证服务商：${provider}`);
+  if (!captchaVerifyParam) throw new Error("请先完成安全验证。");
+  await verifyAliyunCaptcha(captchaVerifyParam);
+}
+
+async function verifyAliyunCaptcha(captchaVerifyParam: string): Promise<void> {
+  const accessKeyId = requiredAnyEnv(["ALIYUN_CAPTCHA_ACCESS_KEY_ID", "ALIYUN_ACCESS_KEY_ID"]);
+  const accessKeySecret = requiredAnyEnv(["ALIYUN_CAPTCHA_ACCESS_KEY_SECRET", "ALIYUN_ACCESS_KEY_SECRET"]);
+  const sceneId = requiredEnv("ALIYUN_CAPTCHA_SCENE_ID");
+  const endpoint = process.env.ALIYUN_CAPTCHA_ENDPOINT || aliyunCaptchaEndpointForRegion(process.env.ALIYUN_CAPTCHA_REGION || "cn");
+  const action = "VerifyIntelligentCaptcha";
+  const version = "2023-03-05";
+  const body = new URLSearchParams({
+    CaptchaVerifyParam: captchaVerifyParam,
+    SceneId: sceneId,
+  }).toString();
+  const date = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const nonce = randomUUID().replace(/-/g, "");
+  const bodyHash = sha256Hex(body);
+  const signedHeaders = "host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version";
+  const headersForSign: Record<string, string> = {
+    host: endpoint,
+    "x-acs-action": action,
+    "x-acs-content-sha256": bodyHash,
+    "x-acs-date": date,
+    "x-acs-signature-nonce": nonce,
+    "x-acs-version": version,
+  };
+  const authorization = createAliyunOpenApiAuthorization({
+    accessKeyId,
+    accessKeySecret,
+    method: "POST",
+    pathName: "/",
+    query: "",
+    bodyHash,
+    signedHeaders,
+    headers: headersForSign,
+  });
+
+  const response = await fetch(`https://${endpoint}/`, {
+    method: "POST",
+    headers: {
+      Authorization: authorization,
+      "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+      Host: endpoint,
+      "x-acs-action": action,
+      "x-acs-content-sha256": bodyHash,
+      "x-acs-date": date,
+      "x-acs-signature-nonce": nonce,
+      "x-acs-version": version,
+    },
+    body,
+  });
+  const text = await response.text();
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`阿里云验证码返回非 JSON 响应：${text.slice(0, 180)}`);
+  }
+
+  const payload = isRecord(data) ? data : {};
+  const code = asText(payload.Code);
+  const message = asText(payload.Message);
+  if (!response.ok || (code && code !== "Success")) {
+    throw new Error(`阿里云验证码验签失败：${code || response.status} ${message || response.statusText}`);
+  }
+
+  const result = isRecord(payload.Result) ? payload.Result : {};
+  if (result.VerifyResult !== true) {
+    const verifyCode = asText(result.VerifyCode);
+    throw new Error(`安全验证未通过：${verifyCode || "VERIFY_FAILED"} ${message}`);
+  }
+}
+
+function aliyunCaptchaEndpointForRegion(region: string): string {
+  return region === "sgp" ? "captcha.ap-southeast-1.aliyuncs.com" : "captcha.cn-shanghai.aliyuncs.com";
+}
+
+function createAliyunOpenApiAuthorization(input: {
+  accessKeyId: string;
+  accessKeySecret: string;
+  method: string;
+  pathName: string;
+  query: string;
+  bodyHash: string;
+  signedHeaders: string;
+  headers: Record<string, string>;
+}): string {
+  const canonicalHeaders = input.signedHeaders
+    .split(";")
+    .map((key) => `${key}:${input.headers[key]}`)
+    .join("\n");
+  const canonicalRequest = [
+    input.method,
+    input.pathName,
+    input.query,
+    `${canonicalHeaders}\n`,
+    input.signedHeaders,
+    input.bodyHash,
+  ].join("\n");
+  const algorithm = "ACS3-HMAC-SHA256";
+  const stringToSign = `${algorithm}\n${sha256Hex(canonicalRequest)}`;
+  const signature = hmacSha256Hex(input.accessKeySecret, stringToSign);
+  return `${algorithm} Credential=${input.accessKeyId},SignedHeaders=${input.signedHeaders},Signature=${signature}`;
+}
+
 async function deliverSmsCode(phone: string, code: string, provider = String(process.env.SMS_PROVIDER ?? "mock").toLowerCase()): Promise<SmsDeliveryResult> {
   if (provider === "mock") {
     return { provider: "mock", isMock: true };
@@ -824,6 +975,14 @@ function requiredEnv(key: string): string {
   const value = process.env[key]?.trim();
   if (!value) throw new Error(`缺少环境变量：${key}`);
   return value;
+}
+
+function requiredAnyEnv(keys: string[]): string {
+  for (const key of keys) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
+  throw new Error(`缺少环境变量：${keys.join(" 或 ")}`);
 }
 
 function personalWorkspaceId(userId: string): string {
