@@ -800,105 +800,116 @@ export default function App() {
           )}
 
           {activeTab === "input" && (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)]">
-              <Panel title="AI 录入助手" icon={<Bot />}>
-                <div className="max-h-72 space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
-                  {chatMessages.map((message) => (
-                    <ChatBubble key={message.id} message={message} />
-                  ))}
-                </div>
+            <div className="space-y-4">
+              <SmartStatusBar
+                supplyCount={stocks.length}
+                demandCount={demandCount}
+                draftCount={draftItems.length}
+                incompleteCount={draftSummary.incomplete}
+              />
 
-                <div className="mt-3 space-y-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone="green">AI 自动识别</Badge>
-                    <span className="caption-text text-neutral-400">类型、交易大类、品类会在待确认结果里生成</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="caption-text text-neutral-400">{aiLineCount ? `${aiLineCount} 行文本` : "空白输入"}</span>
-                    <div className="flex items-center gap-1">
-                      <ToolbarButton icon={<Sparkles />} label="示例" onClick={() => setAiText(AI_EXAMPLE_TEXT)} />
-                      <ToolbarButton icon={<Trash2 />} label="清空" onClick={() => setAiText("")} />
-                    </div>
-                  </div>
-                  <textarea
-                    value={aiText}
-                    onChange={(event) => setAiText(event.target.value)}
-                    className="field-surface min-h-44 w-full resize-y rounded-md p-3.5 text-neutral-900 outline-none placeholder:text-neutral-400"
-                    placeholder="直接发一句，或粘贴整段微信群聊。AI 会自动识别供应/需求、现货/期货/租赁，以及服务器/显卡/内存/硬盘等品类。"
-                  />
-                  {aiParseMessage && (
-                    <p className="meta-pill rounded-md px-3 py-2">{aiParseMessage}</p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={parseAssistantInput}
-                    disabled={isAiParsing}
-                    className="primary-button inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed"
-                  >
-                    <SendHorizontal className="h-4 w-4" />
-                    {isAiParsing ? "解析中..." : "发送并生成待确认"}
-                  </button>
-                </div>
-              </Panel>
-
-              <Panel title="待确认结果" icon={<ClipboardCheck />}>
-                <div className="mb-3 flex flex-col gap-2 border-b border-neutral-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone="green">供应 {draftSummary.goods}</Badge>
-                    <Badge tone="orange">需求 {draftSummary.demands}</Badge>
-                    <Badge tone="blue">可保存 {saveableDraftCount}</Badge>
-                    <Badge tone={draftSummary.incomplete ? "orange" : "default"}>待补字段 {draftSummary.incomplete}</Badge>
-                  </div>
-                  {draftItems.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={clearDraftItems}
-                        className="ghost-button inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        清空
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => confirmDrafts()}
-                        disabled={!saveableDraftCount}
-                        className="primary-button inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed"
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                        批量保存
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {!draftItems.length ? (
-                  <AssistantEmptyState />
-                ) : (
-                  <div className="space-y-4">
-                    <p className="meta-pill rounded-md px-3 py-2">
-                      可以直接保存；缺字段会以“待确认 / 未知来源”保留，后续再补也不会丢。当前显示第 {draftCurrentPage} 页。
-                    </p>
-                    {pagedDrafts.map((draft, index) => (
-                      <DraftReviewItem
-                        key={draft.id}
-                        draft={draft}
-                        index={(draftCurrentPage - 1) * LIST_PAGE_SIZE + index}
-                        onChange={(patch) => updateDraftItem(draft.id, patch)}
-                        onRemove={() => removeDraftItem(draft.id)}
-                        onConfirm={() => confirmDrafts([draft.id])}
-                      />
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+                <Panel title="智能货记" icon={<Bot />}>
+                  <div className="max-h-40 space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
+                    {chatMessages.map((message) => (
+                      <ChatBubble key={message.id} message={message} />
                     ))}
-                    {draftItems.length > LIST_PAGE_SIZE && (
-                      <Pagination
-                        total={draftItems.length}
-                        page={draftCurrentPage}
-                        onPageChange={setDraftPage}
-                      />
+                  </div>
+
+                  <div className="mt-3 space-y-3">
+                    <div className="smart-chip-row">
+                      <SmartChip label="类型" value="自动判断" />
+                      <SmartChip label="品类" value="自动归类" />
+                      <SmartChip label="重复" value="更新时间" />
+                      <SmartChip label="缺字段" value="可先入库" />
+                    </div>
+                    <textarea
+                      value={aiText}
+                      onChange={(event) => setAiText(event.target.value)}
+                      className="smart-input field-surface min-h-52 w-full resize-y rounded-md p-4 text-neutral-900 outline-none placeholder:text-neutral-400"
+                      placeholder="粘贴微信群聊天记录，或直接输入一条供需信息。"
+                    />
+                    {aiParseMessage && (
+                      <p className="meta-pill rounded-md px-3 py-2">{aiParseMessage}</p>
+                    )}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <span className="caption-text text-neutral-400">{aiLineCount ? `${aiLineCount} 行文本，AI 会自动拆分多条记录` : "等待输入"}</span>
+                      <div className="flex items-center gap-1">
+                        <ToolbarButton icon={<Sparkles />} label="示例" onClick={() => setAiText(AI_EXAMPLE_TEXT)} />
+                        <ToolbarButton icon={<Trash2 />} label="清空" onClick={() => setAiText("")} />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={parseAssistantInput}
+                      disabled={isAiParsing}
+                      className="primary-button inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-sm font-medium disabled:cursor-not-allowed"
+                    >
+                      <SendHorizontal className="h-4 w-4" />
+                      {isAiParsing ? "AI 正在解析..." : "智能解析"}
+                    </button>
+                  </div>
+                </Panel>
+
+                <Panel title="AI 解析结果" icon={<ClipboardCheck />}>
+                  <div className="mb-3 flex flex-col gap-3 border-b border-neutral-100 pb-3">
+                    <SmartResultSummary
+                      goods={draftSummary.goods}
+                      demands={draftSummary.demands}
+                      incomplete={draftSummary.incomplete}
+                      total={draftItems.length}
+                    />
+                    {draftItems.length > 0 && (
+                      <div className="grid grid-cols-[1fr_auto] gap-2">
+                        <button
+                          type="button"
+                          onClick={() => confirmDrafts()}
+                          disabled={!saveableDraftCount}
+                          className="primary-button inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium disabled:cursor-not-allowed"
+                        >
+                          <Check className="h-4 w-4" />
+                          一键入库
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearDraftItems}
+                          className="ghost-button inline-flex items-center justify-center gap-1 rounded-md px-2 py-2 text-xs font-medium"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          清空
+                        </button>
+                      </div>
                     )}
                   </div>
-                )}
-              </Panel>
+
+                  {!draftItems.length ? (
+                    <AssistantEmptyState />
+                  ) : (
+                    <div className="space-y-4">
+                      <p className="meta-pill rounded-md px-3 py-2">
+                        可以直接保存；缺字段会以“待确认 / 未知来源”保留，后续再补也不会丢。当前显示第 {draftCurrentPage} 页。
+                      </p>
+                      {pagedDrafts.map((draft, index) => (
+                        <DraftReviewItem
+                          key={draft.id}
+                          draft={draft}
+                          index={(draftCurrentPage - 1) * LIST_PAGE_SIZE + index}
+                          onChange={(patch) => updateDraftItem(draft.id, patch)}
+                          onRemove={() => removeDraftItem(draft.id)}
+                          onConfirm={() => confirmDrafts([draft.id])}
+                        />
+                      ))}
+                      {draftItems.length > LIST_PAGE_SIZE && (
+                        <Pagination
+                          total={draftItems.length}
+                          page={draftCurrentPage}
+                          onPageChange={setDraftPage}
+                        />
+                      )}
+                    </div>
+                  )}
+                </Panel>
+              </div>
             </div>
           )}
 
@@ -1487,6 +1498,92 @@ function Panel({ title, icon, children }: { title: string; icon: React.ReactNode
       </div>
       {children}
     </section>
+  );
+}
+
+function SmartStatusBar({
+  supplyCount,
+  demandCount,
+  draftCount,
+  incompleteCount,
+}: {
+  supplyCount: number;
+  demandCount: number;
+  draftCount: number;
+  incompleteCount: number;
+}) {
+  const statusText = draftCount
+    ? `已拆解 ${draftCount} 条，${incompleteCount ? `${incompleteCount} 条待补` : "可直接入库"}`
+    : "等待聊天记录";
+  return (
+    <div className="smart-status surface-card rounded-md p-3">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="smart-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-md">
+          <Sparkles className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-neutral-950">智能识别已开启</p>
+          <p className="caption-text truncate">{statusText}</p>
+        </div>
+      </div>
+      <div className="smart-metrics">
+        <SmartMetric label="供应" value={supplyCount} tone="green" />
+        <SmartMetric label="需求" value={demandCount} tone="orange" />
+        <SmartMetric label="待入库" value={draftCount} tone="blue" />
+      </div>
+    </div>
+  );
+}
+
+function SmartMetric({ label, value, tone }: { label: string; value: number; tone: BadgeTone }) {
+  return (
+    <div className={`smart-metric smart-metric-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function SmartChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="smart-chip">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </span>
+  );
+}
+
+function SmartResultSummary({
+  goods,
+  demands,
+  incomplete,
+  total,
+}: {
+  goods: number;
+  demands: number;
+  incomplete: number;
+  total: number;
+}) {
+  if (!total) {
+    return (
+      <div className="smart-result-empty rounded-md p-3">
+        <p className="text-sm font-semibold text-neutral-800">等待解析结果</p>
+        <p className="caption-text mt-1">AI 会把多条聊天记录拆成供应和需求。</p>
+      </div>
+    );
+  }
+  return (
+    <div className="smart-result rounded-md p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-neutral-950">AI 已完成拆解</p>
+          <p className="caption-text mt-1">
+            {goods} 条供应，{demands} 条需求{incomplete ? `，${incomplete} 条信息不完整` : "，字段完整"}
+          </p>
+        </div>
+        <Badge tone={incomplete ? "orange" : "green"}>{incomplete ? "可先入库" : "可入库"}</Badge>
+      </div>
+    </div>
   );
 }
 
