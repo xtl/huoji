@@ -663,8 +663,8 @@ export default function App() {
               <Database className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <h1 className="truncate text-[15px] font-semibold leading-tight">货记</h1>
-              <p className="truncate text-xs text-neutral-500">供需情报工作台</p>
+              <h1 className="truncate text-[15px] font-semibold leading-tight text-neutral-950">货记</h1>
+              <p className="caption-text truncate">供需情报工作台</p>
             </div>
           </div>
 
@@ -687,14 +687,14 @@ export default function App() {
           <header className="topbar-surface sticky top-0 z-30">
             <div className="flex items-center justify-between gap-3 px-4 py-3.5 md:px-8">
               <div className="min-w-0">
-                <p className="mb-1 text-xs font-medium text-neutral-500">货记 / {workspaceTypeText(currentWorkspace.type)} / {activePage.crumb}</p>
+                <p className="caption-text mb-1">货记 / {workspaceTypeText(currentWorkspace.type)} / {activePage.crumb}</p>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="truncate text-[26px] font-semibold leading-tight tracking-normal text-neutral-950 md:text-[30px]">{activePage.title}</h2>
-                  <span className="meta-pill rounded-md px-2 py-1 text-xs font-medium text-neutral-600">{activeSummary}</span>
+                  <h2 className="page-title truncate">{activePage.title}</h2>
+                  <span className="meta-pill rounded-md px-2 py-1">{activeSummary}</span>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <div className="surface-card-quiet hidden items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium text-neutral-600 sm:flex">
+                <div className="surface-card-quiet caption-text hidden items-center gap-2 rounded-md px-3 py-1.5 sm:flex">
                   <UserRound className="h-3.5 w-3.5 text-neutral-500" />
                   {authSession.user.maskedPhone}
                 </div>
@@ -811,10 +811,10 @@ export default function App() {
                 <div className="mt-3 space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone="green">AI 自动识别</Badge>
-                    <span className="text-xs font-medium text-neutral-400">类型、交易大类、品类会在待确认结果里生成</span>
+                    <span className="caption-text text-neutral-400">类型、交易大类、品类会在待确认结果里生成</span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-neutral-400">{aiLineCount ? `${aiLineCount} 行文本` : "空白输入"}</span>
+                    <span className="caption-text text-neutral-400">{aiLineCount ? `${aiLineCount} 行文本` : "空白输入"}</span>
                     <div className="flex items-center gap-1">
                       <ToolbarButton icon={<Sparkles />} label="示例" onClick={() => setAiText(AI_EXAMPLE_TEXT)} />
                       <ToolbarButton icon={<Trash2 />} label="清空" onClick={() => setAiText("")} />
@@ -823,11 +823,11 @@ export default function App() {
                   <textarea
                     value={aiText}
                     onChange={(event) => setAiText(event.target.value)}
-                    className="field-surface min-h-44 w-full resize-y rounded-md p-3.5 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400"
+                    className="field-surface min-h-44 w-full resize-y rounded-md p-3.5 text-neutral-900 outline-none placeholder:text-neutral-400"
                     placeholder="直接发一句，或粘贴整段微信群聊。AI 会自动识别供应/需求、现货/期货/租赁，以及服务器/显卡/内存/硬盘等品类。"
                   />
                   {aiParseMessage && (
-                    <p className="meta-pill rounded-md px-3 py-2 text-xs font-medium text-neutral-600">{aiParseMessage}</p>
+                    <p className="meta-pill rounded-md px-3 py-2">{aiParseMessage}</p>
                   )}
                   <button
                     type="button"
@@ -876,7 +876,7 @@ export default function App() {
                   <AssistantEmptyState />
                 ) : (
                   <div className="space-y-4">
-                    <p className="meta-pill rounded-md px-3 py-2 text-xs font-medium text-neutral-500">
+                    <p className="meta-pill rounded-md px-3 py-2">
                       可以直接保存；缺字段会以“待确认 / 未知来源”保留，后续再补也不会丢。当前显示第 {draftCurrentPage} 页。
                     </p>
                     {pagedDrafts.map((draft, index) => (
@@ -1186,8 +1186,8 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
               <Database className="h-4 w-4" />
             </div>
             <div>
-              <h1 className="text-base font-semibold text-neutral-950">货记</h1>
-              <p className="text-xs font-medium text-neutral-500">AI 硬件供需台账</p>
+              <h1 className="section-title">货记</h1>
+              <p className="caption-text">AI 硬件供需台账</p>
             </div>
           </div>
           <div className="space-y-3">
@@ -1197,7 +1197,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
                 <span className="text-sm font-semibold text-neutral-900">个人空间</span>
                 <Badge tone="green">当前开放</Badge>
               </div>
-              <p className="text-xs leading-5 text-neutral-500">手机号登录后自动创建个人空间，供应、需求和待确认结果按空间隔离保存。</p>
+              <p className="caption-text">手机号登录后自动创建个人空间，供应、需求和待确认结果按空间隔离保存。</p>
             </div>
             <div className="surface-card-quiet rounded-md p-3 opacity-80">
               <div className="mb-2 flex items-center gap-2">
@@ -1205,18 +1205,18 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
                 <span className="text-sm font-semibold text-neutral-900">企业空间</span>
                 <Badge>架构预留</Badge>
               </div>
-              <p className="text-xs leading-5 text-neutral-500">企业成员、角色权限、企业货源池和审批流先按 workspace 体系预留，不影响个人版使用。</p>
+              <p className="caption-text">企业成员、角色权限、企业货源池和审批流先按 workspace 体系预留，不影响个人版使用。</p>
             </div>
           </div>
         </section>
 
         <form onSubmit={handleLogin} className="surface-card rounded-md p-5 md:p-6">
           <div className="mb-5">
-            <h2 className="text-lg font-semibold text-neutral-950">手机号登录</h2>
-            <p className="mt-1 text-xs font-medium text-neutral-500">登录后进入你的个人空间。</p>
+            <h2 className="section-title">手机号登录</h2>
+            <p className="caption-text mt-1">登录后进入你的个人空间。</p>
           </div>
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-neutral-500">手机号</span>
+            <span className="caption-text mb-1 block">手机号</span>
             <div className="field-surface flex items-center gap-2 rounded-md px-3 py-2">
               <Phone className="h-4 w-4 text-neutral-400" />
               <input
@@ -1230,7 +1230,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           </label>
           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
             <label className="block">
-              <span className="mb-1 block text-xs font-medium text-neutral-500">短信验证码 / 临时通用码</span>
+              <span className="caption-text mb-1 block">短信验证码 / 临时通用码</span>
               <div className="field-surface flex items-center gap-2 rounded-md px-3 py-2">
                 <ShieldCheck className="h-4 w-4 text-neutral-400" />
                 <input
@@ -1412,7 +1412,7 @@ function TradeDetailDrawer({
     return (
       <aside className="surface-card sticky top-[96px] hidden h-fit rounded-md p-4 xl:block">
         <p className="text-sm font-semibold text-neutral-700">未选择记录</p>
-        <p className="mt-1 text-xs leading-5 text-neutral-500">点击左侧表格中的任意一行，这里会显示完整配置、来源和联系方式。</p>
+        <p className="caption-text mt-1">点击左侧表格中的任意一行，这里会显示完整配置、来源和联系方式。</p>
       </aside>
     );
   }
@@ -1435,8 +1435,8 @@ function TradeDetailDrawer({
         <Badge tone="blue">{category}</Badge>
         <Badge tone={tradeModeTone(item.tradeMode)}>{mode}</Badge>
       </div>
-      <h3 className="text-base font-semibold leading-6 text-neutral-950">{title}</h3>
-      <p className="mt-1 text-xs font-medium text-neutral-400">{time}</p>
+      <h3 className="section-title">{title}</h3>
+      <p className="caption-text mt-1 text-neutral-400">{time}</p>
 
       <div className="mt-4 grid gap-2">
         <InfoDatum label="规格" value={model} />
@@ -1481,9 +1481,9 @@ function WorkspaceSwitcher({ currentWorkspace }: { currentWorkspace: WorkspaceSu
 function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="surface-card rounded-md p-4">
-      <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-800">
+      <div className="mb-3 flex items-center gap-2 text-neutral-800">
         {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4 text-neutral-500" })}
-        <h2>{title}</h2>
+        <h2 className="section-title text-[15px]">{title}</h2>
       </div>
       {children}
     </section>
@@ -1569,7 +1569,7 @@ function AssistantEmptyState() {
         <ClipboardCheck className="h-4 w-4" />
       </div>
       <p className="text-sm font-medium text-neutral-600">暂无待确认结果</p>
-      <p className="mt-1 text-xs font-medium text-neutral-400">发送一段供需文本后，结果会先出现在这里。</p>
+      <p className="caption-text mt-1 text-neutral-400">发送一段供需文本后，结果会先出现在这里。</p>
     </div>
   );
 }
@@ -1639,7 +1639,7 @@ const DraftReviewItem: React.FC<{
       </div>
 
       <details className="mt-3 border-t border-neutral-100 pt-3">
-        <summary className="cursor-pointer text-xs font-semibold text-neutral-500">展开编辑字段和详细配置</summary>
+        <summary className="caption-text cursor-pointer font-semibold text-neutral-500">展开编辑字段和详细配置</summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <SelectField
             label="类型"
@@ -1722,12 +1722,12 @@ function TextField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-neutral-500">{label}</span>
+      <span className="caption-text mb-1 block">{label}</span>
       <input
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="field-surface w-full rounded-md px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
+        className="field-surface w-full rounded-md px-3 py-2 text-neutral-900 outline-none placeholder:text-neutral-400"
       />
     </label>
   );
@@ -1746,11 +1746,11 @@ function SelectField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-neutral-500">{label}</span>
+      <span className="caption-text mb-1 block">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="field-surface w-full rounded-md px-3 py-2 text-sm text-neutral-900 outline-none"
+        className="field-surface w-full rounded-md px-3 py-2 text-neutral-900 outline-none"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -1775,11 +1775,11 @@ function FilterSelect({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-neutral-500">{label}</span>
+      <span className="caption-text mb-1 block">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="field-surface h-9 w-full rounded-md px-2 text-sm font-medium text-neutral-900 outline-none"
+        className="field-surface h-9 w-full rounded-md px-2 font-medium text-neutral-900 outline-none"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
