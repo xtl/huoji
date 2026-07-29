@@ -757,19 +757,18 @@ export default function App() {
                 >
                   <LogOut className="h-4 w-4" />
                 </button>
+                <button
+                  type="button"
+                  title={inspectorCollapsed ? "打开右侧栏" : "收起右侧栏"}
+                  aria-label={inspectorCollapsed ? "打开右侧栏" : "收起右侧栏"}
+                  onClick={() => setInspectorCollapsed((collapsed) => !collapsed)}
+                  className={`surface-card-quiet ghost-button hidden h-9 w-9 items-center justify-center rounded-md lg:flex ${inspectorCollapsed ? "" : "is-active"}`}
+                >
+                  {inspectorCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
+                </button>
               </div>
             </div>
           </header>
-
-          <button
-            type="button"
-            title={inspectorCollapsed ? "打开右侧栏" : "收起右侧栏"}
-            aria-label={inspectorCollapsed ? "打开右侧栏" : "收起右侧栏"}
-            onClick={() => setInspectorCollapsed((collapsed) => !collapsed)}
-            className={`inspector-edge-toggle hidden lg:flex ${inspectorCollapsed ? "is-collapsed" : "is-open"}`}
-          >
-            {inspectorCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
-          </button>
 
           <section className="mx-auto max-w-none space-y-5 px-4 py-5 md:px-8 md:py-7">
 
