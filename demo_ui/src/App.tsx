@@ -458,6 +458,21 @@ export default function App() {
       : activeTab === "stock"
         ? `${filteredStocks.length} 条供应`
         : `${filteredMarket.length} 条需求`;
+  const listSearchBox = (
+    <div className="surface-card group flex items-center gap-2 rounded-md px-3 py-2.5">
+      <Search className="h-4 w-4 text-neutral-400 transition group-focus-within:text-neutral-700" />
+      <input
+        value={query}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setStockPage(1);
+          setMarketPage(1);
+        }}
+        placeholder="搜索型号、城市、来源用户、状态、配置"
+        className="w-full bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
+      />
+    </div>
+  );
   const aiLineCount = aiText.trim() ? aiText.trim().split(/\r?\n/).filter(Boolean).length : 0;
   const activeStockFilterCount = [
     stockCategoryFilter !== "ALL",
@@ -760,95 +775,103 @@ export default function App() {
 
           {notice && <InlineNotice tone={notice.tone} text={notice.text} onDismiss={() => setNotice(null)} />}
 
-          {activeTab !== "input" && (
-            <div className="surface-card group flex items-center gap-2 rounded-md px-3 py-2.5">
-              <Search className="h-4 w-4 text-neutral-400 transition group-focus-within:text-neutral-700" />
-              <input
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  setStockPage(1);
-                  setMarketPage(1);
-                }}
-                placeholder="搜索型号、城市、来源用户、状态、配置"
-                className="w-full bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
-              />
-            </div>
-          )}
-
           {activeTab === "stock" && (
-            <FilterPanel
-              title="筛选供应"
-              activeCount={activeStockFilterCount}
-              resultText={`已显示 ${filteredStocks.length} 条，按录入时间最新在前`}
-              isOpen={stockFiltersOpen}
-              onToggle={() => setStockFiltersOpen((open) => !open)}
-              onReset={resetStockFilters}
-            >
-              <div className="smart-filter-layout">
-                <FilterPillGroup
-                  label="品类"
-                  value={stockCategoryFilter}
-                  options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
-                  onChange={(value) => {
-                    setStockCategoryFilter(value as ProductCategory | "ALL");
-                    setStockPage(1);
-                  }}
-                />
-                <div className={`${stockFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
-                  <FilterPillGroup
-                    label="交易"
-                    value={stockModeFilter}
-                    options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
-                    onChange={(value) => {
-                      setStockModeFilter(value as TradeMode | "ALL");
-                      setStockPage(1);
-                    }}
-                  />
-                  <FilterPillGroup
-                    label="价格"
-                    value={stockPriceFilter}
-                    options={stockPriceOptions}
-                    onChange={(value) => {
-                      setStockPriceFilter(value as PriceFilter);
-                      setStockPage(1);
-                    }}
-                  />
-                  <div className="smart-filter-more">
-                    <FilterSelect
-                      label="城市"
-                      compact
-                      value={stockCityFilter}
-                      options={stockCityOptions}
+            <div className={`grid gap-4 ${inspectorCollapsed ? "" : "lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
+              <div className="min-w-0 space-y-3">
+                {listSearchBox}
+                <FilterPanel
+                  title="筛选供应"
+                  activeCount={activeStockFilterCount}
+                  resultText={`已显示 ${filteredStocks.length} 条，按录入时间最新在前`}
+                  isOpen={stockFiltersOpen}
+                  onToggle={() => setStockFiltersOpen((open) => !open)}
+                  onReset={resetStockFilters}
+                >
+                  <div className="smart-filter-layout">
+                    <FilterPillGroup
+                      label="品类"
+                      value={stockCategoryFilter}
+                      options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
                       onChange={(value) => {
-                        setStockCityFilter(value);
+                        setStockCategoryFilter(value as ProductCategory | "ALL");
                         setStockPage(1);
                       }}
                     />
-                    <FilterSelect
-                      label="来源用户"
-                      compact
-                      value={stockSourceContactFilter}
-                      options={stockSourceContactOptions}
-                      onChange={(value) => {
-                        setStockSourceContactFilter(value);
-                        setStockPage(1);
-                      }}
-                    />
-                    <FilterSelect
-                      label="录入方式"
-                      compact
-                      value={stockSourceFilter}
-                      options={stockSourceOptions}
-                      onChange={(value) => {
-                        setStockSourceFilter(value as StockItem["source"] | "ALL");
-                        setStockPage(1);
-                      }}
-                    />
+                    <div className={`${stockFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
+                      <FilterPillGroup
+                        label="交易"
+                        value={stockModeFilter}
+                        options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
+                        onChange={(value) => {
+                          setStockModeFilter(value as TradeMode | "ALL");
+                          setStockPage(1);
+                        }}
+                      />
+                      <FilterPillGroup
+                        label="价格"
+                        value={stockPriceFilter}
+                        options={stockPriceOptions}
+                        onChange={(value) => {
+                          setStockPriceFilter(value as PriceFilter);
+                          setStockPage(1);
+                        }}
+                      />
+                      <div className="smart-filter-more">
+                        <FilterSelect
+                          label="城市"
+                          compact
+                          value={stockCityFilter}
+                          options={stockCityOptions}
+                          onChange={(value) => {
+                            setStockCityFilter(value);
+                            setStockPage(1);
+                          }}
+                        />
+                        <FilterSelect
+                          label="来源用户"
+                          compact
+                          value={stockSourceContactFilter}
+                          options={stockSourceContactOptions}
+                          onChange={(value) => {
+                            setStockSourceContactFilter(value);
+                            setStockPage(1);
+                          }}
+                        />
+                        <FilterSelect
+                          label="录入方式"
+                          compact
+                          value={stockSourceFilter}
+                          options={stockSourceOptions}
+                          onChange={(value) => {
+                            setStockSourceFilter(value as StockItem["source"] | "ALL");
+                            setStockPage(1);
+                          }}
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
+                </FilterPanel>
+                <StockDataTable
+                  items={pagedStocks}
+                  selectedId={selectedStock?.id ?? ""}
+                  onSelect={(stock) => setSelectedStockId(stock.id)}
+                />
+                {!pagedStocks.length && <EmptyState title="暂无符合条件的货源" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
+                {filteredStocks.length > 0 && (
+                  <Pagination
+                    total={filteredStocks.length}
+                    page={stockCurrentPage}
+                    onPageChange={setStockPage}
+                  />
+                )}
               </div>
-            </FilterPanel>
+              {!inspectorCollapsed && (
+                <TradeDetailDrawer
+                  kind="stock"
+                  item={selectedStock}
+                />
+              )}
+            </div>
           )}
 
           {activeTab === "input" && (
@@ -968,100 +991,73 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === "stock" && (
+          {activeTab === "market" && (
             <div className={`grid gap-4 ${inspectorCollapsed ? "" : "lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
               <div className="min-w-0 space-y-3">
-                <StockDataTable
-                  items={pagedStocks}
-                  selectedId={selectedStock?.id ?? ""}
-                  onSelect={(stock) => setSelectedStockId(stock.id)}
-                />
-              {!pagedStocks.length && <EmptyState title="暂无符合条件的货源" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
-              {filteredStocks.length > 0 && (
-                <Pagination
-                  total={filteredStocks.length}
-                  page={stockCurrentPage}
-                  onPageChange={setStockPage}
-                />
-              )}
-              </div>
-              {!inspectorCollapsed && (
-                <TradeDetailDrawer
-                  kind="stock"
-                  item={selectedStock}
-                />
-              )}
-            </div>
-          )}
-
-          {activeTab === "market" && (
-            <div className="space-y-3">
-              <FilterPanel
-                title="筛选需求"
-                activeCount={activeMarketFilterCount}
-                resultText={`已显示 ${filteredMarket.length} 条需求，按创建时间最新在前`}
-                isOpen={marketFiltersOpen}
-                onToggle={() => setMarketFiltersOpen((open) => !open)}
-                onReset={resetMarketFilters}
-              >
-                <div className="smart-filter-layout">
-                  <FilterPillGroup
-                    label="品类"
-                    value={marketCategoryFilter}
-                    options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
-                    onChange={(value) => {
-                      setMarketCategoryFilter(value as ProductCategory | "ALL");
-                      setMarketPage(1);
-                    }}
-                  />
-                  <div className={`${marketFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
+                {listSearchBox}
+                <FilterPanel
+                  title="筛选需求"
+                  activeCount={activeMarketFilterCount}
+                  resultText={`已显示 ${filteredMarket.length} 条需求，按创建时间最新在前`}
+                  isOpen={marketFiltersOpen}
+                  onToggle={() => setMarketFiltersOpen((open) => !open)}
+                  onReset={resetMarketFilters}
+                >
+                  <div className="smart-filter-layout">
                     <FilterPillGroup
-                      label="交易"
-                      value={marketModeFilter}
-                      options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
+                      label="品类"
+                      value={marketCategoryFilter}
+                      options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
                       onChange={(value) => {
-                        setMarketModeFilter(value as TradeMode | "ALL");
+                        setMarketCategoryFilter(value as ProductCategory | "ALL");
                         setMarketPage(1);
                       }}
                     />
-                    <div className="smart-filter-more">
-                      <FilterSelect
-                        label="来源用户"
-                        compact
-                        value={marketSourceContactFilter}
-                        options={marketSourceContactOptions}
+                    <div className={`${marketFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
+                      <FilterPillGroup
+                        label="交易"
+                        value={marketModeFilter}
+                        options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
                         onChange={(value) => {
-                          setMarketSourceContactFilter(value);
+                          setMarketModeFilter(value as TradeMode | "ALL");
                           setMarketPage(1);
                         }}
                       />
+                      <div className="smart-filter-more">
+                        <FilterSelect
+                          label="来源用户"
+                          compact
+                          value={marketSourceContactFilter}
+                          options={marketSourceContactOptions}
+                          onChange={(value) => {
+                            setMarketSourceContactFilter(value);
+                            setMarketPage(1);
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              </FilterPanel>
-              <div className={`grid gap-4 ${inspectorCollapsed ? "" : "lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
-                <div className="min-w-0 space-y-3">
-                  <MarketDataTable
-                    items={pagedMarket}
-                    selectedId={selectedMarket?.id ?? ""}
-                    onSelect={(post) => setSelectedMarketId(post.id)}
-                  />
-              {!pagedMarket.length && <EmptyState title="暂无符合条件的需求" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
-              {filteredMarket.length > 0 && (
-                <Pagination
-                  total={filteredMarket.length}
-                  page={marketCurrentPage}
-                  onPageChange={setMarketPage}
+                </FilterPanel>
+                <MarketDataTable
+                  items={pagedMarket}
+                  selectedId={selectedMarket?.id ?? ""}
+                  onSelect={(post) => setSelectedMarketId(post.id)}
                 />
-              )}
-                </div>
-                {!inspectorCollapsed && (
-                  <TradeDetailDrawer
-                    kind="market"
-                    item={selectedMarket}
+                {!pagedMarket.length && <EmptyState title="暂无符合条件的需求" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
+                {filteredMarket.length > 0 && (
+                  <Pagination
+                    total={filteredMarket.length}
+                    page={marketCurrentPage}
+                    onPageChange={setMarketPage}
                   />
                 )}
               </div>
+              {!inspectorCollapsed && (
+                <TradeDetailDrawer
+                  kind="market"
+                  item={selectedMarket}
+                />
+              )}
             </div>
           )}
           </section>
