@@ -7,6 +7,7 @@ import {
   Check,
   ClipboardCheck,
   Compass,
+  CreditCard,
   Database,
   LogOut,
   MessageCircle,
@@ -16,6 +17,7 @@ import {
   PanelRightOpen,
   Phone,
   Plus,
+  ReceiptText,
   RotateCcw,
   Search,
   SendHorizontal,
@@ -24,10 +26,11 @@ import {
   Sparkles,
   Trash2,
   UserRound,
+  WalletCards,
   X,
 } from "lucide-react";
 
-type TabKey = "input" | "stock" | "market";
+type TabKey = "input" | "stock" | "market" | "account";
 type MarketType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
@@ -37,14 +40,19 @@ type NoticeTone = "info" | "success" | "warning";
 type WorkspaceType = "PERSONAL" | "ENTERPRISE";
 type WorkspaceCollection = "stocks" | "market";
 type CaptchaStatus = "disabled" | "loading" | "ready" | "error";
+type AccountSection = "overview" | "membership" | "credits" | "ledger";
+type MembershipPlanCode = "FREE" | "PRO_MONTHLY" | "PRO_YEARLY";
+type CreditTransactionType = "RECHARGE" | "CONSUME" | "GRANT" | "REFUND" | "ADJUST";
 
 const LIST_PAGE_SIZE = 30;
 const AUTH_STORAGE_KEY = "huoji_auth_session";
+const ACCOUNT_STORAGE_PREFIX = "huoji_account_wallet";
 const AI_EXAMPLE_TEXT = "深圳现货 H100 8卡服务器 2台 全新 价格120万";
 const pageMeta: Record<TabKey, { title: string; crumb: string }> = {
   input: { title: "货记", crumb: "录入" },
   stock: { title: "供应", crumb: "供应" },
   market: { title: "需求", crumb: "需求" },
+  account: { title: "个人中心", crumb: "账户" },
 };
 
 interface ConfigItem {
@@ -197,6 +205,26 @@ interface AuthSession {
   expiresAt: string;
 }
 
+interface CreditTransaction {
+  id: string;
+  type: CreditTransactionType;
+  title: string;
+  amount: number;
+  balanceAfter: number;
+  createdAt: string;
+  note?: string;
+}
+
+interface AccountWallet {
+  planCode: MembershipPlanCode;
+  planName: string;
+  membershipStatus: "ACTIVE" | "FREE" | "EXPIRED";
+  membershipExpiresAt?: string;
+  creditBalance: number;
+  monthlyAiParseCount: number;
+  transactions: CreditTransaction[];
+}
+
 interface SmsRequestResponse {
   success?: boolean;
   expiresInSeconds?: number;
@@ -316,6 +344,46 @@ const initialMarket: MarketPost[] = [
   },
 ];
 
+const membershipPlans: Array<{
+  code: MembershipPlanCode;
+  name: string;
+  price: string;
+  period: string;
+  badge: string;
+  features: string[];
+}> = [
+  {
+    code: "FREE",
+    name: "免费版",
+    price: "¥0",
+    period: "长期",
+    badge: "当前可用",
+    features: ["每日 10 次 AI 解析", "单次最多 50 条", "基础供应/需求管理", "基础筛选"],
+  },
+  {
+    code: "PRO_MONTHLY",
+    name: "个人 Pro 月卡",
+    price: "¥39",
+    period: "30 天",
+    badge: "高频使用",
+    features: ["每日 300 次 AI 解析", "单次最多 1000 条", "高级筛选与导出", "批量入库优先"],
+  },
+  {
+    code: "PRO_YEARLY",
+    name: "个人 Pro 年卡",
+    price: "¥399",
+    period: "365 天",
+    badge: "更划算",
+    features: ["包含月卡全部权益", "赠送 3000 货记分", "后续经营报表优先体验", "企业版折扣预留"],
+  },
+];
+
+const creditPackages: Array<{ id: string; title: string; price: string; credits: number; bonus: number; label: string }> = [
+  { id: "credits_100", title: "轻量包", price: "¥10", credits: 100, bonus: 0, label: "临时解析够用" },
+  { id: "credits_600", title: "常用包", price: "¥50", credits: 500, bonus: 100, label: "多送 100 分" },
+  { id: "credits_1500", title: "批量包", price: "¥100", credits: 1000, bonus: 500, label: "适合批量群记录" },
+];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("input");
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
@@ -327,6 +395,8 @@ export default function App() {
   const [marketPosts, setMarketPosts] = useState<MarketPost[]>(() =>
     normalizeMarketPosts(loadWorkspaceCollection(authSession, "market", "huoji_web_market", initialMarket)),
   );
+  const [accountWallet, setAccountWallet] = useState<AccountWallet>(() => loadAccountWallet(authSession));
+  const [accountSection, setAccountSection] = useState<AccountSection>("overview");
   const [aiText, setAiText] = useState(AI_EXAMPLE_TEXT);
   const [query, setQuery] = useState("");
   const [marketModeFilter, setMarketModeFilter] = useState<TradeMode | "ALL">("ALL");
@@ -363,11 +433,13 @@ export default function App() {
     if (!authSession) return;
     setStocks(normalizeStocks(loadWorkspaceCollection(authSession, "stocks", "huoji_web_stocks", initialStocks)));
     setMarketPosts(normalizeMarketPosts(loadWorkspaceCollection(authSession, "market", "huoji_web_market", initialMarket)));
+    setAccountWallet(loadAccountWallet(authSession));
     setDraftItems([]);
     setQuery("");
     setStockPage(1);
     setMarketPage(1);
     setDraftPage(1);
+    setAccountSection("overview");
   }, [authSession?.currentWorkspaceId]);
 
   const filteredStocks = useMemo(() => {
@@ -457,7 +529,9 @@ export default function App() {
       ? `${stocks.length} 条供应 / ${demandCount} 条需求 / ${draftItems.length} 待确认`
       : activeTab === "stock"
         ? `${filteredStocks.length} 条供应`
-        : `${filteredMarket.length} 条需求`;
+        : activeTab === "market"
+          ? `${filteredMarket.length} 条需求`
+          : `${accountWallet.planName} / ${accountWallet.creditBalance} 货记分`;
   const listSearchBox = (
     <div className="surface-card group flex items-center gap-2 rounded-md px-3 py-2.5">
       <Search className="h-4 w-4 text-neutral-400 transition group-focus-within:text-neutral-700" />
@@ -507,10 +581,96 @@ export default function App() {
     saveWorkspaceCollection(currentWorkspaceId, "market", next);
   }
 
+  function saveAccountWallet(next: AccountWallet) {
+    setAccountWallet(next);
+    saveAccountWalletForSession(authSession, next);
+  }
+
+  function appendCreditTransaction(wallet: AccountWallet, transaction: Omit<CreditTransaction, "id" | "createdAt" | "balanceAfter">): AccountWallet {
+    const nextBalance = Math.max(0, wallet.creditBalance + transaction.amount);
+    return {
+      ...wallet,
+      creditBalance: nextBalance,
+      transactions: [
+        {
+          ...transaction,
+          id: `txn_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+          createdAt: new Date().toISOString(),
+          balanceAfter: nextBalance,
+        },
+        ...wallet.transactions,
+      ].slice(0, 80),
+    };
+  }
+
+  function handleRechargeCredits(pack: (typeof creditPackages)[number]) {
+    const totalCredits = pack.credits + pack.bonus;
+    const nextWallet = appendCreditTransaction(accountWallet, {
+      type: "RECHARGE",
+      title: `${pack.title}充值`,
+      amount: totalCredits,
+      note: `${pack.price} · 支付接入前模拟入账`,
+    });
+    saveAccountWallet(nextWallet);
+    setNotice({ tone: "success", text: `已模拟充值 ${totalCredits} 货记分。` });
+  }
+
+  function handleUpgradePlan(planCode: MembershipPlanCode) {
+    if (planCode === "FREE") {
+      setNotice({ tone: "info", text: "当前已支持免费版，Pro 支付接入后可正式开通。" });
+      return;
+    }
+    const plan = membershipPlans.find((item) => item.code === planCode);
+    if (!plan) return;
+    const expiresAt = addDaysIso(planCode === "PRO_YEARLY" ? 365 : 30);
+    const bonus = planCode === "PRO_YEARLY" ? 3000 : 300;
+    const upgradedWallet = appendCreditTransaction(
+      {
+        ...accountWallet,
+        planCode,
+        planName: plan.name,
+        membershipStatus: "ACTIVE",
+        membershipExpiresAt: expiresAt,
+      },
+      {
+        type: "GRANT",
+        title: `${plan.name}权益赠送`,
+        amount: bonus,
+        note: "支付接入前模拟开通",
+      },
+    );
+    saveAccountWallet(upgradedWallet);
+    setNotice({ tone: "success", text: `已模拟开通 ${plan.name}，赠送 ${bonus} 货记分。` });
+  }
+
+  function consumeCredits(amount: number, title: string, note?: string): boolean {
+    if (accountWallet.creditBalance < amount) {
+      setAccountSection("credits");
+      setActiveTab("account");
+      setNotice({ tone: "warning", text: `货记分不足，本次需要 ${amount} 分。请先充值后再解析。` });
+      return false;
+    }
+    const nextWallet = appendCreditTransaction(
+      {
+        ...accountWallet,
+        monthlyAiParseCount: accountWallet.monthlyAiParseCount + 1,
+      },
+      {
+        type: "CONSUME",
+        title,
+        amount: -amount,
+        note,
+      },
+    );
+    saveAccountWallet(nextWallet);
+    return true;
+  }
+
   function handleLogin(nextSession: AuthSession) {
     persistAuthSession(nextSession);
     setStocks(normalizeStocks(loadWorkspaceCollection(nextSession, "stocks", "huoji_web_stocks", initialStocks)));
     setMarketPosts(normalizeMarketPosts(loadWorkspaceCollection(nextSession, "market", "huoji_web_market", initialMarket)));
+    setAccountWallet(loadAccountWallet(nextSession));
     setDraftItems([]);
     setQuery("");
     setStockPage(1);
@@ -570,6 +730,11 @@ export default function App() {
     if (!input) {
       setAiParseMessage("请先输入或粘贴需要解析的供需文本。");
       setNotice({ tone: "warning", text: "货记输入为空。" });
+      return;
+    }
+    const creditCost = aiParseCreditCost(input);
+    if (!consumeCredits(creditCost, "AI 解析供需文本", `${input.split(/\r?\n/).filter(Boolean).length || 1} 行文本`)) {
+      setAiParseMessage(`货记分不足，本次解析需要 ${creditCost} 分。`);
       return;
     }
 
@@ -722,6 +887,7 @@ export default function App() {
             <NavButton compact={sidebarCollapsed} active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
             <NavButton compact={sidebarCollapsed} active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
             <NavButton compact={sidebarCollapsed} active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
+            <NavButton compact={sidebarCollapsed} active={activeTab === "account"} icon={<WalletCards />} label="个人中心" onClick={() => setActiveTab("account")} />
           </nav>
 
           {!sidebarCollapsed && (
@@ -729,6 +895,7 @@ export default function App() {
             <SideMetric label="我的供应" value={`${stocks.length}`} />
             <SideMetric label="已核实" value={`${verifiedStockCount}`} />
             <SideMetric label="需求" value={`${demandCount}`} />
+            <SideMetric label="货记分" value={`${accountWallet.creditBalance}`} />
           </div>
           )}
         </aside>
@@ -748,6 +915,15 @@ export default function App() {
                   <UserRound className="h-3.5 w-3.5 text-neutral-500" />
                   {authSession.user.maskedPhone}
                 </div>
+                <button
+                  type="button"
+                  title="个人中心"
+                  aria-label="个人中心"
+                  onClick={() => setActiveTab("account")}
+                  className="surface-card-quiet ghost-button flex h-9 w-9 items-center justify-center rounded-md"
+                >
+                  <WalletCards className="h-4 w-4" />
+                </button>
                 <button
                   type="button"
                   title="退出登录"
@@ -1059,15 +1235,228 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {activeTab === "account" && (
+            <AccountCenter
+              session={authSession}
+              wallet={accountWallet}
+              section={accountSection}
+              onSectionChange={setAccountSection}
+              onRecharge={handleRechargeCredits}
+              onUpgrade={handleUpgradePlan}
+            />
+          )}
           </section>
         </main>
       </div>
 
-      <nav className="mobile-tabbar fixed inset-x-3 bottom-3 z-40 grid grid-cols-3 rounded-md px-1.5 py-1.5 md:hidden">
+      <nav className="mobile-tabbar fixed inset-x-3 bottom-3 z-40 grid grid-cols-4 rounded-md px-1.5 py-1.5 md:hidden">
         <MobileTab active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
         <MobileTab active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
         <MobileTab active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
+        <MobileTab active={activeTab === "account"} icon={<WalletCards />} label="我的" onClick={() => setActiveTab("account")} />
       </nav>
+    </div>
+  );
+}
+
+function AccountCenter({
+  session,
+  wallet,
+  section,
+  onSectionChange,
+  onRecharge,
+  onUpgrade,
+}: {
+  session: AuthSession;
+  wallet: AccountWallet;
+  section: AccountSection;
+  onSectionChange: (section: AccountSection) => void;
+  onRecharge: (pack: (typeof creditPackages)[number]) => void;
+  onUpgrade: (planCode: MembershipPlanCode) => void;
+}) {
+  const currentPlan = membershipPlans.find((plan) => plan.code === wallet.planCode) ?? membershipPlans[0];
+  const sectionItems: Array<{ key: AccountSection; label: string; icon: React.ReactNode }> = [
+    { key: "overview", label: "账户概览", icon: <UserRound /> },
+    { key: "membership", label: "会员中心", icon: <ShieldCheck /> },
+    { key: "credits", label: "货记分", icon: <WalletCards /> },
+    { key: "ledger", label: "订单与流水", icon: <ReceiptText /> },
+  ];
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <aside className="surface-card h-fit rounded-md p-2">
+        <div className="mb-2 rounded-md bg-neutral-950/[0.025] px-3 py-3">
+          <p className="text-sm font-semibold text-neutral-950">{session.user.maskedPhone}</p>
+          <p className="caption-text mt-1">个人版 · 所有者</p>
+        </div>
+        <nav className="grid gap-1">
+          {sectionItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => onSectionChange(item.key)}
+              className={`flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition ${
+                section === item.key ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-950/5 hover:text-neutral-950"
+              }`}
+            >
+              {React.cloneElement(item.icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4" })}
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      <div className="min-w-0 space-y-4">
+        {section === "overview" && (
+          <>
+            <section className="surface-card rounded-md p-4">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <p className="caption-text">账户</p>
+                  <h3 className="mt-1 text-2xl font-semibold text-neutral-950">{session.user.maskedPhone}</h3>
+                  <p className="mt-1 text-sm text-neutral-500">个人空间已开通，企业空间权限预留中。</p>
+                </div>
+                <Badge tone={wallet.membershipStatus === "ACTIVE" ? "green" : "default"}>{wallet.planName}</Badge>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <AccountMetric label="货记分余额" value={`${wallet.creditBalance}`} helper="AI 解析和增值功能消耗" tone="green" />
+                <AccountMetric label="本月 AI 解析" value={`${wallet.monthlyAiParseCount}`} helper="解析成功或本地兜底都会计入" tone="blue" />
+                <AccountMetric label="会员有效期" value={wallet.membershipExpiresAt ? formatDate(wallet.membershipExpiresAt) : "免费版"} helper={currentPlan.period} tone="orange" />
+              </div>
+            </section>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Panel title="会员权益" icon={<ShieldCheck />}>
+                <p className="text-sm text-neutral-600">当前方案：<strong className="text-neutral-950">{wallet.planName}</strong></p>
+                <ul className="mt-3 grid gap-2">
+                  {currentPlan.features.map((feature) => (
+                    <li key={feature} className="flex items-center gap-2 text-sm text-neutral-700">
+                      <Check className="h-4 w-4 text-emerald-600" />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+              </Panel>
+              <Panel title="最近流水" icon={<ReceiptText />}>
+                <TransactionList transactions={wallet.transactions.slice(0, 4)} />
+              </Panel>
+            </div>
+          </>
+        )}
+
+        {section === "membership" && (
+          <section className="grid gap-3 lg:grid-cols-3">
+            {membershipPlans.map((plan) => (
+              <div key={plan.code} className={`interactive-card rounded-md p-4 ${wallet.planCode === plan.code ? "ring-2 ring-neutral-950/80" : ""}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <Badge tone={plan.code === "FREE" ? "default" : "blue"}>{plan.badge}</Badge>
+                    <h3 className="mt-3 text-lg font-semibold text-neutral-950">{plan.name}</h3>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-semibold text-neutral-950">{plan.price}</p>
+                    <p className="caption-text">{plan.period}</p>
+                  </div>
+                </div>
+                <ul className="mt-4 grid gap-2">
+                  {plan.features.map((feature) => (
+                    <li key={feature} className="flex gap-2 text-sm text-neutral-700">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                      <span>{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  onClick={() => onUpgrade(plan.code)}
+                  className={`mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium ${
+                    wallet.planCode === plan.code ? "ghost-button surface-card-quiet" : "primary-button"
+                  }`}
+                >
+                  <CreditCard className="h-4 w-4" />
+                  {wallet.planCode === plan.code ? "当前方案" : "模拟开通"}
+                </button>
+              </div>
+            ))}
+          </section>
+        )}
+
+        {section === "credits" && (
+          <>
+            <section className="surface-card rounded-md p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="caption-text">货记分余额</p>
+                  <p className="mt-1 text-3xl font-semibold text-neutral-950">{wallet.creditBalance}</p>
+                </div>
+                <p className="max-w-xl text-sm text-neutral-500">货记分用于 AI 解析、批量入库、后续导出和广场刷新等增值能力。当前支付未接入，充值按钮为模拟入账。</p>
+              </div>
+            </section>
+            <section className="grid gap-3 md:grid-cols-3">
+              {creditPackages.map((pack) => (
+                <div key={pack.id} className="interactive-card rounded-md p-4">
+                  <Badge tone="green">{pack.label}</Badge>
+                  <h3 className="mt-3 text-lg font-semibold text-neutral-950">{pack.title}</h3>
+                  <p className="mt-1 text-sm text-neutral-500">{pack.credits} 分{pack.bonus ? ` + ${pack.bonus} 赠送` : ""}</p>
+                  <p className="mt-4 text-2xl font-semibold text-neutral-950">{pack.price}</p>
+                  <button
+                    type="button"
+                    onClick={() => onRecharge(pack)}
+                    className="primary-button mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium"
+                  >
+                    <Plus className="h-4 w-4" />
+                    模拟充值
+                  </button>
+                </div>
+              ))}
+            </section>
+          </>
+        )}
+
+        {section === "ledger" && (
+          <Panel title="订单与流水" icon={<ReceiptText />}>
+            <TransactionList transactions={wallet.transactions} />
+          </Panel>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AccountMetric({ label, value, helper, tone }: { label: string; value: string; helper: string; tone: BadgeTone }) {
+  return (
+    <div className={`smart-metric smart-metric-${tone} min-h-[86px] items-start p-3`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <span className="text-xs font-medium text-neutral-500">{helper}</span>
+    </div>
+  );
+}
+
+function TransactionList({ transactions }: { transactions: CreditTransaction[] }) {
+  if (!transactions.length) {
+    return (
+      <div className="surface-card-quiet rounded-md p-4 text-sm text-neutral-500">
+        暂无流水。充值、会员开通和 AI 消耗会记录在这里。
+      </div>
+    );
+  }
+  return (
+    <div className="grid gap-2">
+      {transactions.map((transaction) => (
+        <div key={transaction.id} className="grid gap-2 rounded-md border border-neutral-950/[0.06] bg-white/70 px-3 py-2 sm:grid-cols-[1fr_auto] sm:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={transaction.amount >= 0 ? "green" : "orange"}>{creditTransactionTypeText(transaction.type)}</Badge>
+              <p className="truncate text-sm font-semibold text-neutral-950">{transaction.title}</p>
+            </div>
+            <p className="caption-text mt-1">{formatMinuteTime(transaction.createdAt)} · 余额 {transaction.balanceAfter}{transaction.note ? ` · ${transaction.note}` : ""}</p>
+          </div>
+          <p className={`text-sm font-semibold ${transaction.amount >= 0 ? "text-emerald-700" : "text-amber-700"}`}>
+            {transaction.amount >= 0 ? "+" : ""}{transaction.amount}
+          </p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -2974,6 +3363,51 @@ function persistAuthSession(session: AuthSession): void {
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
 }
 
+function loadAccountWallet(session: AuthSession | null): AccountWallet {
+  const key = accountWalletStorageKey(session);
+  const wallet = load<AccountWallet | null>(key, null);
+  if (wallet && typeof wallet.creditBalance === "number" && Array.isArray(wallet.transactions)) {
+    return {
+      ...createDefaultAccountWallet(),
+      ...wallet,
+      transactions: wallet.transactions,
+    };
+  }
+  const defaultWallet = createDefaultAccountWallet();
+  if (session) saveAccountWalletForSession(session, defaultWallet);
+  return defaultWallet;
+}
+
+function createDefaultAccountWallet(): AccountWallet {
+  return {
+    planCode: "FREE",
+    planName: "免费版",
+    membershipStatus: "FREE",
+    creditBalance: 128,
+    monthlyAiParseCount: 0,
+    transactions: [
+      {
+        id: "txn_welcome",
+        type: "GRANT",
+        title: "新账号初始化赠送",
+        amount: 128,
+        balanceAfter: 128,
+        createdAt: new Date().toISOString(),
+        note: "用于体验 AI 解析",
+      },
+    ],
+  };
+}
+
+function saveAccountWalletForSession(session: AuthSession | null, wallet: AccountWallet): void {
+  if (!session) return;
+  localStorage.setItem(accountWalletStorageKey(session), JSON.stringify(wallet));
+}
+
+function accountWalletStorageKey(session: AuthSession | null): string {
+  return `${ACCOUNT_STORAGE_PREFIX}:${session?.user.id ?? "guest"}`;
+}
+
 async function fetchCaptchaConfig(): Promise<CaptchaConfig> {
   const response = await fetch("/api/auth/captcha/config");
   const payload = (await response.json()) as CaptchaConfig & { error?: string };
@@ -3202,4 +3636,41 @@ function formatHourTime(value: string): string {
   const hour = `${date.getHours()}`.padStart(2, "0");
   const minute = `${date.getMinutes()}`.padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day} ${hour}:${minute}`;
+}
+
+function formatMinuteTime(value: string): string {
+  return formatHourTime(value);
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "日期待确认";
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function addDaysIso(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
+}
+
+function aiParseCreditCost(text: string): number {
+  const lineCount = Math.max(1, text.split(/\r?\n/).filter((line) => line.trim()).length);
+  if (lineCount > 200) return 10;
+  if (lineCount > 80) return 5;
+  if (lineCount > 20) return 3;
+  return 1;
+}
+
+function creditTransactionTypeText(type: CreditTransactionType): string {
+  const map: Record<CreditTransactionType, string> = {
+    RECHARGE: "充值",
+    CONSUME: "消耗",
+    GRANT: "赠送",
+    REFUND: "退回",
+    ADJUST: "调整",
+  };
+  return map[type];
 }
