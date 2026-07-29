@@ -771,6 +771,7 @@ export default function App() {
                 <div className="smart-filter-more">
                   <FilterSelect
                     label="城市"
+                    compact
                     value={stockCityFilter}
                     options={stockCityOptions}
                     onChange={(value) => {
@@ -780,6 +781,7 @@ export default function App() {
                   />
                   <FilterSelect
                     label="来源用户"
+                    compact
                     value={stockSourceContactFilter}
                     options={stockSourceContactOptions}
                     onChange={(value) => {
@@ -789,6 +791,7 @@ export default function App() {
                   />
                   <FilterSelect
                     label="录入方式"
+                    compact
                     value={stockSourceFilter}
                     options={stockSourceOptions}
                     onChange={(value) => {
@@ -973,6 +976,7 @@ export default function App() {
                   <div className="smart-filter-more">
                     <FilterSelect
                       label="来源用户"
+                      compact
                       value={marketSourceContactFilter}
                       options={marketSourceContactOptions}
                       onChange={(value) => {
@@ -1870,16 +1874,19 @@ function FilterSelect({
   value,
   options,
   onChange,
+  compact = false,
 }: {
   label: string;
   value: string;
   options: Array<{ label: string; value: string }>;
   onChange: (value: string) => void;
+  compact?: boolean;
 }) {
   return (
     <label className="block">
-      <span className="caption-text mb-1 block">{label}</span>
+      <span className={compact ? "sr-only" : "caption-text mb-1 block"}>{label}</span>
       <select
+        aria-label={label}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="field-surface h-9 w-full rounded-md px-2 font-medium text-neutral-900 outline-none"
@@ -1907,7 +1914,6 @@ function FilterPillGroup({
 }) {
   return (
     <div className="smart-filter-group">
-      <div className="smart-filter-label">{label}</div>
       <div className="smart-filter-pills" role="listbox" aria-label={label}>
         {options.map((option) => {
           const active = value === option.value;

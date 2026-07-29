@@ -242,19 +242,11 @@ button:disabled {
 
   .smart-filter-layout {
     display: grid;
-    gap: 0.8rem;
+    gap: 0.55rem;
   }
 
   .smart-filter-group {
     display: grid;
-    gap: 0.4rem;
-  }
-
-  .smart-filter-label {
-    color: #76716b;
-    font-size: var(--text-micro);
-    font-weight: 620;
-    line-height: 1.2;
   }
 
   .smart-filter-pills {
@@ -304,8 +296,8 @@ button:disabled {
     display: grid;
     gap: 0.55rem;
     border-radius: 0.5rem;
-    background: rgba(246, 245, 242, 0.66);
-    padding: 0.65rem;
+    background: rgba(246, 245, 242, 0.5);
+    padding: 0.5rem;
   }
 
   @media (min-width: 768px) {
