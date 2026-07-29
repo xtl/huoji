@@ -740,8 +740,8 @@ export default function App() {
               onToggle={() => setStockFiltersOpen((open) => !open)}
               onReset={resetStockFilters}
             >
-              <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-                <FilterSelect
+              <div className="smart-filter-layout">
+                <FilterPillGroup
                   label="品类"
                   value={stockCategoryFilter}
                   options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
@@ -750,35 +750,8 @@ export default function App() {
                     setStockPage(1);
                   }}
                 />
-                <FilterSelect
-                  label="城市"
-                  value={stockCityFilter}
-                  options={stockCityOptions}
-                  onChange={(value) => {
-                    setStockCityFilter(value);
-                    setStockPage(1);
-                  }}
-                />
-                <FilterSelect
-                  label="录入方式"
-                  value={stockSourceFilter}
-                  options={stockSourceOptions}
-                  onChange={(value) => {
-                    setStockSourceFilter(value as StockItem["source"] | "ALL");
-                    setStockPage(1);
-                  }}
-                />
-                <FilterSelect
-                  label="来源用户"
-                  value={stockSourceContactFilter}
-                  options={stockSourceContactOptions}
-                  onChange={(value) => {
-                    setStockSourceContactFilter(value);
-                    setStockPage(1);
-                  }}
-                />
-                <FilterSelect
-                  label="交易大类"
+                <FilterPillGroup
+                  label="交易"
                   value={stockModeFilter}
                   options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
                   onChange={(value) => {
@@ -786,7 +759,7 @@ export default function App() {
                     setStockPage(1);
                   }}
                 />
-                <FilterSelect
+                <FilterPillGroup
                   label="价格"
                   value={stockPriceFilter}
                   options={stockPriceOptions}
@@ -795,6 +768,35 @@ export default function App() {
                     setStockPage(1);
                   }}
                 />
+                <div className="smart-filter-more">
+                  <FilterSelect
+                    label="城市"
+                    value={stockCityFilter}
+                    options={stockCityOptions}
+                    onChange={(value) => {
+                      setStockCityFilter(value);
+                      setStockPage(1);
+                    }}
+                  />
+                  <FilterSelect
+                    label="来源用户"
+                    value={stockSourceContactFilter}
+                    options={stockSourceContactOptions}
+                    onChange={(value) => {
+                      setStockSourceContactFilter(value);
+                      setStockPage(1);
+                    }}
+                  />
+                  <FilterSelect
+                    label="录入方式"
+                    value={stockSourceFilter}
+                    options={stockSourceOptions}
+                    onChange={(value) => {
+                      setStockSourceFilter(value as StockItem["source"] | "ALL");
+                      setStockPage(1);
+                    }}
+                  />
+                </div>
               </div>
             </FilterPanel>
           )}
@@ -949,8 +951,8 @@ export default function App() {
                 onToggle={() => setMarketFiltersOpen((open) => !open)}
                 onReset={resetMarketFilters}
               >
-                <div className="grid gap-2 md:grid-cols-3">
-                  <FilterSelect
+                <div className="smart-filter-layout">
+                  <FilterPillGroup
                     label="品类"
                     value={marketCategoryFilter}
                     options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
@@ -959,8 +961,8 @@ export default function App() {
                       setMarketPage(1);
                     }}
                   />
-                  <FilterSelect
-                    label="交易大类"
+                  <FilterPillGroup
+                    label="交易"
                     value={marketModeFilter}
                     options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
                     onChange={(value) => {
@@ -968,15 +970,17 @@ export default function App() {
                       setMarketPage(1);
                     }}
                   />
-                  <FilterSelect
-                    label="来源用户"
-                    value={marketSourceContactFilter}
-                    options={marketSourceContactOptions}
-                    onChange={(value) => {
-                      setMarketSourceContactFilter(value);
-                      setMarketPage(1);
-                    }}
-                  />
+                  <div className="smart-filter-more">
+                    <FilterSelect
+                      label="来源用户"
+                      value={marketSourceContactFilter}
+                      options={marketSourceContactOptions}
+                      onChange={(value) => {
+                        setMarketSourceContactFilter(value);
+                        setMarketPage(1);
+                      }}
+                    />
+                  </div>
                 </div>
               </FilterPanel>
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -1887,6 +1891,40 @@ function FilterSelect({
         ))}
       </select>
     </label>
+  );
+}
+
+function FilterPillGroup({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ label: string; value: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="smart-filter-group">
+      <div className="smart-filter-label">{label}</div>
+      <div className="smart-filter-pills" role="listbox" aria-label={label}>
+        {options.map((option) => {
+          const active = value === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => onChange(option.value)}
+              className={`smart-filter-pill ${active ? "is-active" : ""}`}
+              aria-selected={active}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

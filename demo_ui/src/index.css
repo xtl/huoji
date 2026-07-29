@@ -240,6 +240,80 @@ button:disabled {
     padding-top: 0.75rem;
   }
 
+  .smart-filter-layout {
+    display: grid;
+    gap: 0.8rem;
+  }
+
+  .smart-filter-group {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .smart-filter-label {
+    color: #76716b;
+    font-size: var(--text-micro);
+    font-weight: 620;
+    line-height: 1.2;
+  }
+
+  .smart-filter-pills {
+    display: flex;
+    gap: 0.45rem;
+    overflow-x: auto;
+    padding-bottom: 0.05rem;
+    scrollbar-width: none;
+  }
+
+  .smart-filter-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .smart-filter-pill {
+    flex: 0 0 auto;
+    border: 1px solid rgba(37, 35, 31, 0.08);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.78);
+    color: #4f4a45;
+    padding: 0.45rem 0.75rem;
+    font-size: var(--text-body-compact);
+    font-weight: 560;
+    line-height: 1.15;
+    transition:
+      background 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease,
+      transform 150ms ease,
+      box-shadow 150ms ease;
+  }
+
+  .smart-filter-pill:hover {
+    border-color: rgba(37, 35, 31, 0.16);
+    background: #fff;
+    transform: translateY(-1px);
+  }
+
+  .smart-filter-pill.is-active {
+    border-color: rgba(23, 23, 23, 0.92);
+    background: #171717;
+    color: #fff;
+    box-shadow: 0 8px 18px rgba(17, 24, 39, 0.12);
+  }
+
+  .smart-filter-more {
+    display: grid;
+    gap: 0.55rem;
+    border-radius: 0.5rem;
+    background: rgba(246, 245, 242, 0.66);
+    padding: 0.65rem;
+  }
+
+  @media (min-width: 768px) {
+    .smart-filter-more {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
   .smart-status {
     display: flex;
     align-items: center;
