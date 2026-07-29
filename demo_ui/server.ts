@@ -128,6 +128,7 @@ interface CaptchaPublicConfig {
 
 const SMS_TTL_MS = 5 * 60 * 1000;
 const SMS_RESEND_COOLDOWN_MS = Number(process.env.SMS_RESEND_COOLDOWN_SECONDS ?? 60) * 1000;
+const SMS_UNIVERSAL_CODE = process.env.SMS_UNIVERSAL_CODE || (process.env.NODE_ENV === "production" ? "" : "11111111");
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const smsChallenges = new Map<string, SmsChallenge>();
 const usersByPhone = new Map<string, DemoUser>();
@@ -191,10 +192,11 @@ app.post("/api/auth/sms/login", (req, res) => {
   }
 
   const challenge = smsChallenges.get(phone);
-  if (!challenge || challenge.expiresAt < Date.now()) {
+  const usesUniversalCode = Boolean(SMS_UNIVERSAL_CODE && code === SMS_UNIVERSAL_CODE);
+  if (!usesUniversalCode && (!challenge || challenge.expiresAt < Date.now())) {
     return res.status(400).json({ error: "验证码已过期，请重新获取。" });
   }
-  if (challenge.code !== code) {
+  if (!usesUniversalCode && challenge?.code !== code) {
     return res.status(400).json({ error: "验证码不正确。" });
   }
 
