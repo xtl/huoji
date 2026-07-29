@@ -249,6 +249,10 @@ button:disabled {
     display: grid;
   }
 
+  .smart-filter-advanced {
+    gap: 0.55rem;
+  }
+
   .smart-filter-pills {
     display: flex;
     gap: 0.45rem;

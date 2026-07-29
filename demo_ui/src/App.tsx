@@ -750,55 +750,57 @@ export default function App() {
                     setStockPage(1);
                   }}
                 />
-                <FilterPillGroup
-                  label="交易"
-                  value={stockModeFilter}
-                  options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
-                  onChange={(value) => {
-                    setStockModeFilter(value as TradeMode | "ALL");
-                    setStockPage(1);
-                  }}
-                />
-                <FilterPillGroup
-                  label="价格"
-                  value={stockPriceFilter}
-                  options={stockPriceOptions}
-                  onChange={(value) => {
-                    setStockPriceFilter(value as PriceFilter);
-                    setStockPage(1);
-                  }}
-                />
-                <div className="smart-filter-more">
-                  <FilterSelect
-                    label="城市"
-                    compact
-                    value={stockCityFilter}
-                    options={stockCityOptions}
+                <div className={`${stockFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
+                  <FilterPillGroup
+                    label="交易"
+                    value={stockModeFilter}
+                    options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
                     onChange={(value) => {
-                      setStockCityFilter(value);
+                      setStockModeFilter(value as TradeMode | "ALL");
                       setStockPage(1);
                     }}
                   />
-                  <FilterSelect
-                    label="来源用户"
-                    compact
-                    value={stockSourceContactFilter}
-                    options={stockSourceContactOptions}
+                  <FilterPillGroup
+                    label="价格"
+                    value={stockPriceFilter}
+                    options={stockPriceOptions}
                     onChange={(value) => {
-                      setStockSourceContactFilter(value);
+                      setStockPriceFilter(value as PriceFilter);
                       setStockPage(1);
                     }}
                   />
-                  <FilterSelect
-                    label="录入方式"
-                    compact
-                    value={stockSourceFilter}
-                    options={stockSourceOptions}
-                    onChange={(value) => {
-                      setStockSourceFilter(value as StockItem["source"] | "ALL");
-                      setStockPage(1);
-                    }}
-                  />
+                  <div className="smart-filter-more">
+                    <FilterSelect
+                      label="城市"
+                      compact
+                      value={stockCityFilter}
+                      options={stockCityOptions}
+                      onChange={(value) => {
+                        setStockCityFilter(value);
+                        setStockPage(1);
+                      }}
+                    />
+                    <FilterSelect
+                      label="来源用户"
+                      compact
+                      value={stockSourceContactFilter}
+                      options={stockSourceContactOptions}
+                      onChange={(value) => {
+                        setStockSourceContactFilter(value);
+                        setStockPage(1);
+                      }}
+                    />
+                    <FilterSelect
+                      label="录入方式"
+                      compact
+                      value={stockSourceFilter}
+                      options={stockSourceOptions}
+                      onChange={(value) => {
+                        setStockSourceFilter(value as StockItem["source"] | "ALL");
+                        setStockPage(1);
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             </FilterPanel>
@@ -964,26 +966,28 @@ export default function App() {
                       setMarketPage(1);
                     }}
                   />
-                  <FilterPillGroup
-                    label="交易"
-                    value={marketModeFilter}
-                    options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
-                    onChange={(value) => {
-                      setMarketModeFilter(value as TradeMode | "ALL");
-                      setMarketPage(1);
-                    }}
-                  />
-                  <div className="smart-filter-more">
-                    <FilterSelect
-                      label="来源用户"
-                      compact
-                      value={marketSourceContactFilter}
-                      options={marketSourceContactOptions}
+                  <div className={`${marketFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
+                    <FilterPillGroup
+                      label="交易"
+                      value={marketModeFilter}
+                      options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
                       onChange={(value) => {
-                        setMarketSourceContactFilter(value);
+                        setMarketModeFilter(value as TradeMode | "ALL");
                         setMarketPage(1);
                       }}
                     />
+                    <div className="smart-filter-more">
+                      <FilterSelect
+                        label="来源用户"
+                        compact
+                        value={marketSourceContactFilter}
+                        options={marketSourceContactOptions}
+                        onChange={(value) => {
+                          setMarketSourceContactFilter(value);
+                          setMarketPage(1);
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               </FilterPanel>
@@ -1980,7 +1984,7 @@ function FilterPanel({
         </div>
       </div>
       <div className="mt-2 block truncate px-2 text-xs font-medium text-neutral-500 sm:hidden">{resultText}</div>
-      <div className={`${isOpen ? "block" : "hidden"} filter-panel-body mt-3 md:block`}>
+      <div className="filter-panel-body mt-3">
         {children}
       </div>
     </div>
