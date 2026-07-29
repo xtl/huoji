@@ -111,7 +111,7 @@ interface SmsChallenge {
 }
 
 interface SmsDeliveryResult {
-  provider: "mock" | "tencentcloud";
+  provider: "mock" | "tencentcloud" | "aliyun";
   isMock: boolean;
   requestId?: string;
 }
@@ -836,11 +836,104 @@ async function deliverSmsCode(phone: string, code: string, provider = String(pro
   if (provider === "mock") {
     return { provider: "mock", isMock: true };
   }
+  if (provider === "aliyun") {
+    const requestId = await sendAliyunSms(phone, code);
+    return { provider: "aliyun", isMock: false, requestId };
+  }
   if (provider === "tencentcloud") {
     const requestId = await sendTencentCloudSms(phone, code);
     return { provider: "tencentcloud", isMock: false, requestId };
   }
   throw new Error(`不支持的短信服务商：${provider}`);
+}
+
+async function sendAliyunSms(phone: string, code: string): Promise<string | undefined> {
+  const accessKeyId = requiredAnyEnv(["ALIYUN_SMS_ACCESS_KEY_ID", "ALIYUN_ACCESS_KEY_ID"]);
+  const accessKeySecret = requiredAnyEnv(["ALIYUN_SMS_ACCESS_KEY_SECRET", "ALIYUN_ACCESS_KEY_SECRET"]);
+  const signName = requiredEnv("ALIYUN_SMS_SIGN_NAME");
+  const templateCode = requiredEnv("ALIYUN_SMS_TEMPLATE_CODE");
+  const endpoint = process.env.ALIYUN_SMS_ENDPOINT || "dysmsapi.aliyuncs.com";
+  const action = "SendSms";
+  const version = "2017-05-25";
+  const date = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const nonce = randomUUID().replace(/-/g, "");
+  const bodyHash = sha256Hex("");
+  const query = buildCanonicalQuery({
+    PhoneNumbers: phone,
+    SignName: signName,
+    TemplateCode: templateCode,
+    TemplateParam: JSON.stringify(buildAliyunSmsTemplateParam(code)),
+    OutId: `login_${Date.now()}`,
+  });
+  const signedHeaders = "host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version";
+  const headersForSign: Record<string, string> = {
+    host: endpoint,
+    "x-acs-action": action,
+    "x-acs-content-sha256": bodyHash,
+    "x-acs-date": date,
+    "x-acs-signature-nonce": nonce,
+    "x-acs-version": version,
+  };
+  const authorization = createAliyunOpenApiAuthorization({
+    accessKeyId,
+    accessKeySecret,
+    method: "POST",
+    pathName: "/",
+    query,
+    bodyHash,
+    signedHeaders,
+    headers: headersForSign,
+  });
+
+  const response = await fetch(`https://${endpoint}/?${query}`, {
+    method: "POST",
+    headers: {
+      Authorization: authorization,
+      "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+      Host: endpoint,
+      "x-acs-action": action,
+      "x-acs-content-sha256": bodyHash,
+      "x-acs-date": date,
+      "x-acs-signature-nonce": nonce,
+      "x-acs-version": version,
+    },
+  });
+  const text = await response.text();
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`阿里云短信返回非 JSON 响应：${text.slice(0, 180)}`);
+  }
+
+  const payload = isRecord(data) ? data : {};
+  const responseCode = asText(payload.Code);
+  const message = asText(payload.Message);
+  if (!response.ok || responseCode !== "OK") {
+    throw new Error(`阿里云短信发送失败：${responseCode || response.status} ${message || response.statusText}`);
+  }
+
+  return asText(payload.RequestId) || undefined;
+}
+
+function buildAliyunSmsTemplateParam(code: string): Record<string, string> {
+  const ttlMinutes = String(Math.ceil(SMS_TTL_MS / 60_000));
+  const keys = (process.env.ALIYUN_SMS_TEMPLATE_PARAMS || "code")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const templateParam: Record<string, string> = {};
+  for (const key of keys) {
+    const normalized = key.toLowerCase();
+    if (normalized === "code") {
+      templateParam[key] = code;
+    } else if (normalized === "ttl" || normalized === "minutes") {
+      templateParam[key] = ttlMinutes;
+    } else {
+      templateParam[key] = key.replace(/\{code\}/g, code).replace(/\{ttl\}/g, ttlMinutes);
+    }
+  }
+  return templateParam;
 }
 
 async function sendTencentCloudSms(phone: string, code: string): Promise<string | undefined> {
@@ -928,6 +1021,18 @@ function buildTencentSmsTemplateParams(code: string): string[] {
     if (item === "ttl" || item === "minutes") return ttlMinutes;
     return item.replace(/\{code\}/g, code).replace(/\{ttl\}/g, ttlMinutes);
   });
+}
+
+function buildCanonicalQuery(params: Record<string, string>): string {
+  return Object.entries(params)
+    .filter(([, value]) => value !== "")
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${encodeAliyunQueryValue(key)}=${encodeAliyunQueryValue(value)}`)
+    .join("&");
+}
+
+function encodeAliyunQueryValue(value: string): string {
+  return encodeURIComponent(value).replace(/\+/g, "%20").replace(/\*/g, "%2A").replace(/%7E/g, "~");
 }
 
 function createTencentCloudAuthorization(input: {
