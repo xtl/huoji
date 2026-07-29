@@ -775,7 +775,7 @@ export default function App() {
           {notice && <InlineNotice tone={notice.tone} text={notice.text} onDismiss={() => setNotice(null)} />}
 
           {activeTab === "stock" && (
-            <div className={`grid gap-4 ${inspectorCollapsed ? "" : "lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
+            <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
               <div className="min-w-0 space-y-3">
                 {listSearchBox}
                 <FilterPanel
@@ -864,18 +864,18 @@ export default function App() {
                   />
                 )}
               </div>
-              {!inspectorCollapsed && (
+              <div className={`inspector-slot hidden lg:block ${inspectorCollapsed ? "is-collapsed" : ""}`} aria-hidden={inspectorCollapsed}>
                 <TradeDetailDrawer
                   kind="stock"
                   item={selectedStock}
                 />
-              )}
+              </div>
             </div>
           )}
 
           {activeTab === "input" && (
             <div className="space-y-3 md:space-y-4">
-              <div className={`grid gap-4 ${inspectorCollapsed ? "" : "lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]"}`}>
+              <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]"}`}>
                 <Panel title="智能货记" icon={<Bot />}>
                   <div className="smart-chat-history space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
                     {chatMessages.map((message) => (
@@ -918,7 +918,7 @@ export default function App() {
                   </div>
                 </Panel>
 
-                {!inspectorCollapsed && (
+                <div className={`inspector-slot hidden lg:block ${inspectorCollapsed ? "is-collapsed" : ""}`} aria-hidden={inspectorCollapsed}>
                 <aside className="right-inspector sticky top-[96px] grid h-fit gap-3">
                   <SmartStatusBar
                     supplyCount={stocks.length}
@@ -985,13 +985,13 @@ export default function App() {
                     )}
                   </Panel>
                 </aside>
-                )}
+                </div>
               </div>
             </div>
           )}
 
           {activeTab === "market" && (
-            <div className={`grid gap-4 ${inspectorCollapsed ? "" : "lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
+            <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
               <div className="min-w-0 space-y-3">
                 {listSearchBox}
                 <FilterPanel
@@ -1051,12 +1051,12 @@ export default function App() {
                   />
                 )}
               </div>
-              {!inspectorCollapsed && (
+              <div className={`inspector-slot hidden lg:block ${inspectorCollapsed ? "is-collapsed" : ""}`} aria-hidden={inspectorCollapsed}>
                 <TradeDetailDrawer
                   kind="market"
                   item={selectedMarket}
                 />
-              )}
+              </div>
             </div>
           )}
           </section>

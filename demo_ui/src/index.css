@@ -107,6 +107,28 @@ button:disabled {
     overflow: auto;
   }
 
+  .inspector-layout {
+    transition:
+      grid-template-columns 180ms ease,
+      gap 180ms ease;
+  }
+
+  .inspector-slot {
+    min-width: 0;
+    overflow: hidden;
+    opacity: 1;
+    transform: translateX(0);
+    transition:
+      opacity 180ms ease,
+      transform 180ms ease;
+  }
+
+  .inspector-slot.is-collapsed {
+    pointer-events: none;
+    opacity: 0;
+    transform: translateX(0.75rem);
+  }
+
   .right-inspector > .surface-card,
   .right-inspector > .smart-status {
     flex-shrink: 0;
