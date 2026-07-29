@@ -810,7 +810,7 @@ export default function App() {
 
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
                 <Panel title="智能货记" icon={<Bot />}>
-                  <div className="max-h-40 space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
+                  <div className="smart-chat-history space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
                     {chatMessages.map((message) => (
                       <ChatBubble key={message.id} message={message} />
                     ))}
@@ -826,7 +826,7 @@ export default function App() {
                     <textarea
                       value={aiText}
                       onChange={(event) => setAiText(event.target.value)}
-                      className="smart-input field-surface min-h-52 w-full resize-y rounded-md p-4 text-neutral-900 outline-none placeholder:text-neutral-400"
+                      className="smart-input field-surface min-h-32 w-full resize-y rounded-md p-4 text-neutral-900 outline-none placeholder:text-neutral-400 md:min-h-36"
                       placeholder="粘贴微信群聊天记录，或直接输入一条供需信息。"
                     />
                     {aiParseMessage && (
