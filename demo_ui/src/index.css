@@ -410,6 +410,14 @@ button:disabled {
   }
 
   @media (max-width: 767px) {
+    .page-title {
+      font-size: 22px;
+    }
+
+    .section-title {
+      font-size: 15px;
+    }
+
     .smart-status {
       align-items: stretch;
       flex-direction: column;
@@ -424,8 +432,35 @@ button:disabled {
     }
 
     .smart-chat-history {
-      min-height: 220px;
-      max-height: 260px;
+      min-height: 172px;
+      max-height: 210px;
+      padding: 0.625rem;
+    }
+
+    .smart-chip-row {
+      flex-wrap: nowrap;
+      margin-inline: -0.125rem;
+      overflow-x: auto;
+      padding: 0.125rem 0.125rem 0.25rem;
+      scrollbar-width: none;
+    }
+
+    .smart-chip-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .smart-chip {
+      flex: 0 0 auto;
+      padding: 0.3rem 0.45rem;
+    }
+
+    .smart-input {
+      min-height: 108px;
+      padding: 0.75rem;
+    }
+
+    .mobile-tabbar {
+      bottom: max(0.75rem, env(safe-area-inset-bottom));
     }
   }
 }

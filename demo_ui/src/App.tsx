@@ -683,7 +683,7 @@ export default function App() {
           </div>
         </aside>
 
-        <main className="min-w-0 pb-24 md:pb-8">
+        <main className="min-w-0 pb-32 md:pb-8">
           <header className="topbar-surface sticky top-0 z-30">
             <div className="flex items-center justify-between gap-3 px-4 py-3.5 md:px-8">
               <div className="min-w-0">
@@ -800,13 +800,15 @@ export default function App() {
           )}
 
           {activeTab === "input" && (
-            <div className="space-y-4">
+            <div className="space-y-3 md:space-y-4">
+              <div className="hidden md:block">
               <SmartStatusBar
                 supplyCount={stocks.length}
                 demandCount={demandCount}
                 draftCount={draftItems.length}
                 incompleteCount={draftSummary.incomplete}
               />
+              </div>
 
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
                 <Panel title="智能货记" icon={<Bot />}>
@@ -1491,7 +1493,7 @@ function WorkspaceSwitcher({ currentWorkspace }: { currentWorkspace: WorkspaceSu
 
 function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="surface-card rounded-md p-4">
+    <section className="surface-card rounded-md p-3 md:p-4">
       <div className="mb-3 flex items-center gap-2 text-neutral-800">
         {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4 text-neutral-500" })}
         <h2 className="section-title text-[15px]">{title}</h2>
