@@ -743,7 +743,7 @@ export default function App() {
             </div>
           </header>
 
-          <section className="mx-auto max-w-6xl space-y-5 px-4 py-5 md:px-8 md:py-7">
+          <section className="mx-auto max-w-none space-y-5 px-4 py-5 md:px-8 md:py-7">
 
           {notice && <InlineNotice tone={notice.tone} text={notice.text} onDismiss={() => setNotice(null)} />}
 
@@ -849,7 +849,7 @@ export default function App() {
                 />
               </div>
 
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
                 <Panel title="智能货记" icon={<Bot />}>
                   <div className="smart-chat-history space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
                     {chatMessages.map((message) => (
@@ -955,7 +955,7 @@ export default function App() {
           )}
 
           {activeTab === "stock" && (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]">
               <div className="min-w-0 space-y-3">
                 <StockDataTable
                   items={pagedStocks}
@@ -1023,7 +1023,7 @@ export default function App() {
                   </div>
                 </div>
               </FilterPanel>
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]">
                 <div className="min-w-0 space-y-3">
                   <MarketDataTable
                     items={pagedMarket}
@@ -1467,7 +1467,7 @@ function TradeDetailDrawer({
 }) {
   if (!item) {
     return (
-      <aside className="right-inspector surface-card sticky top-[96px] hidden h-fit rounded-md p-4 xl:block">
+      <aside className="right-inspector surface-card sticky top-[96px] hidden h-fit rounded-md p-4 lg:block">
         <p className="text-sm font-semibold text-neutral-700">未选择记录</p>
         <p className="caption-text mt-1">点击左侧表格中的任意一行，这里会显示完整配置、来源和联系方式。</p>
       </aside>
@@ -1486,7 +1486,7 @@ function TradeDetailDrawer({
   const price = item.priceAmount ? formatMoney(item.priceAmount) : "待确认";
 
   return (
-    <aside className="right-inspector surface-card sticky top-[96px] hidden h-fit rounded-md p-4 xl:block">
+    <aside className="right-inspector surface-card sticky top-[96px] hidden h-fit rounded-md p-4 lg:block">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Badge tone={isStock ? "green" : "orange"}>{isStock ? "供应" : "需求"}</Badge>
         <Badge tone="blue">{category}</Badge>
