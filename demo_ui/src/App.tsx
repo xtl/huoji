@@ -10,6 +10,8 @@ import {
   Database,
   LogOut,
   MessageCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
   Phone,
   Plus,
   RotateCcw,
@@ -336,6 +338,7 @@ export default function App() {
   const [marketSourceContactFilter, setMarketSourceContactFilter] = useState("ALL");
   const [stockFiltersOpen, setStockFiltersOpen] = useState(false);
   const [marketFiltersOpen, setMarketFiltersOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [stockPage, setStockPage] = useState(1);
   const [marketPage, setMarketPage] = useState(1);
   const [selectedStockId, setSelectedStockId] = useState("");
@@ -656,31 +659,60 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <div className="mx-auto grid min-h-screen max-w-[1440px] md:grid-cols-[248px_1fr]">
-        <aside className="sidebar-surface hidden px-3 py-4 md:block">
-          <div className="mb-5 flex items-center gap-2 px-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-950 text-white shadow-sm">
-              <Database className="h-4 w-4" />
+      <div className={`app-workbench mx-auto grid min-h-screen max-w-[1440px] ${sidebarCollapsed ? "md:grid-cols-[72px_1fr]" : "md:grid-cols-[248px_1fr]"}`}>
+        <aside className={`sidebar-surface hidden py-4 md:block ${sidebarCollapsed ? "px-2" : "px-3"}`}>
+          <div className={`mb-5 flex items-center gap-2 px-2 ${sidebarCollapsed ? "justify-center" : "justify-between"}`}>
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-neutral-950 text-white shadow-sm">
+                <Database className="h-4 w-4" />
+              </div>
+              {!sidebarCollapsed && (
+                <div className="min-w-0">
+                  <h1 className="truncate text-[15px] font-semibold leading-tight text-neutral-950">货记</h1>
+                  <p className="caption-text truncate">供需情报工作台</p>
+                </div>
+              )}
             </div>
-            <div className="min-w-0">
-              <h1 className="truncate text-[15px] font-semibold leading-tight text-neutral-950">货记</h1>
-              <p className="caption-text truncate">供需情报工作台</p>
-            </div>
+            {!sidebarCollapsed && (
+              <button
+                type="button"
+                title="收起左侧栏"
+                aria-label="收起左侧栏"
+                onClick={() => setSidebarCollapsed(true)}
+                className="sidebar-toggle ghost-button flex h-8 w-8 items-center justify-center rounded-md"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </button>
+            )}
           </div>
 
-          <WorkspaceSwitcher currentWorkspace={currentWorkspace} />
+          {sidebarCollapsed ? (
+            <button
+              type="button"
+              title="展开左侧栏"
+              aria-label="展开左侧栏"
+              onClick={() => setSidebarCollapsed(false)}
+              className="sidebar-toggle ghost-button mx-auto mb-4 flex h-9 w-9 items-center justify-center rounded-md"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+            </button>
+          ) : (
+            <WorkspaceSwitcher currentWorkspace={currentWorkspace} />
+          )}
 
           <nav className="space-y-1">
-            <NavButton active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
-            <NavButton active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
-            <NavButton active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
+            <NavButton compact={sidebarCollapsed} active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
+            <NavButton compact={sidebarCollapsed} active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
+            <NavButton compact={sidebarCollapsed} active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
           </nav>
 
+          {!sidebarCollapsed && (
           <div className="mt-6 space-y-2 border-t border-neutral-200/80 pt-4">
             <SideMetric label="我的供应" value={`${stocks.length}`} />
             <SideMetric label="已核实" value={`${verifiedStockCount}`} />
             <SideMetric label="需求" value={`${demandCount}`} />
           </div>
+          )}
         </aside>
 
         <main className="min-w-0 pb-32 md:pb-8">
@@ -809,12 +841,12 @@ export default function App() {
           {activeTab === "input" && (
             <div className="space-y-3 md:space-y-4">
               <div className="hidden md:block">
-              <SmartStatusBar
-                supplyCount={stocks.length}
-                demandCount={demandCount}
-                draftCount={draftItems.length}
-                incompleteCount={draftSummary.incomplete}
-              />
+                <SmartStatusBar
+                  supplyCount={stocks.length}
+                  demandCount={demandCount}
+                  draftCount={draftItems.length}
+                  incompleteCount={draftSummary.incomplete}
+                />
               </div>
 
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -1435,7 +1467,7 @@ function TradeDetailDrawer({
 }) {
   if (!item) {
     return (
-      <aside className="surface-card sticky top-[96px] hidden h-fit rounded-md p-4 xl:block">
+      <aside className="right-inspector surface-card sticky top-[96px] hidden h-fit rounded-md p-4 xl:block">
         <p className="text-sm font-semibold text-neutral-700">未选择记录</p>
         <p className="caption-text mt-1">点击左侧表格中的任意一行，这里会显示完整配置、来源和联系方式。</p>
       </aside>
@@ -1454,7 +1486,7 @@ function TradeDetailDrawer({
   const price = item.priceAmount ? formatMoney(item.priceAmount) : "待确认";
 
   return (
-    <aside className="surface-card sticky top-[96px] h-fit rounded-md p-4">
+    <aside className="right-inspector surface-card sticky top-[96px] hidden h-fit rounded-md p-4 xl:block">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Badge tone={isStock ? "green" : "orange"}>{isStock ? "供应" : "需求"}</Badge>
         <Badge tone="blue">{category}</Badge>
@@ -1601,17 +1633,31 @@ function SmartResultSummary({
   );
 }
 
-function NavButton({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) {
+function NavButton({
+  active,
+  icon,
+  label,
+  onClick,
+  compact = false,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  compact?: boolean;
+}) {
   return (
     <button
       type="button"
+      title={label}
+      aria-label={label}
       onClick={onClick}
-      className={`mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm font-medium transition ${
+      className={`mb-1 flex w-full items-center rounded-md text-sm font-medium transition ${
         active ? "bg-neutral-950 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-950/5 hover:text-neutral-950"
-      }`}
+      } ${compact ? "h-10 justify-center px-0" : "gap-2 px-2.5 py-2"}`}
     >
       {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: `h-4 w-4 ${active ? "text-white" : "text-neutral-500"}` })}
-      {label}
+      {!compact && label}
     </button>
   );
 }

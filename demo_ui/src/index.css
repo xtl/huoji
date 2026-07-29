@@ -84,11 +84,27 @@ button:disabled {
     color: #171717;
   }
 
+  .app-workbench {
+    transition: grid-template-columns 180ms ease;
+  }
+
   .sidebar-surface {
     border-right: 1px solid rgba(37, 35, 31, 0.08);
     background: rgba(255, 255, 255, 0.62);
     box-shadow: inset -1px 0 rgba(255, 255, 255, 0.7);
     backdrop-filter: blur(18px);
+    transition:
+      padding 180ms ease,
+      width 180ms ease;
+  }
+
+  .sidebar-toggle {
+    color: #7a756e;
+  }
+
+  .right-inspector {
+    max-height: calc(100vh - 7.5rem);
+    overflow: auto;
   }
 
   .topbar-surface {
