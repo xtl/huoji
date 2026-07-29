@@ -16,6 +16,7 @@ import {
   Search,
   SendHorizontal,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   UserRound,
@@ -333,6 +334,8 @@ export default function App() {
   const [stockModeFilter, setStockModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [stockPriceFilter, setStockPriceFilter] = useState<PriceFilter>("ALL");
   const [marketSourceContactFilter, setMarketSourceContactFilter] = useState("ALL");
+  const [stockFiltersOpen, setStockFiltersOpen] = useState(false);
+  const [marketFiltersOpen, setMarketFiltersOpen] = useState(false);
   const [stockPage, setStockPage] = useState(1);
   const [marketPage, setMarketPage] = useState(1);
   const [selectedStockId, setSelectedStockId] = useState("");
@@ -450,6 +453,19 @@ export default function App() {
         ? `${filteredStocks.length} 条供应`
         : `${filteredMarket.length} 条需求`;
   const aiLineCount = aiText.trim() ? aiText.trim().split(/\r?\n/).filter(Boolean).length : 0;
+  const activeStockFilterCount = [
+    stockCategoryFilter !== "ALL",
+    stockCityFilter !== "ALL",
+    stockSourceFilter !== "ALL",
+    stockSourceContactFilter !== "ALL",
+    stockModeFilter !== "ALL",
+    stockPriceFilter !== "ALL",
+  ].filter(Boolean).length;
+  const activeMarketFilterCount = [
+    marketCategoryFilter !== "ALL",
+    marketModeFilter !== "ALL",
+    marketSourceContactFilter !== "ALL",
+  ].filter(Boolean).length;
   const draftSummary = draftItems.reduce(
     (summary, item) => ({
       goods: summary.goods + (item.postType === "GOODS" ? 1 : 0),
@@ -716,8 +732,15 @@ export default function App() {
           )}
 
           {activeTab === "stock" && (
-            <div className="surface-card rounded-md p-3">
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
+            <FilterPanel
+              title="筛选供应"
+              activeCount={activeStockFilterCount}
+              resultText={`已显示 ${filteredStocks.length} 条，按录入时间最新在前`}
+              isOpen={stockFiltersOpen}
+              onToggle={() => setStockFiltersOpen((open) => !open)}
+              onReset={resetStockFilters}
+            >
+              <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
                 <FilterSelect
                   label="品类"
                   value={stockCategoryFilter}
@@ -773,18 +796,7 @@ export default function App() {
                   }}
                 />
               </div>
-              <div className="mt-3 flex flex-col gap-2 text-xs font-medium text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
-                <span>已显示 {filteredStocks.length} 条，按录入时间最新在前，来源用户优先保留</span>
-                <button
-                  type="button"
-                  onClick={resetStockFilters}
-                  className="ghost-button inline-flex items-center gap-1 self-start rounded-md px-2 py-1 font-medium sm:self-auto"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  清空筛选
-                </button>
-              </div>
-            </div>
+            </FilterPanel>
           )}
 
           {activeTab === "input" && (
@@ -916,8 +928,15 @@ export default function App() {
 
           {activeTab === "market" && (
             <div className="space-y-3">
-              <div className="surface-card rounded-md p-3">
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              <FilterPanel
+                title="筛选需求"
+                activeCount={activeMarketFilterCount}
+                resultText={`已显示 ${filteredMarket.length} 条需求，按创建时间最新在前`}
+                isOpen={marketFiltersOpen}
+                onToggle={() => setMarketFiltersOpen((open) => !open)}
+                onReset={resetMarketFilters}
+              >
+                <div className="grid gap-2 md:grid-cols-3">
                   <FilterSelect
                     label="品类"
                     value={marketCategoryFilter}
@@ -946,18 +965,7 @@ export default function App() {
                     }}
                   />
                 </div>
-                <div className="mt-3 flex flex-col gap-2 text-xs font-medium text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
-                  <span>已显示 {filteredMarket.length} 条需求，按创建时间最新在前，来源用户优先保留</span>
-                  <button
-                    type="button"
-                    onClick={resetMarketFilters}
-                    className="ghost-button inline-flex items-center gap-1 self-start rounded-md px-2 py-1 font-medium sm:self-auto"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    清空筛选
-                  </button>
-                </div>
-              </div>
+              </FilterPanel>
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
                 <div className="min-w-0 space-y-3">
                   <MarketDataTable
@@ -1780,6 +1788,59 @@ function FilterSelect({
         ))}
       </select>
     </label>
+  );
+}
+
+function FilterPanel({
+  title,
+  activeCount,
+  resultText,
+  isOpen,
+  onToggle,
+  onReset,
+  children,
+}: {
+  title: string;
+  activeCount: number;
+  resultText: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  onReset: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="filter-panel surface-card rounded-md p-2.5 sm:p-3">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="ghost-button inline-flex min-h-9 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-neutral-800"
+          aria-expanded={isOpen}
+        >
+          <SlidersHorizontal className="h-4 w-4 text-neutral-500" />
+          <span>{title}</span>
+          {activeCount > 0 && (
+            <span className="rounded-md bg-neutral-900 px-1.5 py-0.5 text-[11px] font-semibold text-white">{activeCount}</span>
+          )}
+        </button>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="hidden truncate text-xs font-medium text-neutral-500 sm:block">{resultText}</span>
+          <button
+            type="button"
+            onClick={onReset}
+            disabled={activeCount === 0}
+            className="ghost-button inline-flex h-9 items-center gap-1 rounded-md px-2 text-xs font-medium disabled:opacity-40"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">清空</span>
+          </button>
+        </div>
+      </div>
+      <div className="mt-2 block truncate px-2 text-xs font-medium text-neutral-500 sm:hidden">{resultText}</div>
+      <div className={`${isOpen ? "block" : "hidden"} filter-panel-body mt-3 md:block`}>
+        {children}
+      </div>
+    </div>
   );
 }
 
