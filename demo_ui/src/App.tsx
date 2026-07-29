@@ -12,6 +12,8 @@ import {
   MessageCircle,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Phone,
   Plus,
   RotateCcw,
@@ -339,6 +341,7 @@ export default function App() {
   const [stockFiltersOpen, setStockFiltersOpen] = useState(false);
   const [marketFiltersOpen, setMarketFiltersOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [stockPage, setStockPage] = useState(1);
   const [marketPage, setMarketPage] = useState(1);
   const [selectedStockId, setSelectedStockId] = useState("");
@@ -726,6 +729,15 @@ export default function App() {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  title={inspectorCollapsed ? "打开右侧栏" : "收起右侧栏"}
+                  aria-label={inspectorCollapsed ? "打开右侧栏" : "收起右侧栏"}
+                  onClick={() => setInspectorCollapsed((collapsed) => !collapsed)}
+                  className="surface-card-quiet ghost-button hidden h-9 w-9 items-center justify-center rounded-md lg:flex"
+                >
+                  {inspectorCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
+                </button>
                 <div className="surface-card-quiet caption-text hidden items-center gap-2 rounded-md px-3 py-1.5 sm:flex">
                   <UserRound className="h-3.5 w-3.5 text-neutral-500" />
                   {authSession.user.maskedPhone}
@@ -840,7 +852,7 @@ export default function App() {
 
           {activeTab === "input" && (
             <div className="space-y-3 md:space-y-4">
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
+              <div className={`grid gap-4 ${inspectorCollapsed ? "" : "lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]"}`}>
                 <Panel title="智能货记" icon={<Bot />}>
                   <div className="smart-chat-history space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
                     {chatMessages.map((message) => (
@@ -883,6 +895,7 @@ export default function App() {
                   </div>
                 </Panel>
 
+                {!inspectorCollapsed && (
                 <aside className="right-inspector sticky top-[96px] grid h-fit gap-3">
                   <SmartStatusBar
                     supplyCount={stocks.length}
@@ -949,12 +962,13 @@ export default function App() {
                     )}
                   </Panel>
                 </aside>
+                )}
               </div>
             </div>
           )}
 
           {activeTab === "stock" && (
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]">
+            <div className={`grid gap-4 ${inspectorCollapsed ? "" : "lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
               <div className="min-w-0 space-y-3">
                 <StockDataTable
                   items={pagedStocks}
@@ -970,10 +984,12 @@ export default function App() {
                 />
               )}
               </div>
-              <TradeDetailDrawer
-                kind="stock"
-                item={selectedStock}
-              />
+              {!inspectorCollapsed && (
+                <TradeDetailDrawer
+                  kind="stock"
+                  item={selectedStock}
+                />
+              )}
             </div>
           )}
 
@@ -1022,7 +1038,7 @@ export default function App() {
                   </div>
                 </div>
               </FilterPanel>
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]">
+              <div className={`grid gap-4 ${inspectorCollapsed ? "" : "lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
                 <div className="min-w-0 space-y-3">
                   <MarketDataTable
                     items={pagedMarket}
@@ -1038,10 +1054,12 @@ export default function App() {
                 />
               )}
                 </div>
-                <TradeDetailDrawer
-                  kind="market"
-                  item={selectedMarket}
-                />
+                {!inspectorCollapsed && (
+                  <TradeDetailDrawer
+                    kind="market"
+                    item={selectedMarket}
+                  />
+                )}
               </div>
             </div>
           )}
