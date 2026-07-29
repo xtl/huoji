@@ -840,15 +840,6 @@ export default function App() {
 
           {activeTab === "input" && (
             <div className="space-y-3 md:space-y-4">
-              <div className="hidden md:block">
-                <SmartStatusBar
-                  supplyCount={stocks.length}
-                  demandCount={demandCount}
-                  draftCount={draftItems.length}
-                  incompleteCount={draftSummary.incomplete}
-                />
-              </div>
-
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
                 <Panel title="智能货记" icon={<Bot />}>
                   <div className="smart-chat-history space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
@@ -892,64 +883,72 @@ export default function App() {
                   </div>
                 </Panel>
 
-                <Panel title="AI 解析结果" icon={<ClipboardCheck />}>
-                  <div className="mb-3 flex flex-col gap-3 border-b border-neutral-100 pb-3">
-                    <SmartResultSummary
-                      goods={draftSummary.goods}
-                      demands={draftSummary.demands}
-                      incomplete={draftSummary.incomplete}
-                      total={draftItems.length}
-                    />
-                    {draftItems.length > 0 && (
-                      <div className="grid grid-cols-[1fr_auto] gap-2">
-                        <button
-                          type="button"
-                          onClick={() => confirmDrafts()}
-                          disabled={!saveableDraftCount}
-                          className="primary-button inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium disabled:cursor-not-allowed"
-                        >
-                          <Check className="h-4 w-4" />
-                          一键入库
-                        </button>
-                        <button
-                          type="button"
-                          onClick={clearDraftItems}
-                          className="ghost-button inline-flex items-center justify-center gap-1 rounded-md px-2 py-2 text-xs font-medium"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          清空
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {!draftItems.length ? (
-                    <AssistantEmptyState />
-                  ) : (
-                    <div className="space-y-4">
-                      <p className="meta-pill rounded-md px-3 py-2">
-                        可以直接保存；缺字段会以“待确认 / 未知来源”保留，后续再补也不会丢。当前显示第 {draftCurrentPage} 页。
-                      </p>
-                      {pagedDrafts.map((draft, index) => (
-                        <DraftReviewItem
-                          key={draft.id}
-                          draft={draft}
-                          index={(draftCurrentPage - 1) * LIST_PAGE_SIZE + index}
-                          onChange={(patch) => updateDraftItem(draft.id, patch)}
-                          onRemove={() => removeDraftItem(draft.id)}
-                          onConfirm={() => confirmDrafts([draft.id])}
-                        />
-                      ))}
-                      {draftItems.length > LIST_PAGE_SIZE && (
-                        <Pagination
-                          total={draftItems.length}
-                          page={draftCurrentPage}
-                          onPageChange={setDraftPage}
-                        />
+                <aside className="right-inspector sticky top-[96px] grid h-fit gap-3">
+                  <SmartStatusBar
+                    supplyCount={stocks.length}
+                    demandCount={demandCount}
+                    draftCount={draftItems.length}
+                    incompleteCount={draftSummary.incomplete}
+                  />
+                  <Panel title="AI 解析结果" icon={<ClipboardCheck />}>
+                    <div className="mb-3 flex flex-col gap-3 border-b border-neutral-100 pb-3">
+                      <SmartResultSummary
+                        goods={draftSummary.goods}
+                        demands={draftSummary.demands}
+                        incomplete={draftSummary.incomplete}
+                        total={draftItems.length}
+                      />
+                      {draftItems.length > 0 && (
+                        <div className="grid grid-cols-[1fr_auto] gap-2">
+                          <button
+                            type="button"
+                            onClick={() => confirmDrafts()}
+                            disabled={!saveableDraftCount}
+                            className="primary-button inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium disabled:cursor-not-allowed"
+                          >
+                            <Check className="h-4 w-4" />
+                            一键入库
+                          </button>
+                          <button
+                            type="button"
+                            onClick={clearDraftItems}
+                            className="ghost-button inline-flex items-center justify-center gap-1 rounded-md px-2 py-2 text-xs font-medium"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            清空
+                          </button>
+                        </div>
                       )}
                     </div>
-                  )}
-                </Panel>
+
+                    {!draftItems.length ? (
+                      <AssistantEmptyState />
+                    ) : (
+                      <div className="space-y-4">
+                        <p className="meta-pill rounded-md px-3 py-2">
+                          可以直接保存；缺字段会以“待确认 / 未知来源”保留，后续再补也不会丢。当前显示第 {draftCurrentPage} 页。
+                        </p>
+                        {pagedDrafts.map((draft, index) => (
+                          <DraftReviewItem
+                            key={draft.id}
+                            draft={draft}
+                            index={(draftCurrentPage - 1) * LIST_PAGE_SIZE + index}
+                            onChange={(patch) => updateDraftItem(draft.id, patch)}
+                            onRemove={() => removeDraftItem(draft.id)}
+                            onConfirm={() => confirmDrafts([draft.id])}
+                          />
+                        ))}
+                        {draftItems.length > LIST_PAGE_SIZE && (
+                          <Pagination
+                            total={draftItems.length}
+                            page={draftCurrentPage}
+                            onPageChange={setDraftPage}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </Panel>
+                </aside>
               </div>
             </div>
           )}

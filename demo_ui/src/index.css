@@ -107,6 +107,11 @@ button:disabled {
     overflow: auto;
   }
 
+  .right-inspector > .surface-card,
+  .right-inspector > .smart-status {
+    flex-shrink: 0;
+  }
+
   .topbar-surface {
     border-bottom: 1px solid rgba(37, 35, 31, 0.08);
     background: rgba(250, 249, 246, 0.82);
