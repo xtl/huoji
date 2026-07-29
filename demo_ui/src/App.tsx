@@ -919,7 +919,7 @@ export default function App() {
                 </Panel>
 
                 <div className={`inspector-slot hidden lg:block ${inspectorCollapsed ? "is-collapsed" : ""}`} aria-hidden={inspectorCollapsed}>
-                <aside className="right-inspector sticky top-[96px] grid h-fit gap-3">
+                <aside className="right-inspector grid h-fit gap-3">
                   <SmartStatusBar
                     supplyCount={stocks.length}
                     demandCount={demandCount}
@@ -1480,7 +1480,7 @@ function TradeDetailDrawer({
 }) {
   if (!item) {
     return (
-      <aside className="right-inspector surface-card sticky top-[96px] hidden h-fit rounded-md p-4 lg:block">
+      <aside className="right-inspector surface-card hidden h-fit rounded-md p-4 lg:block">
         <p className="text-sm font-semibold text-neutral-700">未选择记录</p>
         <p className="caption-text mt-1">点击左侧表格中的任意一行，这里会显示完整配置、来源和联系方式。</p>
       </aside>
@@ -1499,7 +1499,7 @@ function TradeDetailDrawer({
   const price = item.priceAmount ? formatMoney(item.priceAmount) : "待确认";
 
   return (
-    <aside className="right-inspector surface-card sticky top-[96px] hidden h-fit rounded-md p-4 lg:block">
+    <aside className="right-inspector surface-card hidden h-fit rounded-md p-4 lg:block">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Badge tone={isStock ? "green" : "orange"}>{isStock ? "供应" : "需求"}</Badge>
         <Badge tone="blue">{category}</Badge>
