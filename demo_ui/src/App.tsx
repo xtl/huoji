@@ -635,16 +635,16 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#fbfbfa] text-neutral-950">
+    <div className="app-shell">
       <div className="mx-auto grid min-h-screen max-w-[1440px] md:grid-cols-[248px_1fr]">
-        <aside className="hidden border-r border-neutral-200/80 bg-[#f7f7f5] px-3 py-4 md:block">
+        <aside className="sidebar-surface hidden px-3 py-4 md:block">
           <div className="mb-5 flex items-center gap-2 px-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-neutral-900 text-white shadow-sm">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-950 text-white shadow-sm">
               <Database className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <h1 className="truncate text-sm font-semibold leading-tight">货记</h1>
-              <p className="truncate text-xs text-neutral-500">AI 硬件供需台账</p>
+              <h1 className="truncate text-[15px] font-semibold leading-tight">货记</h1>
+              <p className="truncate text-xs text-neutral-500">供需情报工作台</p>
             </div>
           </div>
 
@@ -664,17 +664,17 @@ export default function App() {
         </aside>
 
         <main className="min-w-0 pb-24 md:pb-8">
-          <header className="sticky top-0 z-30 border-b border-neutral-200/70 bg-[#fbfbfa]/90 backdrop-blur">
-            <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-8">
+          <header className="topbar-surface sticky top-0 z-30">
+            <div className="flex items-center justify-between gap-3 px-4 py-3.5 md:px-8">
               <div className="min-w-0">
                 <p className="mb-1 text-xs font-medium text-neutral-500">货记 / {workspaceTypeText(currentWorkspace.type)} / {activePage.crumb}</p>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="truncate text-xl font-semibold tracking-normal text-neutral-950 md:text-2xl">{activePage.title}</h2>
-                  <span className="rounded-[5px] bg-[#f1f1ef] px-2 py-0.5 text-xs font-medium text-neutral-500">{activeSummary}</span>
+                  <h2 className="truncate text-[26px] font-semibold leading-tight tracking-normal text-neutral-950 md:text-[30px]">{activePage.title}</h2>
+                  <span className="meta-pill rounded-md px-2 py-1 text-xs font-medium text-neutral-600">{activeSummary}</span>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <div className="hidden items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-sm sm:flex">
+                <div className="surface-card-quiet hidden items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium text-neutral-600 sm:flex">
                   <UserRound className="h-3.5 w-3.5 text-neutral-500" />
                   {authSession.user.maskedPhone}
                 </div>
@@ -683,7 +683,7 @@ export default function App() {
                   title="退出登录"
                   aria-label="退出登录"
                   onClick={handleLogout}
-                  className="flex h-9 w-9 items-center justify-center rounded-md bg-white text-neutral-500 shadow-[0_0_0_1px_rgba(15,15,15,0.08)] transition hover:bg-neutral-100 hover:text-neutral-900"
+                  className="surface-card-quiet ghost-button flex h-9 w-9 items-center justify-center rounded-md"
                 >
                   <LogOut className="h-4 w-4" />
                 </button>
@@ -691,12 +691,12 @@ export default function App() {
             </div>
           </header>
 
-          <section className="mx-auto max-w-6xl space-y-4 px-4 py-5 md:px-8 md:py-7">
+          <section className="mx-auto max-w-6xl space-y-5 px-4 py-5 md:px-8 md:py-7">
 
           {notice && <InlineNotice tone={notice.tone} text={notice.text} onDismiss={() => setNotice(null)} />}
 
           {activeTab !== "input" && (
-            <div className="group flex items-center gap-2 rounded-md border border-transparent bg-white px-3 py-2 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)] focus-within:shadow-[0_0_0_1px_rgba(15,15,15,0.22)]">
+            <div className="surface-card group flex items-center gap-2 rounded-md px-3 py-2.5">
               <Search className="h-4 w-4 text-neutral-400 transition group-focus-within:text-neutral-700" />
               <input
                 value={query}
@@ -712,7 +712,7 @@ export default function App() {
           )}
 
           {activeTab === "stock" && (
-            <div className="rounded-md bg-white p-3 shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
+            <div className="surface-card rounded-md p-3">
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
                 <FilterSelect
                   label="品类"
@@ -774,7 +774,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={resetStockFilters}
-                  className="inline-flex items-center gap-1 self-start rounded-md px-2 py-1 font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 sm:self-auto"
+                  className="ghost-button inline-flex items-center gap-1 self-start rounded-md px-2 py-1 font-medium sm:self-auto"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
                   清空筛选
@@ -786,7 +786,7 @@ export default function App() {
           {activeTab === "input" && (
             <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)]">
               <Panel title="AI 录入助手" icon={<Bot />}>
-                <div className="max-h-72 space-y-2 overflow-y-auto rounded-md bg-[#f7f7f5] p-3">
+                <div className="max-h-72 space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
                   {chatMessages.map((message) => (
                     <ChatBubble key={message.id} message={message} />
                   ))}
@@ -807,17 +807,17 @@ export default function App() {
                   <textarea
                     value={aiText}
                     onChange={(event) => setAiText(event.target.value)}
-                    className="min-h-36 w-full resize-y rounded-md border border-transparent bg-[#f7f7f5] p-3 text-sm leading-6 text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+                    className="field-surface min-h-44 w-full resize-y rounded-md p-3.5 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400"
                     placeholder="直接发一句，或粘贴整段微信群聊。AI 会自动识别供应/需求、现货/期货/租赁，以及服务器/显卡/内存/硬盘等品类。"
                   />
                   {aiParseMessage && (
-                    <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-600">{aiParseMessage}</p>
+                    <p className="meta-pill rounded-md px-3 py-2 text-xs font-medium text-neutral-600">{aiParseMessage}</p>
                   )}
                   <button
                     type="button"
                     onClick={parseAssistantInput}
                     disabled={isAiParsing}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+                    className="primary-button inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed"
                   >
                     <SendHorizontal className="h-4 w-4" />
                     {isAiParsing ? "解析中..." : "发送并生成待确认"}
@@ -838,7 +838,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={clearDraftItems}
-                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+                        className="ghost-button inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                         清空
@@ -847,7 +847,7 @@ export default function App() {
                         type="button"
                         onClick={() => confirmDrafts()}
                         disabled={!saveableDraftCount}
-                        className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+                        className="primary-button inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed"
                       >
                         <Check className="h-3.5 w-3.5" />
                         批量保存
@@ -860,7 +860,7 @@ export default function App() {
                   <AssistantEmptyState />
                 ) : (
                   <div className="space-y-4">
-                    <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-500">
+                    <p className="meta-pill rounded-md px-3 py-2 text-xs font-medium text-neutral-500">
                       可以直接保存；缺字段会以“待确认 / 未知来源”保留，后续再补也不会丢。当前显示第 {draftCurrentPage} 页。
                     </p>
                     {pagedDrafts.map((draft, index) => (
@@ -891,9 +891,11 @@ export default function App() {
               {pagedStocks.map((stock) => (
                 <article
                   key={stock.id}
-                  className="group rounded-md bg-white p-4 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:bg-[#fdfdfc] hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)]"
+                  className="interactive-card group overflow-hidden rounded-md"
                 >
-                  <div className="min-w-0">
+                  <div className="grid grid-cols-[4px_1fr]">
+                    <div className="bg-emerald-500/80" />
+                    <div className="min-w-0 p-4">
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="font-semibold text-neutral-950">{stock.title}</h2>
                       <Badge tone="blue">{productCategoryText(stock.productCategory)}</Badge>
@@ -901,13 +903,18 @@ export default function App() {
                       <Badge tone={tradeModeTone(stock.tradeMode)}>{tradeModeText(stock.tradeMode)}</Badge>
                       <Badge tone={statusTone(stock.status)}>{statusText(stock.status)}</Badge>
                     </div>
-                    <p className="mt-2 text-sm text-neutral-600">
-                      {stockSpecText(stock)} / {quantityText(stock.quantity, stock.quantityUnit)} / {stock.locationCity}
-                      {stock.priceAmount ? ` / ${formatMoney(stock.priceAmount)}` : ""}
-                    </p>
-                    <p className="mt-1 text-xs font-medium text-neutral-500">来源用户：{stock.sourceContact}</p>
-                    <p className="mt-1 text-xs font-medium text-neutral-400">录入时间：{formatHourTime(stock.createdAt)}</p>
+                    <div className="mt-3 grid gap-2 text-sm text-neutral-600 sm:grid-cols-2 xl:grid-cols-4">
+                      <InfoDatum label="规格" value={stockSpecText(stock)} />
+                      <InfoDatum label="数量" value={quantityText(stock.quantity, stock.quantityUnit)} />
+                      <InfoDatum label="城市" value={stock.locationCity || "待确认"} />
+                      <InfoDatum label="价格" value={stock.priceAmount ? formatMoney(stock.priceAmount) : "待确认"} strong={Boolean(stock.priceAmount)} />
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium text-neutral-500">
+                      <span>来源用户：{stock.sourceContact}</span>
+                      <span className="text-neutral-400">录入时间：{formatHourTime(stock.createdAt)}</span>
+                    </div>
                     <ConfigSheet items={stock.configItems} />
+                    </div>
                   </div>
                 </article>
               ))}
@@ -924,7 +931,7 @@ export default function App() {
 
           {activeTab === "market" && (
             <div className="space-y-3">
-              <div className="rounded-md bg-white p-3 shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
+              <div className="surface-card rounded-md p-3">
                 <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                   <FilterSelect
                     label="品类"
@@ -959,7 +966,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={resetMarketFilters}
-                    className="inline-flex items-center gap-1 self-start rounded-md px-2 py-1 font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 sm:self-auto"
+                    className="ghost-button inline-flex items-center gap-1 self-start rounded-md px-2 py-1 font-medium sm:self-auto"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
                     清空筛选
@@ -969,33 +976,40 @@ export default function App() {
               {pagedMarket.map((post) => (
                 <article
                   key={post.id}
-                  className="group rounded-md bg-white p-4 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:bg-[#fdfdfc] hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)]"
+                  className="interactive-card group overflow-hidden rounded-md"
                 >
-                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div className="min-w-0">
+                  <div className="grid grid-cols-[4px_1fr]">
+                    <div className="bg-amber-500/80" />
+                    <div className="flex min-w-0 flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone="orange">需求</Badge>
                         <Badge tone={tradeModeTone(post.tradeMode)}>{tradeModeText(post.tradeMode)}</Badge>
                         <Badge tone="blue">{productCategoryText(post.productCategory)}</Badge>
                         <h2 className="font-semibold text-neutral-950">{post.title}</h2>
                       </div>
-                      <p className="mt-2 text-sm text-neutral-600">
-                        {post.gpuModel} / {quantityText(post.quantity, post.quantityUnit)} / {post.locationCity}
-                        {post.priceAmount ? ` / ${formatMoney(post.priceAmount)}` : ""}
-                      </p>
-                      <p className="mt-1 text-xs font-medium text-neutral-500">来源用户：{post.sourceContact}</p>
-                      <p className="mt-1 text-xs font-medium text-neutral-400">创建时间：{formatHourTime(post.publishedAt)}</p>
+                      <div className="mt-3 grid gap-2 text-sm text-neutral-600 sm:grid-cols-2 xl:grid-cols-4">
+                        <InfoDatum label="型号" value={post.gpuModel || "待确认"} />
+                        <InfoDatum label="数量" value={quantityText(post.quantity, post.quantityUnit)} />
+                        <InfoDatum label="城市" value={post.locationCity || "待确认"} />
+                        <InfoDatum label="预算" value={post.priceAmount ? formatMoney(post.priceAmount) : "待确认"} strong={Boolean(post.priceAmount)} />
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium text-neutral-500">
+                        <span>来源用户：{post.sourceContact}</span>
+                        <span className="text-neutral-400">创建时间：{formatHourTime(post.publishedAt)}</span>
+                      </div>
                       <ConfigSheet items={post.configItems} />
                       <p className="mt-1 text-xs text-neutral-500">联系方式：{post.contactMethod}</p>
                     </div>
                     <button
                       type="button"
                       onClick={() => setNotice({ tone: "info", text: `联系方式：${post.contactMethod}` })}
-                      className="inline-flex items-center gap-1 self-start rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 md:self-auto"
+                      className="ghost-button inline-flex items-center gap-1 self-start rounded-md px-3 py-2 text-sm font-medium md:self-auto"
                     >
                       <MessageCircle className="h-4 w-4" />
                       联系
                     </button>
+                    </div>
                   </div>
                 </article>
               ))}
@@ -1198,11 +1212,11 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#fbfbfa] px-4 py-8 text-neutral-950">
+    <div className="app-shell flex min-h-screen items-center justify-center px-4 py-8 text-neutral-950">
       <main className="grid w-full max-w-5xl gap-4 md:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
-        <section className="rounded-md bg-white p-5 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] md:p-6">
+        <section className="surface-card rounded-md p-5 md:p-6">
           <div className="mb-6 flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-900 text-white">
+            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-neutral-950 text-white shadow-sm">
               <Database className="h-4 w-4" />
             </div>
             <div>
@@ -1211,7 +1225,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
             </div>
           </div>
           <div className="space-y-3">
-            <div className="rounded-md bg-[#f7f7f5] p-3">
+            <div className="surface-card-quiet rounded-md p-3">
               <div className="mb-2 flex items-center gap-2">
                 <UserRound className="h-4 w-4 text-neutral-500" />
                 <span className="text-sm font-semibold text-neutral-900">个人空间</span>
@@ -1219,7 +1233,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
               </div>
               <p className="text-xs leading-5 text-neutral-500">手机号登录后自动创建个人空间，供应、需求和待确认结果按空间隔离保存。</p>
             </div>
-            <div className="rounded-md bg-[#f7f7f5] p-3 opacity-80">
+            <div className="surface-card-quiet rounded-md p-3 opacity-80">
               <div className="mb-2 flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-neutral-500" />
                 <span className="text-sm font-semibold text-neutral-900">企业空间</span>
@@ -1230,14 +1244,14 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           </div>
         </section>
 
-        <form onSubmit={handleLogin} className="rounded-md bg-white p-5 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] md:p-6">
+        <form onSubmit={handleLogin} className="surface-card rounded-md p-5 md:p-6">
           <div className="mb-5">
             <h2 className="text-lg font-semibold text-neutral-950">手机号登录</h2>
             <p className="mt-1 text-xs font-medium text-neutral-500">登录后进入你的个人空间。</p>
           </div>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-neutral-500">手机号</span>
-            <div className="flex items-center gap-2 rounded-md bg-[#f7f7f5] px-3 py-2 transition focus-within:bg-white focus-within:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]">
+            <div className="field-surface flex items-center gap-2 rounded-md px-3 py-2">
               <Phone className="h-4 w-4 text-neutral-400" />
               <input
                 value={phone}
@@ -1251,7 +1265,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-neutral-500">短信验证码</span>
-              <div className="flex items-center gap-2 rounded-md bg-[#f7f7f5] px-3 py-2 transition focus-within:bg-white focus-within:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]">
+              <div className="field-surface flex items-center gap-2 rounded-md px-3 py-2">
                 <ShieldCheck className="h-4 w-4 text-neutral-400" />
                 <input
                   value={code}
@@ -1266,7 +1280,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
               type="button"
               onClick={handleRequestCode}
               disabled={isSending || !normalizedPhone}
-              className="self-end rounded-md bg-[#f1f1ef] px-3 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
+              className="ghost-button meta-pill self-end rounded-md px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"
             >
               {isSending ? "发送中..." : "获取验证码"}
             </button>
@@ -1277,7 +1291,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
               <button id={captchaButtonId} type="button" className="sr-only" tabIndex={-1}>
                 安全验证
               </button>
-              <p className="rounded-md bg-[#f7f7f5] px-3 py-2 text-xs font-medium text-neutral-500">
+              <p className="meta-pill rounded-md px-3 py-2 text-xs font-medium text-neutral-500">
                 {captchaStatus === "ready" ? "已启用阿里云安全验证。" : captchaStatus === "loading" ? "安全验证加载中。" : "安全验证暂不可用。"}
               </p>
             </div>
@@ -1288,7 +1302,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           <button
             type="submit"
             disabled={isLoggingIn || !normalizedPhone || !code.trim()}
-            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+            className="primary-button mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed"
           >
             <Check className="h-4 w-4" />
             {isLoggingIn ? "登录中..." : "进入个人空间"}
@@ -1302,7 +1316,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
 function WorkspaceSwitcher({ currentWorkspace }: { currentWorkspace: WorkspaceSummary }) {
   return (
     <div className="mb-5 space-y-1 border-y border-neutral-200/80 py-3">
-      <button type="button" className="flex w-full items-center gap-2 rounded-md bg-white px-2.5 py-2 text-left shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
+      <button type="button" className="surface-card-quiet flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left">
         <UserRound className="h-4 w-4 shrink-0 text-neutral-500" />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold text-neutral-900">{currentWorkspace.name}</span>
@@ -1326,7 +1340,7 @@ function WorkspaceSwitcher({ currentWorkspace }: { currentWorkspace: WorkspaceSu
 
 function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-md bg-white p-4 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] transition hover:shadow-[0_0_0_1px_rgba(15,15,15,0.12)]">
+    <section className="surface-card rounded-md p-4">
       <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-800">
         {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4 text-neutral-500" })}
         <h2>{title}</h2>
@@ -1342,10 +1356,10 @@ function NavButton({ active, icon, label, onClick }: { active: boolean; icon: Re
       type="button"
       onClick={onClick}
       className={`mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm font-medium transition ${
-        active ? "bg-neutral-200/70 text-neutral-950" : "text-neutral-600 hover:bg-neutral-200/50 hover:text-neutral-950"
+        active ? "bg-neutral-950 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-950/5 hover:text-neutral-950"
       }`}
     >
-      {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4 text-neutral-500" })}
+      {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: `h-4 w-4 ${active ? "text-white" : "text-neutral-500"}` })}
       {label}
     </button>
   );
@@ -1368,7 +1382,7 @@ function MobileTab({ active, icon, label, onClick }: { active: boolean; icon: Re
 
 function SideMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs transition hover:bg-neutral-200/50">
+    <div className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs transition hover:bg-neutral-950/5">
       <span className="font-medium text-neutral-500">{label}</span>
       <span className="font-semibold text-neutral-800">{value}</span>
     </div>
@@ -1380,7 +1394,7 @@ function ToolbarButton({ icon, label, onClick }: { icon: React.ReactNode; label:
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+      className="ghost-button inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
     >
       {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-3.5 w-3.5" })}
       {label}
@@ -1411,7 +1425,7 @@ const ChatBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
 function AssistantEmptyState() {
   return (
     <div className="px-4 py-10 text-center">
-      <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md bg-[#f1f1ef] text-neutral-400">
+      <div className="meta-pill mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md text-neutral-400">
         <ClipboardCheck className="h-4 w-4" />
       </div>
       <p className="text-sm font-medium text-neutral-600">暂无待确认结果</p>
@@ -1462,7 +1476,7 @@ const DraftReviewItem: React.FC<{
           <button
             type="button"
             onClick={onRemove}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+            className="ghost-button inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
           >
             <Trash2 className="h-3.5 w-3.5" />
             删除
@@ -1470,7 +1484,7 @@ const DraftReviewItem: React.FC<{
           <button
             type="button"
             onClick={onConfirm}
-            className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+            className="primary-button inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium"
           >
             <Check className="h-3.5 w-3.5" />
             保存
@@ -1529,9 +1543,9 @@ const DraftReviewItem: React.FC<{
 
 function InlineNotice({ tone, text, onDismiss }: { tone: NoticeTone; text: string; onDismiss: () => void }) {
   const toneClass: Record<NoticeTone, string> = {
-    info: "bg-white text-neutral-600 shadow-[0_0_0_1px_rgba(15,15,15,0.06)]",
-    success: "bg-emerald-50 text-emerald-800 shadow-[0_0_0_1px_rgba(5,150,105,0.16)]",
-    warning: "bg-amber-50 text-amber-800 shadow-[0_0_0_1px_rgba(217,119,6,0.16)]",
+    info: "surface-card-quiet text-neutral-600",
+    success: "border border-emerald-200/70 bg-emerald-50/90 text-emerald-800",
+    warning: "border border-amber-200/70 bg-amber-50/90 text-amber-800",
   };
   return (
     <div className={`flex items-start gap-2 rounded-md px-3 py-2 text-sm font-medium ${toneClass[tone]}`}>
@@ -1568,7 +1582,7 @@ function TextField({
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+        className="field-surface w-full rounded-md px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
       />
     </label>
   );
@@ -1591,7 +1605,7 @@ function SelectField({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+        className="field-surface w-full rounded-md px-3 py-2 text-sm text-neutral-900 outline-none"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -1620,7 +1634,7 @@ function FilterSelect({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-9 w-full rounded-md border border-transparent bg-[#f7f7f5] px-2 text-sm font-medium text-neutral-900 outline-none transition hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+        className="field-surface h-9 w-full rounded-md px-2 text-sm font-medium text-neutral-900 outline-none"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -1653,7 +1667,7 @@ function Pagination({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-md bg-white px-3 py-3 text-sm text-neutral-600 shadow-[0_0_0_1px_rgba(15,15,15,0.06)] sm:flex-row sm:items-center sm:justify-between">
+    <div className="surface-card-quiet flex flex-col gap-3 rounded-md px-3 py-3 text-sm text-neutral-600 sm:flex-row sm:items-center sm:justify-between">
       <span className="font-medium">
         {total > 0 ? `显示 ${start}-${end} 条，共 ${total} 条` : "暂无符合条件的数据"}
         <span className="ml-2 text-xs text-neutral-400">每页 {LIST_PAGE_SIZE} 条</span>
@@ -1663,7 +1677,7 @@ function Pagination({
           type="button"
           disabled={isFirstPage}
           onClick={() => changePage(1)}
-          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+          className="ghost-button rounded-md px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
         >
           首页
         </button>
@@ -1671,7 +1685,7 @@ function Pagination({
           type="button"
           disabled={isFirstPage}
           onClick={() => changePage(currentPage - 1)}
-          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+          className="ghost-button rounded-md px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
         >
           上一页
         </button>
@@ -1682,7 +1696,7 @@ function Pagination({
           type="button"
           disabled={isLastPage}
           onClick={() => changePage(currentPage + 1)}
-          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+          className="ghost-button rounded-md px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
         >
           下一页
         </button>
@@ -1690,7 +1704,7 @@ function Pagination({
           type="button"
           disabled={isLastPage}
           onClick={() => changePage(totalPages)}
-          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+          className="ghost-button rounded-md px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
         >
           末页
         </button>
@@ -1701,19 +1715,30 @@ function Pagination({
 
 function EmptyState({ title, actionLabel, onAction }: { title: string; actionLabel: string; onAction: () => void }) {
   return (
-    <div className="rounded-md bg-white px-4 py-10 text-center shadow-[0_0_0_1px_rgba(15,15,15,0.06)]">
-      <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md bg-[#f1f1ef] text-neutral-400">
+    <div className="surface-card rounded-md px-4 py-10 text-center">
+      <div className="meta-pill mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md text-neutral-400">
         <Search className="h-4 w-4" />
       </div>
       <p className="text-sm font-medium text-neutral-600">{title}</p>
       <button
         type="button"
         onClick={onAction}
-        className="mt-3 inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+        className="ghost-button mt-3 inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium"
       >
         <Plus className="h-4 w-4" />
         {actionLabel}
       </button>
+    </div>
+  );
+}
+
+function InfoDatum({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className="rounded-md bg-neutral-950/[0.035] px-3 py-2">
+      <p className="text-[11px] font-medium text-neutral-400">{label}</p>
+      <p className={`mt-0.5 truncate text-sm ${strong ? "font-semibold text-neutral-950" : "font-medium text-neutral-700"}`} title={value}>
+        {value}
+      </p>
     </div>
   );
 }
@@ -1740,7 +1765,7 @@ function ConfigEditor({
         <button
           type="button"
           onClick={() => onChange([...items, { label: "自定义", value: "" }])}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
+          className="ghost-button inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
         >
           <Plus className="h-3.5 w-3.5" />
           添加配置
@@ -1759,21 +1784,21 @@ function ConfigEditor({
               value={item.label}
               placeholder="配置项"
               onChange={(event) => updateConfigItem(index, { label: event.target.value })}
-              className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+              className="field-surface w-full rounded-md px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
             />
             <input
               aria-label={`${item.label || "配置"} 内容`}
               value={item.value}
               placeholder="内容"
               onChange={(event) => updateConfigItem(index, { value: event.target.value })}
-              className="w-full rounded-md border border-transparent bg-[#f7f7f5] px-3 py-2 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 hover:bg-neutral-100 focus:bg-white focus:shadow-[0_0_0_1px_rgba(15,15,15,0.18)]"
+              className="field-surface w-full rounded-md px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
             />
             <button
               type="button"
               title="删除配置项"
               aria-label={`删除配置项 ${item.label || index + 1}`}
               onClick={() => removeConfigItem(index)}
-              className="flex h-9 w-9 items-center justify-center rounded-md text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900"
+              className="ghost-button flex h-9 w-9 items-center justify-center rounded-md text-neutral-400"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -1789,11 +1814,11 @@ function ConfigSheet({ items }: { items: ConfigItem[] }) {
   if (!visibleItems.length) return null;
 
   return (
-    <div className="mt-3 border-t border-neutral-100 pt-3">
-      <p className="mb-1 text-xs font-semibold text-neutral-500">详细配置单</p>
-      <dl className="grid gap-x-5 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="mt-4 border-t border-neutral-100 pt-3">
+      <p className="mb-2 text-xs font-semibold text-neutral-500">详细配置单</p>
+      <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {visibleItems.map((item, index) => (
-          <div key={`${item.label}-${index}`} className="grid grid-cols-[72px_1fr] gap-2 border-b border-neutral-100 py-2 text-sm">
+          <div key={`${item.label}-${index}`} className="grid grid-cols-[72px_1fr] gap-2 rounded-md bg-neutral-950/[0.025] px-2 py-2 text-sm">
             <dt className="font-medium text-neutral-400">{item.label}</dt>
             <dd className="break-words text-neutral-800" title={item.value.length > 96 ? item.value : undefined}>
               {compactConfigValue(item.value)}
