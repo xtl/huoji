@@ -985,7 +985,7 @@ export default function App() {
         </main>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t border-neutral-200 bg-white/95 shadow-[0_-8px_24px_rgba(15,15,15,0.05)] backdrop-blur md:hidden">
+      <nav className="mobile-tabbar fixed inset-x-3 bottom-3 z-40 grid grid-cols-3 rounded-md px-1.5 py-1.5 md:hidden">
         <MobileTab active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
         <MobileTab active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
         <MobileTab active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
@@ -1222,13 +1222,13 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           </label>
           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
             <label className="block">
-              <span className="mb-1 block text-xs font-medium text-neutral-500">短信验证码</span>
+              <span className="mb-1 block text-xs font-medium text-neutral-500">短信验证码 / 临时通用码</span>
               <div className="field-surface flex items-center gap-2 rounded-md px-3 py-2">
                 <ShieldCheck className="h-4 w-4 text-neutral-400" />
                 <input
                   value={code}
                   inputMode="numeric"
-                  placeholder="6 位验证码"
+                  placeholder="验证码或 11111111"
                   onChange={(event) => setCode(event.target.value)}
                   className="min-w-0 flex-1 bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
                 />
@@ -1503,7 +1503,7 @@ function MobileTab({ active, icon, label, onClick }: { active: boolean; icon: Re
       type="button"
       onClick={onClick}
       className={`flex flex-col items-center gap-1 px-2 py-2 text-xs font-medium transition ${
-        active ? "text-neutral-950" : "text-neutral-500"
+        active ? "rounded-md bg-neutral-950 text-white" : "text-neutral-500"
       }`}
     >
       {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-5 w-5" })}
@@ -1582,8 +1582,8 @@ const DraftReviewItem: React.FC<{
   const missingFields = tradeDraftMissingFields(draft);
   const hasMissingFields = missingFields.length > 0;
   return (
-    <section className="border-t border-neutral-100 pt-4 first:border-t-0 first:pt-0">
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+    <section className="surface-card-quiet rounded-md p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={draft.postType === "GOODS" ? "green" : "orange"}>{draft.postType === "GOODS" ? "供应" : "需求"}</Badge>
@@ -1595,7 +1595,13 @@ const DraftReviewItem: React.FC<{
             <span className="text-xs font-medium text-neutral-400">#{index + 1}</span>
           </div>
           <p className="mt-1 truncate text-sm font-semibold text-neutral-900">{draft.title || `${productCategoryText(draft.productCategory)} ${draft.gpuModel}`}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <div className="mt-2 grid gap-2 text-xs text-neutral-600 sm:grid-cols-4">
+            <InfoDatum label="规格" value={draft.gpuModel || "待确认"} />
+            <InfoDatum label="数量" value={draft.quantity ? `${draft.quantity}${draft.quantityUnit || ""}` : "待确认"} />
+            <InfoDatum label="城市" value={draft.locationCity || "待确认"} />
+            <InfoDatum label={draft.postType === "GOODS" ? "价格" : "预算"} value={draft.priceAmount || "待确认"} strong={Boolean(draft.priceAmount)} />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span className={`text-xs font-medium ${hasMissingFields ? "text-amber-600" : "text-neutral-400"}`}>
               {hasMissingFields ? "信息不完整，可先保存" : "字段完整，可保存"}
             </span>
@@ -1624,49 +1630,48 @@ const DraftReviewItem: React.FC<{
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <SelectField
-          label="类型"
-          value={draft.postType}
-          options={[
-            { label: "供应", value: "GOODS" },
-            { label: "需求", value: "DEMAND" },
-          ]}
-          onChange={(value) => onChange({ postType: value as MarketType })}
-        />
-        <SelectField
-          label="交易大类"
-          value={draft.tradeMode}
-          options={tradeModeOptions}
-          onChange={(value) => onChange({ tradeMode: value as TradeMode })}
-        />
-        <SelectField
-          label="品类"
-          value={draft.productCategory}
-          options={productCategoryOptions}
-          onChange={(value) => onChange({ productCategory: value as ProductCategory })}
-        />
-      </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <TextField label="标题" value={draft.title} placeholder="可留空，自动生成标题" onChange={(value) => onChange({ title: value })} />
-        <TextField label="来源用户" value={draft.sourceContact} placeholder="微信群发言人" onChange={(value) => onChange({ sourceContact: value })} />
-        <TextField label="型号 / 规格" value={draft.gpuModel} placeholder="H100 / 64G 5600 / PM9D3A" onChange={(value) => onChange({ gpuModel: value })} />
-        {draft.productCategory !== "MEMORY" && (
-          <TextField label="卡数" value={draft.gpuCount} onChange={(value) => onChange({ gpuCount: value })} />
-        )}
-        <TextField label="数量" value={draft.quantity} onChange={(value) => onChange({ quantity: value })} />
-        <TextField label="单位" value={draft.quantityUnit} onChange={(value) => onChange({ quantityUnit: value })} />
-        <TextField label="城市" value={draft.locationCity} placeholder="深圳 / 香港 / 上海" onChange={(value) => onChange({ locationCity: value })} />
-        <TextField
-          label={draft.postType === "GOODS" ? "对外价格" : "预算上限"}
-          value={draft.priceAmount}
-          onChange={(value) => onChange({ priceAmount: value })}
-        />
-        <TextField label="联系方式" value={draft.contactMethod} onChange={(value) => onChange({ contactMethod: value })} />
-      </div>
-
       <details className="mt-3 border-t border-neutral-100 pt-3">
-        <summary className="cursor-pointer text-xs font-semibold text-neutral-500">详细配置单</summary>
+        <summary className="cursor-pointer text-xs font-semibold text-neutral-500">展开编辑字段和详细配置</summary>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <SelectField
+            label="类型"
+            value={draft.postType}
+            options={[
+              { label: "供应", value: "GOODS" },
+              { label: "需求", value: "DEMAND" },
+            ]}
+            onChange={(value) => onChange({ postType: value as MarketType })}
+          />
+          <SelectField
+            label="交易大类"
+            value={draft.tradeMode}
+            options={tradeModeOptions}
+            onChange={(value) => onChange({ tradeMode: value as TradeMode })}
+          />
+          <SelectField
+            label="品类"
+            value={draft.productCategory}
+            options={productCategoryOptions}
+            onChange={(value) => onChange({ productCategory: value as ProductCategory })}
+          />
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <TextField label="标题" value={draft.title} placeholder="可留空，自动生成标题" onChange={(value) => onChange({ title: value })} />
+          <TextField label="来源用户" value={draft.sourceContact} placeholder="微信群发言人" onChange={(value) => onChange({ sourceContact: value })} />
+          <TextField label="型号 / 规格" value={draft.gpuModel} placeholder="H100 / 64G 5600 / PM9D3A" onChange={(value) => onChange({ gpuModel: value })} />
+          {draft.productCategory !== "MEMORY" && (
+            <TextField label="卡数" value={draft.gpuCount} onChange={(value) => onChange({ gpuCount: value })} />
+          )}
+          <TextField label="数量" value={draft.quantity} onChange={(value) => onChange({ quantity: value })} />
+          <TextField label="单位" value={draft.quantityUnit} onChange={(value) => onChange({ quantityUnit: value })} />
+          <TextField label="城市" value={draft.locationCity} placeholder="深圳 / 香港 / 上海" onChange={(value) => onChange({ locationCity: value })} />
+          <TextField
+            label={draft.postType === "GOODS" ? "对外价格" : "预算上限"}
+            value={draft.priceAmount}
+            onChange={(value) => onChange({ priceAmount: value })}
+          />
+          <TextField label="联系方式" value={draft.contactMethod} onChange={(value) => onChange({ contactMethod: value })} />
+        </div>
         <ConfigEditor items={draft.configItems} onChange={(configItems) => onChange({ configItems })} />
       </details>
     </section>
