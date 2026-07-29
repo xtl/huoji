@@ -335,6 +335,8 @@ export default function App() {
   const [marketSourceContactFilter, setMarketSourceContactFilter] = useState("ALL");
   const [stockPage, setStockPage] = useState(1);
   const [marketPage, setMarketPage] = useState(1);
+  const [selectedStockId, setSelectedStockId] = useState("");
+  const [selectedMarketId, setSelectedMarketId] = useState("");
   const [draftItems, setDraftItems] = useState<TradeDraft[]>([]);
   const [draftPage, setDraftPage] = useState(1);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -436,6 +438,8 @@ export default function App() {
   const pagedStocks = filteredStocks.slice((stockCurrentPage - 1) * LIST_PAGE_SIZE, stockCurrentPage * LIST_PAGE_SIZE);
   const pagedMarket = filteredMarket.slice((marketCurrentPage - 1) * LIST_PAGE_SIZE, marketCurrentPage * LIST_PAGE_SIZE);
   const pagedDrafts = draftItems.slice((draftCurrentPage - 1) * LIST_PAGE_SIZE, draftCurrentPage * LIST_PAGE_SIZE);
+  const selectedStock = filteredStocks.find((item) => item.id === selectedStockId) ?? pagedStocks[0] ?? null;
+  const selectedMarket = filteredMarket.find((item) => item.id === selectedMarketId) ?? pagedMarket[0] ?? null;
   const demandCount = marketPosts.filter((post) => post.postType === "DEMAND").length;
   const verifiedStockCount = stocks.filter((item) => item.status === "VERIFIED" || item.status === "SELLABLE").length;
   const activePage = pageMeta[activeTab];
@@ -887,37 +891,13 @@ export default function App() {
           )}
 
           {activeTab === "stock" && (
-            <div className="space-y-3">
-              {pagedStocks.map((stock) => (
-                <article
-                  key={stock.id}
-                  className="interactive-card group overflow-hidden rounded-md"
-                >
-                  <div className="grid grid-cols-[4px_1fr]">
-                    <div className="bg-emerald-500/80" />
-                    <div className="min-w-0 p-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="font-semibold text-neutral-950">{stock.title}</h2>
-                      <Badge tone="blue">{productCategoryText(stock.productCategory)}</Badge>
-                      <Badge tone={stock.source === "AI" ? "green" : "default"}>{stock.source === "AI" ? "AI解析" : "手工录入"}</Badge>
-                      <Badge tone={tradeModeTone(stock.tradeMode)}>{tradeModeText(stock.tradeMode)}</Badge>
-                      <Badge tone={statusTone(stock.status)}>{statusText(stock.status)}</Badge>
-                    </div>
-                    <div className="mt-3 grid gap-2 text-sm text-neutral-600 sm:grid-cols-2 xl:grid-cols-4">
-                      <InfoDatum label="规格" value={stockSpecText(stock)} />
-                      <InfoDatum label="数量" value={quantityText(stock.quantity, stock.quantityUnit)} />
-                      <InfoDatum label="城市" value={stock.locationCity || "待确认"} />
-                      <InfoDatum label="价格" value={stock.priceAmount ? formatMoney(stock.priceAmount) : "待确认"} strong={Boolean(stock.priceAmount)} />
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium text-neutral-500">
-                      <span>来源用户：{stock.sourceContact}</span>
-                      <span className="text-neutral-400">录入时间：{formatHourTime(stock.createdAt)}</span>
-                    </div>
-                    <ConfigSheet items={stock.configItems} />
-                    </div>
-                  </div>
-                </article>
-              ))}
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+              <div className="min-w-0 space-y-3">
+                <StockDataTable
+                  items={pagedStocks}
+                  selectedId={selectedStock?.id ?? ""}
+                  onSelect={(stock) => setSelectedStockId(stock.id)}
+                />
               {!pagedStocks.length && <EmptyState title="暂无符合条件的货源" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
               {filteredStocks.length > 0 && (
                 <Pagination
@@ -926,6 +906,11 @@ export default function App() {
                   onPageChange={setStockPage}
                 />
               )}
+              </div>
+              <TradeDetailDrawer
+                kind="stock"
+                item={selectedStock}
+              />
             </div>
           )}
 
@@ -973,46 +958,13 @@ export default function App() {
                   </button>
                 </div>
               </div>
-              {pagedMarket.map((post) => (
-                <article
-                  key={post.id}
-                  className="interactive-card group overflow-hidden rounded-md"
-                >
-                  <div className="grid grid-cols-[4px_1fr]">
-                    <div className="bg-amber-500/80" />
-                    <div className="flex min-w-0 flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between">
-                      <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge tone="orange">需求</Badge>
-                        <Badge tone={tradeModeTone(post.tradeMode)}>{tradeModeText(post.tradeMode)}</Badge>
-                        <Badge tone="blue">{productCategoryText(post.productCategory)}</Badge>
-                        <h2 className="font-semibold text-neutral-950">{post.title}</h2>
-                      </div>
-                      <div className="mt-3 grid gap-2 text-sm text-neutral-600 sm:grid-cols-2 xl:grid-cols-4">
-                        <InfoDatum label="型号" value={post.gpuModel || "待确认"} />
-                        <InfoDatum label="数量" value={quantityText(post.quantity, post.quantityUnit)} />
-                        <InfoDatum label="城市" value={post.locationCity || "待确认"} />
-                        <InfoDatum label="预算" value={post.priceAmount ? formatMoney(post.priceAmount) : "待确认"} strong={Boolean(post.priceAmount)} />
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium text-neutral-500">
-                        <span>来源用户：{post.sourceContact}</span>
-                        <span className="text-neutral-400">创建时间：{formatHourTime(post.publishedAt)}</span>
-                      </div>
-                      <ConfigSheet items={post.configItems} />
-                      <p className="mt-1 text-xs text-neutral-500">联系方式：{post.contactMethod}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setNotice({ tone: "info", text: `联系方式：${post.contactMethod}` })}
-                      className="ghost-button inline-flex items-center gap-1 self-start rounded-md px-3 py-2 text-sm font-medium md:self-auto"
-                    >
-                      <MessageCircle className="h-4 w-4" />
-                      联系
-                    </button>
-                    </div>
-                  </div>
-                </article>
-              ))}
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+                <div className="min-w-0 space-y-3">
+                  <MarketDataTable
+                    items={pagedMarket}
+                    selectedId={selectedMarket?.id ?? ""}
+                    onSelect={(post) => setSelectedMarketId(post.id)}
+                  />
               {!pagedMarket.length && <EmptyState title="暂无符合条件的需求" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
               {filteredMarket.length > 0 && (
                 <Pagination
@@ -1021,6 +973,12 @@ export default function App() {
                   onPageChange={setMarketPage}
                 />
               )}
+                </div>
+                <TradeDetailDrawer
+                  kind="market"
+                  item={selectedMarket}
+                />
+              </div>
             </div>
           )}
           </section>
@@ -1310,6 +1268,180 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
         </form>
       </main>
     </div>
+  );
+}
+
+function StockDataTable({
+  items,
+  selectedId,
+  onSelect,
+}: {
+  items: StockItem[];
+  selectedId: string;
+  onSelect: (item: StockItem) => void;
+}) {
+  return (
+    <div className="surface-card overflow-hidden rounded-md">
+      <div className="overflow-x-auto">
+        <table className="huoji-table min-w-[980px]">
+          <thead>
+            <tr>
+              <th className="w-[118px]">录入时间</th>
+              <th className="w-[84px]">品类</th>
+              <th>型号 / 规格</th>
+              <th className="w-[96px]">数量</th>
+              <th className="w-[88px]">城市</th>
+              <th className="w-[88px]">交易</th>
+              <th className="w-[118px]">价格</th>
+              <th className="w-[150px]">来源用户</th>
+              <th className="w-[86px]">状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((stock) => (
+              <tr
+                key={stock.id}
+                onClick={() => onSelect(stock)}
+                className={selectedId === stock.id ? "is-selected" : ""}
+              >
+                <td>{formatHourTime(stock.createdAt)}</td>
+                <td><Badge tone="blue">{productCategoryText(stock.productCategory)}</Badge></td>
+                <td>
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-neutral-950">{stock.title}</p>
+                    <p className="truncate text-xs text-neutral-500">{stockSpecText(stock)}</p>
+                  </div>
+                </td>
+                <td>{quantityText(stock.quantity, stock.quantityUnit)}</td>
+                <td>{stock.locationCity || "待确认"}</td>
+                <td><Badge tone={tradeModeTone(stock.tradeMode)}>{tradeModeText(stock.tradeMode)}</Badge></td>
+                <td className="font-semibold text-neutral-900">{stock.priceAmount ? formatMoney(stock.priceAmount) : "待确认"}</td>
+                <td className="max-w-[150px] truncate" title={stock.sourceContact}>{stock.sourceContact}</td>
+                <td><Badge tone={statusTone(stock.status)}>{statusText(stock.status)}</Badge></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {items.length > 0 && (
+        <div className="border-t border-neutral-100 px-3 py-2 text-xs font-medium text-neutral-400">
+          点击任意行查看完整配置。当前页 {items.length} 条。
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MarketDataTable({
+  items,
+  selectedId,
+  onSelect,
+}: {
+  items: MarketPost[];
+  selectedId: string;
+  onSelect: (item: MarketPost) => void;
+}) {
+  return (
+    <div className="surface-card overflow-hidden rounded-md">
+      <div className="overflow-x-auto">
+        <table className="huoji-table min-w-[920px]">
+          <thead>
+            <tr>
+              <th className="w-[118px]">创建时间</th>
+              <th className="w-[84px]">品类</th>
+              <th>需求型号 / 规格</th>
+              <th className="w-[96px]">数量</th>
+              <th className="w-[88px]">城市</th>
+              <th className="w-[88px]">交易</th>
+              <th className="w-[118px]">预算</th>
+              <th className="w-[150px]">来源用户</th>
+              <th className="w-[88px]">联系</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((post) => (
+              <tr
+                key={post.id}
+                onClick={() => onSelect(post)}
+                className={selectedId === post.id ? "is-selected" : ""}
+              >
+                <td>{formatHourTime(post.publishedAt)}</td>
+                <td><Badge tone="blue">{productCategoryText(post.productCategory)}</Badge></td>
+                <td>
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-neutral-950">{post.title}</p>
+                    <p className="truncate text-xs text-neutral-500">{post.gpuModel || "规格待确认"}</p>
+                  </div>
+                </td>
+                <td>{quantityText(post.quantity, post.quantityUnit)}</td>
+                <td>{post.locationCity || "待确认"}</td>
+                <td><Badge tone={tradeModeTone(post.tradeMode)}>{tradeModeText(post.tradeMode)}</Badge></td>
+                <td className="font-semibold text-neutral-900">{post.priceAmount ? formatMoney(post.priceAmount) : "待确认"}</td>
+                <td className="max-w-[150px] truncate" title={post.sourceContact}>{post.sourceContact}</td>
+                <td className="max-w-[88px] truncate" title={post.contactMethod}>{post.contactMethod || "站内"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {items.length > 0 && (
+        <div className="border-t border-neutral-100 px-3 py-2 text-xs font-medium text-neutral-400">
+          点击任意行查看需求详情。当前页 {items.length} 条。
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TradeDetailDrawer({
+  kind,
+  item,
+}: {
+  kind: "stock" | "market";
+  item: StockItem | MarketPost | null;
+}) {
+  if (!item) {
+    return (
+      <aside className="surface-card sticky top-[96px] hidden h-fit rounded-md p-4 xl:block">
+        <p className="text-sm font-semibold text-neutral-700">未选择记录</p>
+        <p className="mt-1 text-xs leading-5 text-neutral-500">点击左侧表格中的任意一行，这里会显示完整配置、来源和联系方式。</p>
+      </aside>
+    );
+  }
+
+  const isStock = kind === "stock";
+  const title = item.title;
+  const category = productCategoryText(item.productCategory);
+  const mode = tradeModeText(item.tradeMode);
+  const sourceContact = item.sourceContact;
+  const time = isStock ? formatHourTime((item as StockItem).createdAt) : formatHourTime((item as MarketPost).publishedAt);
+  const quantity = quantityText(item.quantity, item.quantityUnit);
+  const model = isStock ? stockSpecText(item as StockItem) : ((item as MarketPost).gpuModel || "待确认");
+  const priceLabel = isStock ? "价格" : "预算";
+  const price = item.priceAmount ? formatMoney(item.priceAmount) : "待确认";
+
+  return (
+    <aside className="surface-card sticky top-[96px] h-fit rounded-md p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Badge tone={isStock ? "green" : "orange"}>{isStock ? "供应" : "需求"}</Badge>
+        <Badge tone="blue">{category}</Badge>
+        <Badge tone={tradeModeTone(item.tradeMode)}>{mode}</Badge>
+      </div>
+      <h3 className="text-base font-semibold leading-6 text-neutral-950">{title}</h3>
+      <p className="mt-1 text-xs font-medium text-neutral-400">{time}</p>
+
+      <div className="mt-4 grid gap-2">
+        <InfoDatum label="规格" value={model} />
+        <InfoDatum label="数量" value={quantity} />
+        <InfoDatum label="城市" value={item.locationCity || "待确认"} />
+        <InfoDatum label={priceLabel} value={price} strong={Boolean(item.priceAmount)} />
+        <InfoDatum label="来源用户" value={sourceContact || "未知来源"} />
+        {!isStock && <InfoDatum label="联系方式" value={(item as MarketPost).contactMethod || "站内联系"} />}
+        {isStock && <InfoDatum label="状态" value={statusText((item as StockItem).status)} />}
+      </div>
+
+      <ConfigSheet items={item.configItems} />
+    </aside>
   );
 }
 

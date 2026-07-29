@@ -175,4 +175,57 @@ button:disabled {
     border: 1px solid rgba(37, 35, 31, 0.06);
     background: rgba(246, 245, 242, 0.9);
   }
+
+  .huoji-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+  }
+
+  .huoji-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    height: 38px;
+    border-bottom: 1px solid rgba(37, 35, 31, 0.08);
+    background: rgba(250, 249, 246, 0.96);
+    color: #7a756e;
+    font-size: 11px;
+    font-weight: 650;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .huoji-table th,
+  .huoji-table td {
+    padding: 0 12px;
+  }
+
+  .huoji-table tbody tr {
+    height: 52px;
+    cursor: pointer;
+    transition:
+      background 140ms ease,
+      box-shadow 140ms ease;
+  }
+
+  .huoji-table tbody tr + tr td {
+    border-top: 1px solid rgba(37, 35, 31, 0.06);
+  }
+
+  .huoji-table tbody tr:hover {
+    background: rgba(37, 35, 31, 0.035);
+  }
+
+  .huoji-table tbody tr.is-selected {
+    background: rgba(36, 99, 235, 0.065);
+    box-shadow: inset 3px 0 #2563eb;
+  }
+
+  .huoji-table td {
+    color: #57534e;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
 }
