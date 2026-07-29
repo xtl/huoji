@@ -1364,7 +1364,6 @@ function StockDataTable({
         <table className="huoji-table min-w-[980px]">
           <thead>
             <tr>
-              <th className="w-[118px]">录入时间</th>
               <th className="w-[84px]">品类</th>
               <th>型号 / 规格</th>
               <th className="w-[96px]">数量</th>
@@ -1373,6 +1372,7 @@ function StockDataTable({
               <th className="w-[118px]">价格</th>
               <th className="w-[150px]">来源用户</th>
               <th className="w-[86px]">状态</th>
+              <th className="w-[118px]">录入时间</th>
             </tr>
           </thead>
           <tbody>
@@ -1382,7 +1382,6 @@ function StockDataTable({
                 onClick={() => onSelect(stock)}
                 className={selectedId === stock.id ? "is-selected" : ""}
               >
-                <td>{formatHourTime(stock.createdAt)}</td>
                 <td><Badge tone="blue">{productCategoryText(stock.productCategory)}</Badge></td>
                 <td>
                   <div className="min-w-0">
@@ -1396,6 +1395,7 @@ function StockDataTable({
                 <td className="font-semibold text-neutral-900">{stock.priceAmount ? formatMoney(stock.priceAmount) : "待确认"}</td>
                 <td className="max-w-[150px] truncate" title={stock.sourceContact}>{stock.sourceContact}</td>
                 <td><Badge tone={statusTone(stock.status)}>{statusText(stock.status)}</Badge></td>
+                <td>{formatHourTime(stock.createdAt)}</td>
               </tr>
             ))}
           </tbody>
@@ -1425,7 +1425,6 @@ function MarketDataTable({
         <table className="huoji-table min-w-[920px]">
           <thead>
             <tr>
-              <th className="w-[118px]">创建时间</th>
               <th className="w-[84px]">品类</th>
               <th>需求型号 / 规格</th>
               <th className="w-[96px]">数量</th>
@@ -1434,6 +1433,7 @@ function MarketDataTable({
               <th className="w-[118px]">预算</th>
               <th className="w-[150px]">来源用户</th>
               <th className="w-[88px]">联系</th>
+              <th className="w-[118px]">创建时间</th>
             </tr>
           </thead>
           <tbody>
@@ -1443,7 +1443,6 @@ function MarketDataTable({
                 onClick={() => onSelect(post)}
                 className={selectedId === post.id ? "is-selected" : ""}
               >
-                <td>{formatHourTime(post.publishedAt)}</td>
                 <td><Badge tone="blue">{productCategoryText(post.productCategory)}</Badge></td>
                 <td>
                   <div className="min-w-0">
@@ -1457,6 +1456,7 @@ function MarketDataTable({
                 <td className="font-semibold text-neutral-900">{post.priceAmount ? formatMoney(post.priceAmount) : "待确认"}</td>
                 <td className="max-w-[150px] truncate" title={post.sourceContact}>{post.sourceContact}</td>
                 <td className="max-w-[88px] truncate" title={post.contactMethod}>{post.contactMethod || "站内"}</td>
+                <td>{formatHourTime(post.publishedAt)}</td>
               </tr>
             ))}
           </tbody>
