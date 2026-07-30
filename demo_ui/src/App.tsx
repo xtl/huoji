@@ -3445,6 +3445,7 @@ function generateMatchCandidates(
     if (!demandProfile) return;
     const scopedStocks = stocksByCategory.get(demand.productCategory) ?? [];
     const scoredForDemand = scopedStocks
+      .filter((stock) => !isSameKnownSourceContact(demand.sourceContact, stock.sourceContact))
       .map((stock) => {
         const stockProfile = stockProfiles.get(stock.id);
         if (!stockProfile) return null;
@@ -3472,6 +3473,7 @@ function scoreSupplyDemandMatch(
   statuses: Record<string, MatchStatus>,
 ): MatchCandidate | null {
   if (demand.productCategory !== stock.productCategory) return null;
+  if (isSameKnownSourceContact(demand.sourceContact, stock.sourceContact)) return null;
   const scoreDetail: MatchScoreDetail[] = [];
   const reasons: string[] = [];
   const riskNotes: string[] = [];
@@ -3874,6 +3876,21 @@ function uniqueReasons(values: string[]): string[] {
 
 function cleanCity(value: string): string {
   return value.replace(/市$/, "").trim();
+}
+
+function isSameKnownSourceContact(left: string, right: string): boolean {
+  const normalizedLeft = normalizeSourceContactForMatch(left);
+  const normalizedRight = normalizeSourceContactForMatch(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+function normalizeSourceContactForMatch(value: string): string {
+  const normalized = cleanSourceContact(value)
+    .replace(/\s+/g, "")
+    .replace(/[()（）【】\[\]<>《》]/g, "")
+    .toLowerCase();
+  if (!normalized || normalized === "未知来源" || normalized === "待确认") return "";
+  return normalized;
 }
 
 function matchStatusStorageKey(session: AuthSession | null): string {
