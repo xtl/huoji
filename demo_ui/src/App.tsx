@@ -461,7 +461,7 @@ export default function App() {
     {
       id: "assistant-welcome",
       role: "assistant",
-      text: "把微信群货源、求购、租赁信息直接发给我。我会自动识别类型、交易大类和品类，先拆成待确认结果，不会自动入库。",
+      text: "把微信群货源、求购、租赁信息直接发给我。我会自动识别类型、交易大类和品类；也可以直接说“匹配供需”，我会生成机会。",
     },
   ]);
   const [isAiParsing, setIsAiParsing] = useState(false);
@@ -602,6 +602,7 @@ export default function App() {
   const demandCount = marketPosts.filter((post) => post.postType === "DEMAND").length;
   const verifiedStockCount = stocks.filter((item) => item.status === "VERIFIED" || item.status === "SELLABLE").length;
   const strongMatchCount = matchCandidates.filter((item) => item.level === "STRONG").length;
+  const chatCommandHint = isMatchCommand(aiText.trim());
   const listSearchBox = (
     <div className="surface-card group flex items-center gap-2 rounded-md px-3 py-2.5">
       <Search className="h-4 w-4 text-neutral-400 transition group-focus-within:text-neutral-700" />
@@ -798,22 +799,37 @@ export default function App() {
     setNotice({ tone: "success", text: `已标记为${matchStatusText(status)}。` });
   }
 
-  function triggerMatching() {
+  function triggerMatchingFromChat(input: string) {
     const now = new Date().toISOString();
     setLastMatchRunAt(now);
     setMatchPage(1);
     setSelectedMatchId("");
     setActiveTab("match");
+    setAiText("");
     if (!stocks.length || !demandCount) {
+      const text = "需要同时有供应和需求，才能生成匹配机会。先用货记录入一些供需信息。";
       setNotice({ tone: "warning", text: "需要同时有供应和需求，才能生成匹配机会。" });
+      setAiParseMessage("匹配未开始：供应或需求不足。");
+      setChatMessages((messages) => [
+        ...messages,
+        { id: `user-${Date.now()}`, role: "user", text: input },
+        { id: `assistant-${Date.now() + 1}`, role: "assistant", tone: "warning", text },
+      ]);
       return;
     }
+    const text = matchCandidates.length
+      ? `我已重新跑了一次供需匹配，生成 ${matchCandidates.length} 个机会，其中 ${strongMatchCount} 个强匹配。`
+      : "我重新跑了供需匹配，但暂时没有达到推荐阈值的机会。可以继续补充型号、规格、城市或数量。";
     setNotice({
       tone: matchCandidates.length ? "success" : "info",
-      text: matchCandidates.length
-        ? `已重新匹配，生成 ${matchCandidates.length} 个机会，其中 ${strongMatchCount} 个强匹配。`
-        : "已重新匹配，但暂时没有达到推荐阈值的机会。",
+      text,
     });
+    setAiParseMessage("已由智能货记触发供需匹配。");
+    setChatMessages((messages) => [
+      ...messages,
+      { id: `user-${Date.now()}`, role: "user", text: input },
+      { id: `assistant-${Date.now() + 1}`, role: "assistant", tone: matchCandidates.length ? "success" : "info", text },
+    ]);
   }
 
   async function copyMatchSummary(candidate: MatchCandidate) {
@@ -851,6 +867,10 @@ export default function App() {
     if (!input) {
       setAiParseMessage("请先输入或粘贴需要解析的供需文本。");
       setNotice({ tone: "warning", text: "货记输入为空。" });
+      return;
+    }
+    if (isMatchCommand(input)) {
+      triggerMatchingFromChat(input);
       return;
     }
     const creditCost = aiParseCreditCost(input);
@@ -1185,7 +1205,7 @@ export default function App() {
                       value={aiText}
                       onChange={(event) => setAiText(event.target.value)}
                       className="smart-input field-surface min-h-32 w-full resize-y rounded-md p-4 text-neutral-900 outline-none placeholder:text-neutral-400 md:min-h-36"
-                      placeholder="粘贴微信群聊天记录，或直接输入一条供需信息。"
+                      placeholder="粘贴微信群聊天记录，或输入“匹配供需”。"
                     />
                     {aiParseMessage && (
                       <p className="meta-pill rounded-md px-3 py-2">{aiParseMessage}</p>
@@ -1204,7 +1224,7 @@ export default function App() {
                       className="primary-button inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-sm font-medium disabled:cursor-not-allowed"
                     >
                       <SendHorizontal className="h-4 w-4" />
-                      {isAiParsing ? "AI 正在解析..." : "智能解析"}
+                      {isAiParsing ? "AI 正在解析..." : chatCommandHint ? "触发匹配" : "发送给货记"}
                     </button>
                   </div>
                 </Panel>
@@ -1359,13 +1379,12 @@ export default function App() {
                   setMatchView(value);
                   setMatchPage(1);
                 }} />
-                <MatchRunBar
+                <MatchStatusBar
                   total={matchCandidates.length}
                   strongCount={strongMatchCount}
                   demandCount={demandCount}
                   supplyCount={stocks.length}
                   lastRunAt={lastMatchRunAt}
-                  onRun={triggerMatching}
                 />
                 <FilterPanel
                   title="筛选匹配"
@@ -1983,22 +2002,19 @@ function MatchViewSwitch({ value, onChange }: { value: MatchView; onChange: (val
   );
 }
 
-function MatchRunBar({
+function MatchStatusBar({
   total,
   strongCount,
   demandCount,
   supplyCount,
   lastRunAt,
-  onRun,
 }: {
   total: number;
   strongCount: number;
   demandCount: number;
   supplyCount: number;
   lastRunAt: string;
-  onRun: () => void;
 }) {
-  const disabled = !supplyCount || !demandCount;
   return (
     <div className="match-run-bar surface-card flex flex-col gap-3 rounded-md p-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
@@ -2007,17 +2023,12 @@ function MatchRunBar({
           <Badge tone="blue">{`${strongCount} 个强匹配`}</Badge>
           <span className="caption-text">供应 {supplyCount} · 需求 {demandCount} · 上次 {formatMinuteTime(lastRunAt)}</span>
         </div>
-        <p className="mt-1 text-sm font-medium text-neutral-700">点击后会基于当前供应和需求重新生成匹配机会。</p>
+        <p className="mt-1 text-sm font-medium text-neutral-700">匹配由智能货记对话触发，结果页负责查看、筛选和跟进。</p>
       </div>
-      <button
-        type="button"
-        onClick={onRun}
-        disabled={disabled}
-        className="primary-button inline-flex shrink-0 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed"
-      >
+      <div className="meta-pill inline-flex shrink-0 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-neutral-600">
         <GitCompareArrows className="h-4 w-4" />
-        重新匹配
-      </button>
+        对话触发
+      </div>
     </div>
   );
 }
@@ -3417,6 +3428,13 @@ function parseAiText(text: string) {
       rawText: text,
     }),
   };
+}
+
+function isMatchCommand(text: string): boolean {
+  const compact = text.replace(/\s+/g, "");
+  if (!compact || compact.length > 24 || /[:：\n]/.test(text)) return false;
+  if (/(^|[，,。；;])(出|收|求购|找货|现货出|高价收)/.test(text)) return false;
+  return /^(帮我|请|给我)?(重新|再|开始|触发|执行|生成)?(供需匹配|匹配供需|匹配|找机会|机会匹配)(一下|看看)?$/.test(compact);
 }
 
 const tradeModeOptions: Array<{ label: string; value: TradeMode }> = [
