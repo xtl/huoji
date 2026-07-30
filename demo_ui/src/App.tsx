@@ -3623,11 +3623,12 @@ function scoreSupplyDemandMatch(
   if (priceScore.score >= 5) reasons.push(priceScore.reason);
   if (priceScore.risk) riskNotes.push(priceScore.risk);
 
-  const recencyScore = recencyMatchScore(stock.createdAt);
-  add("时效", recencyScore.score, 5, recencyScore.note);
-  if (recencyScore.score >= 4) reasons.push(recencyScore.reason);
+  const sourceTimeScore = sourceTimeMatchScore(demand.publishedAt, stock.createdAt);
+  add("时间", sourceTimeScore.score, 5, sourceTimeScore.note);
+  if (sourceTimeScore.score >= 4) reasons.push(sourceTimeScore.reason);
+  if (sourceTimeScore.risk) riskNotes.push(sourceTimeScore.risk);
 
-  const finalScore = Math.min(100, Math.round(scoreTotal));
+  const finalScore = Math.min(100, sourceTimeScore.scoreCap, Math.round(scoreTotal));
   if (finalScore < 58) return null;
   const id = matchCandidateId(demand, stock);
   return {
@@ -3902,11 +3903,70 @@ function priceMatchScore(
   return { score: 0, note: "报价明显高于预算", reason: "价格偏高", risk: "报价明显超预算" };
 }
 
-function recencyMatchScore(value: string): { score: number; note: string; reason: string } {
-  const ageHours = Math.max(0, (Date.now() - createdTimeValue(value)) / 36e5);
-  if (ageHours <= 24) return { score: 5, note: "24 小时内录入", reason: "供应很新" };
-  if (ageHours <= 24 * 7) return { score: 3, note: "7 天内录入", reason: "供应较新" };
-  return { score: 1, note: "录入时间较久", reason: "时效一般" };
+function sourceTimeMatchScore(
+  demandAt: string,
+  stockAt: string,
+): { score: number; note: string; reason: string; risk?: string; scoreCap: number } {
+  const demandTime = createdTimeValue(demandAt);
+  const stockTime = createdTimeValue(stockAt);
+  if (!demandTime || !stockTime) {
+    return {
+      score: 2,
+      note: "需求或供应时间缺失",
+      reason: "时间待确认",
+      risk: "来源时间缺失，需确认这条供需是否仍然有效",
+      scoreCap: 82,
+    };
+  }
+
+  const gapHours = Math.abs(demandTime - stockTime) / 36e5;
+  const latestAgeHours = Math.max(0, (Date.now() - Math.max(demandTime, stockTime)) / 36e5);
+  const staleCap = latestAgeHours > 24 * 30 ? 62 : latestAgeHours > 24 * 14 ? 78 : 100;
+  const staleRisk = latestAgeHours > 24 * 14 ? "供需记录整体较旧，需要确认是否仍有效" : "";
+
+  if (gapHours <= 24) {
+    return {
+      score: 5,
+      note: `供需时间接近：相隔 ${formatTimeGap(gapHours)}`,
+      reason: "供需发布时间接近",
+      risk: staleRisk || undefined,
+      scoreCap: staleCap,
+    };
+  }
+  if (gapHours <= 24 * 3) {
+    return {
+      score: 4,
+      note: `供需相隔 ${formatTimeGap(gapHours)}，仍在有效窗口内`,
+      reason: "供需时间在 3 天内",
+      risk: staleRisk || undefined,
+      scoreCap: Math.min(94, staleCap),
+    };
+  }
+  if (gapHours <= 24 * 7) {
+    return {
+      score: 2,
+      note: `供需相隔 ${formatTimeGap(gapHours)}，时效一般`,
+      reason: "供需时间偏远",
+      risk: staleRisk || "供需时间超过 3 天，联系前需要确认是否还有货/还在收",
+      scoreCap: Math.min(82, staleCap),
+    };
+  }
+  if (gapHours <= 24 * 14) {
+    return {
+      score: 1,
+      note: `供需相隔 ${formatTimeGap(gapHours)}，时效偏低`,
+      reason: "供需时间较远",
+      risk: staleRisk || "供需时间超过 7 天，匹配可信度较低",
+      scoreCap: Math.min(72, staleCap),
+    };
+  }
+  return {
+    score: 0,
+    note: `供需相隔 ${formatTimeGap(gapHours)}，不建议优先跟进`,
+    reason: "供需时间过久",
+    risk: "供需时间超过 14 天，除非人工确认，否则不建议作为有效机会",
+    scoreCap: Math.min(60, staleCap),
+  };
 }
 
 function tokenOverlap(left: string[], right: string[]): { count: number; tokens: string[] } {
@@ -4343,6 +4403,16 @@ function matchesPriceFilter(amount: number | undefined, filter: PriceFilter): bo
 function createdTimeValue(value: string): number {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
+}
+
+function formatTimeGap(hours: number): string {
+  if (!Number.isFinite(hours)) return "未知";
+  if (hours < 1) return "1 小时内";
+  if (hours < 24) return `${Math.round(hours)} 小时`;
+  const days = hours / 24;
+  if (days < 2) return `${days.toFixed(1)} 天`;
+  if (days < 10) return `${Math.round(days)} 天`;
+  return `${Math.round(days)} 天`;
 }
 
 function totalPagesFor(total: number): number {
