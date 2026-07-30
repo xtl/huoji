@@ -558,7 +558,7 @@ export default function App() {
   const matchCandidates = useMemo(() => generateMatchCandidates(stocks, marketPosts, matchStatuses), [marketPosts, matchStatuses, stocks]);
   const filteredMatches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return matchCandidates
+    const filtered = matchCandidates
       .filter((candidate) => {
         if (matchView === "RECOMMENDED" && candidate.scoreTotal < 75 && candidate.status !== "CONTACTED") return false;
         if (matchCategoryFilter !== "ALL" && candidate.demand.productCategory !== matchCategoryFilter) return false;
@@ -581,11 +581,8 @@ export default function App() {
           matchStatusText(candidate.status),
           matchLevelText(candidate.level),
         ].some((value) => String(value).toLowerCase().includes(q));
-      })
-      .sort((left, right) => {
-        if (right.scoreTotal !== left.scoreTotal) return right.scoreTotal - left.scoreTotal;
-        return createdTimeValue(right.updatedAt) - createdTimeValue(left.updatedAt);
       });
+    return sortMatchesForView(scopeMatchesForView(filtered, matchView), matchView);
   }, [matchCandidates, matchCategoryFilter, matchModeFilter, matchScoreFilter, matchStatusFilter, matchView, query]);
 
   const stockCurrentPage = clampPage(stockPage, totalPagesFor(filteredStocks.length));
@@ -1441,6 +1438,7 @@ export default function App() {
                 </FilterPanel>
                 <MatchDataTable
                   items={pagedMatches}
+                  view={matchView}
                   selectedId={selectedMatch?.id ?? ""}
                   onSelect={(candidate) => setSelectedMatchId(candidate.id)}
                 />
@@ -2035,46 +2033,55 @@ function MatchStatusBar({
 
 function MatchDataTable({
   items,
+  view,
   selectedId,
   onSelect,
 }: {
   items: MatchCandidate[];
+  view: MatchView;
   selectedId: string;
   onSelect: (item: MatchCandidate) => void;
 }) {
+  const supplyFirst = view === "SUPPLY_TO_DEMAND";
+  const primaryLabel = supplyFirst ? "供应" : "需求";
+  const secondaryLabel = supplyFirst ? "需求" : "供应";
   return (
     <div className="surface-card overflow-hidden rounded-md">
       <div className="grid gap-2 p-2 md:hidden">
-        {items.map((candidate) => (
-          <button
-            key={candidate.id}
-            type="button"
-            onClick={() => onSelect(candidate)}
-            className={`match-mobile-card rounded-md p-3 text-left ${selectedId === candidate.id ? "is-selected" : ""}`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                  <ScoreBadge candidate={candidate} />
-                  <Badge tone="blue">{productCategoryText(candidate.demand.productCategory)}</Badge>
-                  <Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge>
+        {items.map((candidate) => {
+          const primary = matchTableSide(candidate, supplyFirst ? "stock" : "demand");
+          const secondary = matchTableSide(candidate, supplyFirst ? "demand" : "stock");
+          return (
+            <button
+              key={candidate.id}
+              type="button"
+              onClick={() => onSelect(candidate)}
+              className={`match-mobile-card rounded-md p-3 text-left ${selectedId === candidate.id ? "is-selected" : ""}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                    <ScoreBadge candidate={candidate} />
+                    <Badge tone="blue">{productCategoryText(candidate.demand.productCategory)}</Badge>
+                    <Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge>
+                  </div>
+                  <p className="truncate text-sm font-semibold text-neutral-950">{primary.title}</p>
+                  <p className="mt-0.5 truncate text-xs text-neutral-500">{`可匹配${secondaryLabel}：${secondary.title}`}</p>
                 </div>
-                <p className="truncate text-sm font-semibold text-neutral-950">{candidate.demand.title}</p>
-                <p className="mt-0.5 truncate text-xs text-neutral-500">可匹配：{candidate.stock.title}</p>
+                <Badge tone={matchStatusTone(candidate.status)}>{matchStatusText(candidate.status)}</Badge>
               </div>
-              <Badge tone={matchStatusTone(candidate.status)}>{matchStatusText(candidate.status)}</Badge>
-            </div>
-            <p className="mt-2 line-clamp-2 text-xs font-medium text-neutral-500">{candidate.reasons.slice(0, 2).join("，") || "等待补充匹配原因"}</p>
-          </button>
-        ))}
+              <p className="mt-2 line-clamp-2 text-xs font-medium text-neutral-500">{candidate.reasons.slice(0, 2).join("，") || "等待补充匹配原因"}</p>
+            </button>
+          );
+        })}
       </div>
       <div className="hidden overflow-x-auto md:block">
         <table className="huoji-table min-w-[1060px]">
           <thead>
             <tr>
               <th className="w-[110px]">匹配度</th>
-              <th>需求</th>
-              <th>供应</th>
+              <th>{primaryLabel}</th>
+              <th>{secondaryLabel}</th>
               <th className="w-[94px]">城市</th>
               <th className="w-[96px]">数量</th>
               <th className="w-[96px]">交易</th>
@@ -2083,32 +2090,36 @@ function MatchDataTable({
             </tr>
           </thead>
           <tbody>
-            {items.map((candidate) => (
-              <tr
-                key={candidate.id}
-                onClick={() => onSelect(candidate)}
-                className={selectedId === candidate.id ? "is-selected" : ""}
-              >
-                <td><ScoreBadge candidate={candidate} /></td>
-                <td>
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-neutral-950">{candidate.demand.title}</p>
-                    <p className="truncate text-xs text-neutral-500">{candidate.demand.sourceContact}</p>
-                  </div>
-                </td>
-                <td>
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-neutral-950">{candidate.stock.title}</p>
-                    <p className="truncate text-xs text-neutral-500">{candidate.stock.sourceContact}</p>
-                  </div>
-                </td>
-                <td>{candidate.stock.locationCity || candidate.demand.locationCity || "待确认"}</td>
-                <td>{quantityText(candidate.stock.quantity, candidate.stock.quantityUnit)} / {quantityText(candidate.demand.quantity, candidate.demand.quantityUnit)}</td>
-                <td><Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge></td>
-                <td><Badge tone={matchStatusTone(candidate.status)}>{matchStatusText(candidate.status)}</Badge></td>
-                <td>{formatHourTime(candidate.updatedAt)}</td>
-              </tr>
-            ))}
+            {items.map((candidate) => {
+              const primary = matchTableSide(candidate, supplyFirst ? "stock" : "demand");
+              const secondary = matchTableSide(candidate, supplyFirst ? "demand" : "stock");
+              return (
+                <tr
+                  key={candidate.id}
+                  onClick={() => onSelect(candidate)}
+                  className={selectedId === candidate.id ? "is-selected" : ""}
+                >
+                  <td><ScoreBadge candidate={candidate} /></td>
+                  <td>
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-neutral-950">{primary.title}</p>
+                      <p className="truncate text-xs text-neutral-500">{primary.sourceContact}</p>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-neutral-950">{secondary.title}</p>
+                      <p className="truncate text-xs text-neutral-500">{secondary.sourceContact}</p>
+                    </div>
+                  </td>
+                  <td>{primary.locationCity || secondary.locationCity || "待确认"}</td>
+                  <td>{quantityText(primary.quantity, primary.quantityUnit)} / {quantityText(secondary.quantity, secondary.quantityUnit)}</td>
+                  <td><Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge></td>
+                  <td><Badge tone={matchStatusTone(candidate.status)}>{matchStatusText(candidate.status)}</Badge></td>
+                  <td>{formatHourTime(candidate.updatedAt)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -3931,6 +3942,41 @@ function dedupeMatchCandidates(candidates: MatchCandidate[]): MatchCandidate[] {
   return Array.from(bestById.values());
 }
 
+function scopeMatchesForView(candidates: MatchCandidate[], view: MatchView): MatchCandidate[] {
+  if (view === "DEMAND_TO_SUPPLY") return topMatchesByGroup(candidates, (candidate) => marketIdentity(candidate.demand), 8);
+  if (view === "SUPPLY_TO_DEMAND") return topMatchesByGroup(candidates, (candidate) => stockIdentity(candidate.stock), 8);
+  return candidates;
+}
+
+function topMatchesByGroup(
+  candidates: MatchCandidate[],
+  groupKey: (candidate: MatchCandidate) => string,
+  limit: number,
+): MatchCandidate[] {
+  const grouped = new Map<string, MatchCandidate[]>();
+  candidates.forEach((candidate) => {
+    const key = groupKey(candidate);
+    grouped.set(key, [...(grouped.get(key) ?? []), candidate]);
+  });
+  return Array.from(grouped.values()).flatMap((items) =>
+    items.sort((left, right) => compareMatchCandidate(right, left)).slice(0, limit),
+  );
+}
+
+function sortMatchesForView(candidates: MatchCandidate[], view: MatchView): MatchCandidate[] {
+  return [...candidates].sort((left, right) => {
+    if (view === "DEMAND_TO_SUPPLY") {
+      const demandTime = createdTimeValue(right.demand.publishedAt) - createdTimeValue(left.demand.publishedAt);
+      if (demandTime !== 0) return demandTime;
+    }
+    if (view === "SUPPLY_TO_DEMAND") {
+      const stockTime = createdTimeValue(right.stock.createdAt) - createdTimeValue(left.stock.createdAt);
+      if (stockTime !== 0) return stockTime;
+    }
+    return compareMatchCandidate(right, left);
+  });
+}
+
 function compareMatchCandidate(left: MatchCandidate, right: MatchCandidate): number {
   if (left.scoreTotal !== right.scoreTotal) return left.scoreTotal - right.scoreTotal;
   return createdTimeValue(left.updatedAt) - createdTimeValue(right.updatedAt);
@@ -3938,6 +3984,23 @@ function compareMatchCandidate(left: MatchCandidate, right: MatchCandidate): num
 
 function matchCandidateId(demand: MarketPost, stock: StockItem): string {
   return `match:${marketIdentity(demand)}:${stockIdentity(stock)}`;
+}
+
+function matchTableSide(candidate: MatchCandidate, side: "demand" | "stock"): {
+  title: string;
+  sourceContact: string;
+  locationCity: string;
+  quantity: number;
+  quantityUnit: string;
+} {
+  const item = side === "demand" ? candidate.demand : candidate.stock;
+  return {
+    title: item.title,
+    sourceContact: item.sourceContact,
+    locationCity: item.locationCity,
+    quantity: item.quantity,
+    quantityUnit: item.quantityUnit,
+  };
 }
 
 function matchLevel(score: number): MatchScoreLevel {
