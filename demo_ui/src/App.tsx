@@ -8,7 +8,6 @@ import {
   ClipboardCheck,
   Compass,
   CreditCard,
-  Database,
   LogOut,
   MessageCircle,
   PanelLeftClose,
@@ -846,9 +845,7 @@ export default function App() {
         <aside className={`sidebar-surface hidden py-4 md:block ${sidebarCollapsed ? "px-2" : "px-3"}`}>
           <div className={`mb-5 flex items-center gap-2 px-2 ${sidebarCollapsed ? "justify-center" : "justify-between"}`}>
             <div className="flex min-w-0 items-center gap-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-neutral-950 text-white shadow-sm">
-                <Database className="h-4 w-4" />
-              </div>
+              <BrandIcon size="sm" />
               {!sidebarCollapsed && (
                 <div className="min-w-0">
                   <h1 className="truncate text-[15px] font-semibold leading-tight text-neutral-950">货记</h1>
@@ -1461,6 +1458,17 @@ function TransactionList({ transactions }: { transactions: CreditTransaction[] }
   );
 }
 
+function BrandIcon({ size = "md" }: { size?: "sm" | "md" }) {
+  const className = size === "sm" ? "h-8 w-8" : "h-9 w-9";
+  return (
+    <img
+      src="/huoji-icon.png"
+      alt="货记"
+      className={`${className} shrink-0 rounded-md object-cover shadow-sm`}
+    />
+  );
+}
+
 function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
@@ -1641,9 +1649,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
       <main className="grid w-full max-w-5xl gap-4 md:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
         <section className="surface-card rounded-md p-5 md:p-6">
           <div className="mb-6 flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-neutral-950 text-white shadow-sm">
-              <Database className="h-4 w-4" />
-            </div>
+            <BrandIcon />
             <div>
               <h1 className="section-title">货记</h1>
               <p className="caption-text">AI 硬件供需台账</p>
