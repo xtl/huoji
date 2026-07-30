@@ -140,20 +140,6 @@ button:disabled {
     backdrop-filter: blur(18px);
   }
 
-  .page-title {
-    color: #111111;
-    font-size: var(--text-page);
-    font-weight: 620;
-    letter-spacing: 0;
-    line-height: var(--line-tight);
-  }
-
-  @media (min-width: 768px) {
-    .page-title {
-      font-size: var(--text-page-lg);
-    }
-  }
-
   .section-title {
     color: #1f1f1f;
     font-size: var(--text-title);
@@ -529,10 +515,6 @@ button:disabled {
   }
 
   @media (max-width: 767px) {
-    .page-title {
-      font-size: 22px;
-    }
-
     .section-title {
       font-size: 15px;
     }

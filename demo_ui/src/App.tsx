@@ -47,12 +47,6 @@ const LIST_PAGE_SIZE = 30;
 const AUTH_STORAGE_KEY = "huoji_auth_session";
 const ACCOUNT_STORAGE_PREFIX = "huoji_account_wallet";
 const AI_EXAMPLE_TEXT = "深圳现货 H100 8卡服务器 2台 全新 价格120万";
-const pageMeta: Record<TabKey, { title: string; crumb: string }> = {
-  input: { title: "货记", crumb: "录入" },
-  stock: { title: "供应", crumb: "供应" },
-  market: { title: "需求", crumb: "需求" },
-  account: { title: "个人中心", crumb: "账户" },
-};
 
 interface ConfigItem {
   label: string;
@@ -522,15 +516,6 @@ export default function App() {
   const selectedMarket = filteredMarket.find((item) => item.id === selectedMarketId) ?? pagedMarket[0] ?? null;
   const demandCount = marketPosts.filter((post) => post.postType === "DEMAND").length;
   const verifiedStockCount = stocks.filter((item) => item.status === "VERIFIED" || item.status === "SELLABLE").length;
-  const activePage = pageMeta[activeTab];
-  const activeSummary =
-    activeTab === "input"
-      ? `${stocks.length} 条供应 / ${demandCount} 条需求 / ${draftItems.length} 待确认`
-      : activeTab === "stock"
-        ? `${filteredStocks.length} 条供应`
-        : activeTab === "market"
-          ? `${filteredMarket.length} 条需求`
-          : `${accountWallet.planName} / ${accountWallet.creditBalance} 货记分`;
   const listSearchBox = (
     <div className="surface-card group flex items-center gap-2 rounded-md px-3 py-2.5">
       <Search className="h-4 w-4 text-neutral-400 transition group-focus-within:text-neutral-700" />
@@ -899,14 +884,7 @@ export default function App() {
 
         <main className="min-w-0 pb-32 md:pb-8">
           <header className="topbar-surface sticky top-0 z-30">
-            <div className="flex items-center justify-between gap-3 px-4 py-3.5 md:px-8">
-              <div className="min-w-0">
-                <p className="caption-text mb-1">货记 / {workspaceTypeText(currentWorkspace.type)} / {activePage.crumb}</p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="page-title truncate">{activePage.title}</h2>
-                  <span className="meta-pill rounded-md px-2 py-1">{activeSummary}</span>
-                </div>
-              </div>
+            <div className="flex items-center justify-end gap-3 px-4 py-3 md:px-8">
               <div className="flex shrink-0 items-center gap-2">
                 <div className="surface-card-quiet caption-text hidden items-center gap-2 rounded-md px-3 py-1.5 sm:flex">
                   <UserRound className="h-3.5 w-3.5 text-neutral-500" />
@@ -3292,10 +3270,6 @@ function productCategoryText(category: ProductCategory): string {
     OTHER: "配件",
   };
   return map[category];
-}
-
-function workspaceTypeText(type: WorkspaceType): string {
-  return type === "PERSONAL" ? "个人空间" : "企业空间";
 }
 
 function quantityUnitForCategory(category: ProductCategory): string {
