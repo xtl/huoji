@@ -3514,8 +3514,16 @@ function generateMatchCandidates(
   posts: MarketPost[],
   statuses: Record<string, MatchStatus>,
 ): MatchCandidate[] {
-  const availableStocks = stockItems.filter((stock) => stock.status !== "EXPIRED" && stock.status !== "SOLD_OUT");
-  const demands = posts.filter((post) => post.postType === "DEMAND");
+  const availableStocks = dedupeMatchingRecords(
+    stockItems.filter((stock) => stock.status !== "EXPIRED" && stock.status !== "SOLD_OUT"),
+    stockIdentity,
+    (stock) => stock.createdAt,
+  );
+  const demands = dedupeMatchingRecords(
+    posts.filter((post) => post.postType === "DEMAND"),
+    marketIdentity,
+    (post) => post.publishedAt,
+  );
   const stockProfiles = new Map(availableStocks.map((stock) => [stock.id, buildOntologyProfile(stock)]));
   const demandProfiles = new Map(demands.map((demand) => [demand.id, buildOntologyProfile(demand)]));
   const stocksByCategory = availableStocks.reduce((map, stock) => {
@@ -3543,7 +3551,7 @@ function generateMatchCandidates(
     candidates.push(...scoredForDemand);
   });
 
-  return candidates
+  return dedupeMatchCandidates(candidates)
     .sort((left, right) => {
       if (right.scoreTotal !== left.scoreTotal) return right.scoreTotal - left.scoreTotal;
       return createdTimeValue(right.updatedAt) - createdTimeValue(left.updatedAt);
@@ -3610,7 +3618,7 @@ function scoreSupplyDemandMatch(
 
   const finalScore = Math.min(100, Math.round(scoreTotal));
   if (finalScore < 58) return null;
-  const id = matchCandidateId(demand.id, stock.id);
+  const id = matchCandidateId(demand, stock);
   return {
     id,
     demand,
@@ -3896,8 +3904,40 @@ function tokenOverlap(left: string[], right: string[]): { count: number; tokens:
   return { count: tokens.length, tokens };
 }
 
-function matchCandidateId(demandId: string, stockId: string): string {
-  return `match:${demandId}:${stockId}`;
+function dedupeMatchingRecords<T>(
+  items: T[],
+  identity: (item: T) => string,
+  timeValue: (item: T) => string,
+): T[] {
+  const latestByIdentity = new Map<string, T>();
+  items.forEach((item) => {
+    const key = identity(item);
+    const existing = latestByIdentity.get(key);
+    if (!existing || createdTimeValue(timeValue(item)) >= createdTimeValue(timeValue(existing))) {
+      latestByIdentity.set(key, item);
+    }
+  });
+  return Array.from(latestByIdentity.values());
+}
+
+function dedupeMatchCandidates(candidates: MatchCandidate[]): MatchCandidate[] {
+  const bestById = new Map<string, MatchCandidate>();
+  candidates.forEach((candidate) => {
+    const existing = bestById.get(candidate.id);
+    if (!existing || compareMatchCandidate(candidate, existing) > 0) {
+      bestById.set(candidate.id, candidate);
+    }
+  });
+  return Array.from(bestById.values());
+}
+
+function compareMatchCandidate(left: MatchCandidate, right: MatchCandidate): number {
+  if (left.scoreTotal !== right.scoreTotal) return left.scoreTotal - right.scoreTotal;
+  return createdTimeValue(left.updatedAt) - createdTimeValue(right.updatedAt);
+}
+
+function matchCandidateId(demand: MarketPost, stock: StockItem): string {
+  return `match:${marketIdentity(demand)}:${stockIdentity(stock)}`;
 }
 
 function matchLevel(score: number): MatchScoreLevel {
