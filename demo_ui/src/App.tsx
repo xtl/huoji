@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Compass,
   CreditCard,
+  GitCompareArrows,
   LogOut,
   MessageCircle,
   PanelLeftClose,
@@ -29,7 +30,7 @@ import {
   X,
 } from "lucide-react";
 
-type TabKey = "input" | "stock" | "market" | "account";
+type TabKey = "input" | "stock" | "market" | "match" | "account";
 type MarketType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
@@ -42,10 +43,16 @@ type CaptchaStatus = "disabled" | "loading" | "ready" | "error";
 type AccountSection = "overview" | "membership" | "credits" | "ledger";
 type MembershipPlanCode = "FREE" | "PRO_MONTHLY" | "PRO_YEARLY";
 type CreditTransactionType = "RECHARGE" | "CONSUME" | "GRANT" | "REFUND" | "ADJUST";
+type MatchStatus = "NEW" | "CONTACTED" | "IGNORED";
+type MatchScoreLevel = "STRONG" | "GOOD" | "WEAK";
+type MatchView = "RECOMMENDED" | "DEMAND_TO_SUPPLY" | "SUPPLY_TO_DEMAND";
+type MatchScoreFilter = "ALL" | MatchScoreLevel;
+type MatchStatusFilter = "ALL" | MatchStatus;
 
 const LIST_PAGE_SIZE = 30;
 const AUTH_STORAGE_KEY = "huoji_auth_session";
 const ACCOUNT_STORAGE_PREFIX = "huoji_account_wallet";
+const MATCH_STATUS_STORAGE_PREFIX = "huoji_match_statuses";
 const AI_EXAMPLE_TEXT = "深圳现货 H100 8卡服务器 2台 全新 价格120万";
 
 interface ConfigItem {
@@ -141,6 +148,35 @@ interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   tone?: NoticeTone;
+}
+
+interface OntologyProfile {
+  category: ProductCategory;
+  text: string;
+  canonicalText: string;
+  modelKey: string;
+  tokens: string[];
+  specs: Record<string, string>;
+}
+
+interface MatchScoreDetail {
+  label: string;
+  score: number;
+  max: number;
+  note: string;
+}
+
+interface MatchCandidate {
+  id: string;
+  demand: MarketPost;
+  stock: StockItem;
+  scoreTotal: number;
+  level: MatchScoreLevel;
+  scoreDetail: MatchScoreDetail[];
+  reasons: string[];
+  riskNotes: string[];
+  status: MatchStatus;
+  updatedAt: string;
 }
 
 interface EntryOverrides {
@@ -407,8 +443,17 @@ export default function App() {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [stockPage, setStockPage] = useState(1);
   const [marketPage, setMarketPage] = useState(1);
+  const [matchPage, setMatchPage] = useState(1);
   const [selectedStockId, setSelectedStockId] = useState("");
   const [selectedMarketId, setSelectedMarketId] = useState("");
+  const [selectedMatchId, setSelectedMatchId] = useState("");
+  const [matchView, setMatchView] = useState<MatchView>("RECOMMENDED");
+  const [matchCategoryFilter, setMatchCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
+  const [matchModeFilter, setMatchModeFilter] = useState<TradeMode | "ALL">("ALL");
+  const [matchScoreFilter, setMatchScoreFilter] = useState<MatchScoreFilter>("ALL");
+  const [matchStatusFilter, setMatchStatusFilter] = useState<MatchStatusFilter>("ALL");
+  const [matchFiltersOpen, setMatchFiltersOpen] = useState(false);
+  const [matchStatuses, setMatchStatuses] = useState<Record<string, MatchStatus>>(() => loadMatchStatuses(authSession));
   const [draftItems, setDraftItems] = useState<TradeDraft[]>([]);
   const [draftPage, setDraftPage] = useState(1);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -431,8 +476,10 @@ export default function App() {
     setQuery("");
     setStockPage(1);
     setMarketPage(1);
+    setMatchPage(1);
     setDraftPage(1);
     setAccountSection("overview");
+    setMatchStatuses(loadMatchStatuses(authSession));
   }, [authSession?.currentWorkspaceId]);
 
   const filteredStocks = useMemo(() => {
@@ -506,16 +553,53 @@ export default function App() {
     return [{ label: "全部来源用户", value: "ALL" }, ...contacts.map((contact) => ({ label: contact, value: contact }))];
   }, [marketPosts]);
 
+  const matchCandidates = useMemo(() => generateMatchCandidates(stocks, marketPosts, matchStatuses), [marketPosts, matchStatuses, stocks]);
+  const filteredMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return matchCandidates
+      .filter((candidate) => {
+        if (matchView === "RECOMMENDED" && candidate.scoreTotal < 75 && candidate.status !== "CONTACTED") return false;
+        if (matchCategoryFilter !== "ALL" && candidate.demand.productCategory !== matchCategoryFilter) return false;
+        if (matchModeFilter !== "ALL" && candidate.demand.tradeMode !== matchModeFilter) return false;
+        if (matchScoreFilter !== "ALL" && candidate.level !== matchScoreFilter) return false;
+        if (matchStatusFilter !== "ALL" && candidate.status !== matchStatusFilter) return false;
+        if (!q) return true;
+        return [
+          candidate.demand.title,
+          candidate.demand.gpuModel,
+          candidate.demand.locationCity,
+          candidate.demand.sourceContact,
+          candidate.stock.title,
+          candidate.stock.gpuModel,
+          candidate.stock.locationCity,
+          candidate.stock.sourceContact,
+          candidate.reasons.join(" "),
+          candidate.riskNotes.join(" "),
+          candidate.scoreTotal,
+          matchStatusText(candidate.status),
+          matchLevelText(candidate.level),
+        ].some((value) => String(value).toLowerCase().includes(q));
+      })
+      .sort((left, right) => {
+        if (right.scoreTotal !== left.scoreTotal) return right.scoreTotal - left.scoreTotal;
+        return createdTimeValue(right.updatedAt) - createdTimeValue(left.updatedAt);
+      });
+  }, [matchCandidates, matchCategoryFilter, matchModeFilter, matchScoreFilter, matchStatusFilter, matchView, query]);
+
   const stockCurrentPage = clampPage(stockPage, totalPagesFor(filteredStocks.length));
   const marketCurrentPage = clampPage(marketPage, totalPagesFor(filteredMarket.length));
+  const matchCurrentPage = clampPage(matchPage, totalPagesFor(filteredMatches.length));
   const draftCurrentPage = clampPage(draftPage, totalPagesFor(draftItems.length));
   const pagedStocks = filteredStocks.slice((stockCurrentPage - 1) * LIST_PAGE_SIZE, stockCurrentPage * LIST_PAGE_SIZE);
   const pagedMarket = filteredMarket.slice((marketCurrentPage - 1) * LIST_PAGE_SIZE, marketCurrentPage * LIST_PAGE_SIZE);
+  const pagedMatches = filteredMatches.slice((matchCurrentPage - 1) * LIST_PAGE_SIZE, matchCurrentPage * LIST_PAGE_SIZE);
   const pagedDrafts = draftItems.slice((draftCurrentPage - 1) * LIST_PAGE_SIZE, draftCurrentPage * LIST_PAGE_SIZE);
   const selectedStock = filteredStocks.find((item) => item.id === selectedStockId) ?? pagedStocks[0] ?? null;
   const selectedMarket = filteredMarket.find((item) => item.id === selectedMarketId) ?? pagedMarket[0] ?? null;
+  const selectedMatch = filteredMatches.find((item) => item.id === selectedMatchId) ?? pagedMatches[0] ?? null;
   const demandCount = marketPosts.filter((post) => post.postType === "DEMAND").length;
   const verifiedStockCount = stocks.filter((item) => item.status === "VERIFIED" || item.status === "SELLABLE").length;
+  const strongMatchCount = matchCandidates.filter((item) => item.level === "STRONG").length;
   const listSearchBox = (
     <div className="surface-card group flex items-center gap-2 rounded-md px-3 py-2.5">
       <Search className="h-4 w-4 text-neutral-400 transition group-focus-within:text-neutral-700" />
@@ -525,6 +609,7 @@ export default function App() {
           setQuery(event.target.value);
           setStockPage(1);
           setMarketPage(1);
+          setMatchPage(1);
         }}
         placeholder="搜索型号、城市、来源用户、状态、配置"
         className="w-full bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
@@ -544,6 +629,12 @@ export default function App() {
     marketCategoryFilter !== "ALL",
     marketModeFilter !== "ALL",
     marketSourceContactFilter !== "ALL",
+  ].filter(Boolean).length;
+  const activeMatchFilterCount = [
+    matchCategoryFilter !== "ALL",
+    matchModeFilter !== "ALL",
+    matchScoreFilter !== "ALL",
+    matchStatusFilter !== "ALL",
   ].filter(Boolean).length;
   const draftSummary = draftItems.reduce(
     (summary, item) => ({
@@ -687,6 +778,32 @@ export default function App() {
     setMarketModeFilter("ALL");
     setMarketSourceContactFilter("ALL");
     setMarketPage(1);
+  }
+
+  function resetMatchFilters() {
+    setQuery("");
+    setMatchCategoryFilter("ALL");
+    setMatchModeFilter("ALL");
+    setMatchScoreFilter("ALL");
+    setMatchStatusFilter("ALL");
+    setMatchPage(1);
+  }
+
+  function updateMatchStatus(candidateId: string, status: MatchStatus) {
+    const next = { ...matchStatuses, [candidateId]: status };
+    setMatchStatuses(next);
+    saveMatchStatuses(authSession, next);
+    setNotice({ tone: "success", text: `已标记为${matchStatusText(status)}。` });
+  }
+
+  async function copyMatchSummary(candidate: MatchCandidate) {
+    const text = buildMatchSummary(candidate);
+    try {
+      await navigator.clipboard?.writeText(text);
+      setNotice({ tone: "success", text: "匹配摘要已复制。" });
+    } catch {
+      setNotice({ tone: "info", text });
+    }
   }
 
   function saveParsedItems(materialized: { stockItems: StockItem[]; marketItems: MarketPost[] }): SaveParsedResult {
@@ -869,6 +986,7 @@ export default function App() {
             <NavButton compact={sidebarCollapsed} active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
             <NavButton compact={sidebarCollapsed} active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
             <NavButton compact={sidebarCollapsed} active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
+            <NavButton compact={sidebarCollapsed} active={activeTab === "match"} icon={<GitCompareArrows />} label="匹配" onClick={() => setActiveTab("match")} />
             <NavButton compact={sidebarCollapsed} active={activeTab === "account"} icon={<WalletCards />} label="个人中心" onClick={() => setActiveTab("account")} />
           </nav>
 
@@ -877,6 +995,7 @@ export default function App() {
             <SideMetric label="我的供应" value={`${stocks.length}`} />
             <SideMetric label="已核实" value={`${verifiedStockCount}`} />
             <SideMetric label="需求" value={`${demandCount}`} />
+            <SideMetric label="强匹配" value={`${strongMatchCount}`} />
             <SideMetric label="货记分" value={`${accountWallet.creditBalance}`} />
           </div>
           )}
@@ -1211,6 +1330,91 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === "match" && (
+            <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]"}`}>
+              <div className="min-w-0 space-y-3">
+                {listSearchBox}
+                <MatchViewSwitch value={matchView} onChange={(value) => {
+                  setMatchView(value);
+                  setMatchPage(1);
+                }} />
+                <FilterPanel
+                  title="筛选匹配"
+                  activeCount={activeMatchFilterCount}
+                  resultText={`已生成 ${matchCandidates.length} 个机会，当前显示 ${filteredMatches.length} 个`}
+                  isOpen={matchFiltersOpen}
+                  onToggle={() => setMatchFiltersOpen((open) => !open)}
+                  onReset={resetMatchFilters}
+                >
+                  <div className="smart-filter-layout">
+                    <FilterPillGroup
+                      label="品类"
+                      value={matchCategoryFilter}
+                      options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
+                      onChange={(value) => {
+                        setMatchCategoryFilter(value as ProductCategory | "ALL");
+                        setMatchPage(1);
+                      }}
+                    />
+                    <div className={`${matchFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
+                      <FilterPillGroup
+                        label="交易"
+                        value={matchModeFilter}
+                        options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
+                        onChange={(value) => {
+                          setMatchModeFilter(value as TradeMode | "ALL");
+                          setMatchPage(1);
+                        }}
+                      />
+                      <div className="smart-filter-more match-filter-more">
+                        <FilterSelect
+                          label="匹配度"
+                          compact
+                          value={matchScoreFilter}
+                          options={matchScoreOptions}
+                          onChange={(value) => {
+                            setMatchScoreFilter(value as MatchScoreFilter);
+                            setMatchPage(1);
+                          }}
+                        />
+                        <FilterSelect
+                          label="跟进状态"
+                          compact
+                          value={matchStatusFilter}
+                          options={matchStatusOptions}
+                          onChange={(value) => {
+                            setMatchStatusFilter(value as MatchStatusFilter);
+                            setMatchPage(1);
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </FilterPanel>
+                <MatchDataTable
+                  items={pagedMatches}
+                  selectedId={selectedMatch?.id ?? ""}
+                  onSelect={(candidate) => setSelectedMatchId(candidate.id)}
+                />
+                {!pagedMatches.length && <EmptyState title="暂无匹配机会" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
+                {filteredMatches.length > 0 && (
+                  <Pagination
+                    total={filteredMatches.length}
+                    page={matchCurrentPage}
+                    onPageChange={setMatchPage}
+                  />
+                )}
+              </div>
+              <div className={`inspector-slot hidden lg:block ${inspectorCollapsed ? "is-collapsed" : ""}`} aria-hidden={inspectorCollapsed}>
+                <MatchDetailDrawer
+                  candidate={selectedMatch}
+                  onStatusChange={updateMatchStatus}
+                  onCopy={copyMatchSummary}
+                />
+              </div>
+            </div>
+          )}
+
           {activeTab === "account" && (
             <AccountCenter
               session={authSession}
@@ -1225,10 +1429,11 @@ export default function App() {
         </main>
       </div>
 
-      <nav className="mobile-tabbar fixed inset-x-3 bottom-3 z-40 grid grid-cols-4 rounded-md px-1.5 py-1.5 md:hidden">
+      <nav className="mobile-tabbar fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 rounded-md px-1.5 py-1.5 md:hidden">
         <MobileTab active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
         <MobileTab active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
         <MobileTab active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
+        <MobileTab active={activeTab === "match"} icon={<GitCompareArrows />} label="匹配" onClick={() => setActiveTab("match")} />
         <MobileTab active={activeTab === "account"} icon={<WalletCards />} label="我的" onClick={() => setActiveTab("account")} />
       </nav>
     </div>
@@ -1718,6 +1923,272 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           </button>
         </form>
       </main>
+    </div>
+  );
+}
+
+function MatchViewSwitch({ value, onChange }: { value: MatchView; onChange: (value: MatchView) => void }) {
+  const items: Array<{ key: MatchView; label: string; helper: string }> = [
+    { key: "RECOMMENDED", label: "推荐机会", helper: "优先看 75 分以上" },
+    { key: "DEMAND_TO_SUPPLY", label: "需求找供应", helper: "从需求反查库存" },
+    { key: "SUPPLY_TO_DEMAND", label: "供应找需求", helper: "从货源反查买家" },
+  ];
+
+  return (
+    <div className="match-switch surface-card-quiet grid gap-2 rounded-md p-1.5 md:grid-cols-3">
+      {items.map((item) => {
+        const active = value === item.key;
+        return (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => onChange(item.key)}
+            className={`rounded-md px-3 py-2 text-left transition ${active ? "bg-neutral-950 text-white shadow-sm" : "text-neutral-600 hover:bg-white/80 hover:text-neutral-950"}`}
+          >
+            <span className="block text-sm font-semibold">{item.label}</span>
+            <span className={`mt-0.5 block text-xs font-medium ${active ? "text-white/64" : "text-neutral-400"}`}>{item.helper}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function MatchDataTable({
+  items,
+  selectedId,
+  onSelect,
+}: {
+  items: MatchCandidate[];
+  selectedId: string;
+  onSelect: (item: MatchCandidate) => void;
+}) {
+  return (
+    <div className="surface-card overflow-hidden rounded-md">
+      <div className="grid gap-2 p-2 md:hidden">
+        {items.map((candidate) => (
+          <button
+            key={candidate.id}
+            type="button"
+            onClick={() => onSelect(candidate)}
+            className={`match-mobile-card rounded-md p-3 text-left ${selectedId === candidate.id ? "is-selected" : ""}`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                  <ScoreBadge candidate={candidate} />
+                  <Badge tone="blue">{productCategoryText(candidate.demand.productCategory)}</Badge>
+                  <Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge>
+                </div>
+                <p className="truncate text-sm font-semibold text-neutral-950">{candidate.demand.title}</p>
+                <p className="mt-0.5 truncate text-xs text-neutral-500">可匹配：{candidate.stock.title}</p>
+              </div>
+              <Badge tone={matchStatusTone(candidate.status)}>{matchStatusText(candidate.status)}</Badge>
+            </div>
+            <p className="mt-2 line-clamp-2 text-xs font-medium text-neutral-500">{candidate.reasons.slice(0, 2).join("，") || "等待补充匹配原因"}</p>
+          </button>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto md:block">
+        <table className="huoji-table min-w-[1060px]">
+          <thead>
+            <tr>
+              <th className="w-[110px]">匹配度</th>
+              <th>需求</th>
+              <th>供应</th>
+              <th className="w-[94px]">城市</th>
+              <th className="w-[96px]">数量</th>
+              <th className="w-[96px]">交易</th>
+              <th className="w-[98px]">状态</th>
+              <th className="w-[118px]">更新时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((candidate) => (
+              <tr
+                key={candidate.id}
+                onClick={() => onSelect(candidate)}
+                className={selectedId === candidate.id ? "is-selected" : ""}
+              >
+                <td><ScoreBadge candidate={candidate} /></td>
+                <td>
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-neutral-950">{candidate.demand.title}</p>
+                    <p className="truncate text-xs text-neutral-500">{candidate.demand.sourceContact}</p>
+                  </div>
+                </td>
+                <td>
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-neutral-950">{candidate.stock.title}</p>
+                    <p className="truncate text-xs text-neutral-500">{candidate.stock.sourceContact}</p>
+                  </div>
+                </td>
+                <td>{candidate.stock.locationCity || candidate.demand.locationCity || "待确认"}</td>
+                <td>{quantityText(candidate.stock.quantity, candidate.stock.quantityUnit)} / {quantityText(candidate.demand.quantity, candidate.demand.quantityUnit)}</td>
+                <td><Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge></td>
+                <td><Badge tone={matchStatusTone(candidate.status)}>{matchStatusText(candidate.status)}</Badge></td>
+                <td>{formatHourTime(candidate.updatedAt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {items.length > 0 && (
+        <div className="border-t border-neutral-100 px-3 py-2 text-xs font-medium text-neutral-400">
+          点击任意机会查看匹配解释。当前页 {items.length} 条。
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScoreBadge({ candidate }: { candidate: MatchCandidate }) {
+  return (
+    <span className={`score-badge score-badge-${candidate.level.toLowerCase()}`}>
+      <strong>{candidate.scoreTotal}</strong>
+      <span>{matchLevelText(candidate.level)}</span>
+    </span>
+  );
+}
+
+function MatchDetailDrawer({
+  candidate,
+  onStatusChange,
+  onCopy,
+}: {
+  candidate: MatchCandidate | null;
+  onStatusChange: (candidateId: string, status: MatchStatus) => void;
+  onCopy: (candidate: MatchCandidate) => void;
+}) {
+  if (!candidate) {
+    return (
+      <aside className="right-inspector surface-card hidden h-fit rounded-md p-4 lg:block">
+        <p className="text-sm font-semibold text-neutral-700">暂无匹配机会</p>
+        <p className="caption-text mt-1">系统会用本体规则把需求和供应自动归一化，再生成可解释的匹配结果。</p>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="right-inspector surface-card hidden h-fit rounded-md p-4 lg:block">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Badge tone="orange">需求</Badge>
+        <Badge tone="green">供应</Badge>
+        <Badge tone="blue">{productCategoryText(candidate.demand.productCategory)}</Badge>
+        <Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge>
+      </div>
+      <div className="score-hero rounded-md p-3">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="caption-text">综合匹配度</p>
+            <p className="mt-1 text-3xl font-semibold text-neutral-950">{candidate.scoreTotal}</p>
+          </div>
+          <Badge tone={matchLevelTone(candidate.level)}>{matchLevelText(candidate.level)}</Badge>
+        </div>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-neutral-950/10">
+          <div className="h-full rounded-full bg-neutral-950" style={{ width: `${candidate.scoreTotal}%` }} />
+        </div>
+      </div>
+
+      <section className="mt-4">
+        <p className="mb-2 text-xs font-semibold text-neutral-500">为什么匹配</p>
+        <div className="grid gap-2">
+          {candidate.reasons.map((reason) => (
+            <div key={reason} className="flex gap-2 rounded-md bg-emerald-50/80 px-3 py-2 text-sm font-medium text-emerald-800">
+              <Check className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{reason}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {candidate.riskNotes.length > 0 && (
+        <section className="mt-4">
+          <p className="mb-2 text-xs font-semibold text-neutral-500">需要确认</p>
+          <div className="grid gap-2">
+            {candidate.riskNotes.map((note) => (
+              <div key={note} className="flex gap-2 rounded-md bg-amber-50/85 px-3 py-2 text-sm font-medium text-amber-800">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{note}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="mt-4 grid gap-2">
+        <MatchTradeCard title="需求" item={candidate.demand} />
+        <MatchTradeCard title="供应" item={candidate.stock} />
+      </section>
+
+      <section className="mt-4 border-t border-neutral-100 pt-3">
+        <p className="mb-2 text-xs font-semibold text-neutral-500">打分明细</p>
+        <div className="grid gap-2">
+          {candidate.scoreDetail.map((detail) => (
+            <div key={detail.label} className="score-detail-row">
+              <div className="flex items-center justify-between gap-2 text-xs font-medium">
+                <span className="text-neutral-600">{detail.label}</span>
+                <span className="text-neutral-400">{detail.score}/{detail.max}</span>
+              </div>
+              <p className="mt-1 text-xs text-neutral-500">{detail.note}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onStatusChange(candidate.id, "CONTACTED")}
+          className="primary-button inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium"
+        >
+          <MessageCircle className="h-4 w-4" />
+          已联系
+        </button>
+        <button
+          type="button"
+          onClick={() => onCopy(candidate)}
+          className="ghost-button surface-card-quiet inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium"
+        >
+          <ClipboardCheck className="h-4 w-4" />
+          复制摘要
+        </button>
+        <button
+          type="button"
+          onClick={() => onStatusChange(candidate.id, "NEW")}
+          className="ghost-button surface-card-quiet inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium"
+        >
+          新机会
+        </button>
+        <button
+          type="button"
+          onClick={() => onStatusChange(candidate.id, "IGNORED")}
+          className="ghost-button surface-card-quiet inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium"
+        >
+          忽略
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function MatchTradeCard({ title, item }: { title: string; item: StockItem | MarketPost }) {
+  const isStock = "createdAt" in item;
+  return (
+    <div className="rounded-md bg-neutral-950/[0.03] p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-neutral-500">{title}</p>
+        <span className="caption-text">{formatHourTime(isStock ? item.createdAt : item.publishedAt)}</span>
+      </div>
+      <p className="text-sm font-semibold text-neutral-950">{item.title}</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <InfoDatum label="规格" value={isStock ? stockSpecText(item) : (item.gpuModel || "待确认")} />
+        <InfoDatum label="数量" value={quantityText(item.quantity, item.quantityUnit)} />
+        <InfoDatum label="城市" value={item.locationCity || "待确认"} />
+        <InfoDatum label={isStock ? "价格" : "预算"} value={item.priceAmount ? formatMoney(item.priceAmount) : "待确认"} strong={Boolean(item.priceAmount)} />
+        <InfoDatum label="来源用户" value={item.sourceContact || "未知来源"} />
+        {!isStock && <InfoDatum label="联系方式" value={(item as MarketPost).contactMethod || "站内联系"} />}
+      </div>
     </div>
   );
 }
@@ -2911,6 +3382,512 @@ const stockPriceOptions: Array<{ label: string; value: PriceFilter }> = [
   { label: "10-50万", value: "FROM_100000_TO_500000" },
   { label: "50万以上", value: "OVER_500000" },
 ];
+
+const matchScoreOptions: Array<{ label: string; value: MatchScoreFilter }> = [
+  { label: "全部匹配度", value: "ALL" },
+  { label: "强匹配", value: "STRONG" },
+  { label: "可跟进", value: "GOOD" },
+  { label: "弱匹配", value: "WEAK" },
+];
+
+const matchStatusOptions: Array<{ label: string; value: MatchStatusFilter }> = [
+  { label: "全部状态", value: "ALL" },
+  { label: "新机会", value: "NEW" },
+  { label: "已联系", value: "CONTACTED" },
+  { label: "已忽略", value: "IGNORED" },
+];
+
+const modelAliasGroups: Array<{ key: string; aliases: string[] }> = [
+  { key: "RTX5090", aliases: ["RTX 5090", "RTX5090", "5090", "5090D", "RTX5090D", "RTX 5090D"] },
+  { key: "RTX4090", aliases: ["RTX 4090", "RTX4090", "4090", "4090D", "RTX4090D", "RTX 4090D"] },
+  { key: "PRO6000D", aliases: ["RTX PRO 6000D", "RTXPRO6000D", "PRO6000D", "PRO 6000D", "6000D", "显卡6000D"] },
+  { key: "PRO6000", aliases: ["RTX PRO 6000", "RTXPRO6000", "PRO6000", "PRO 6000", "PRO 6000 MAX-Q", "PRO6000MAX-Q", "MAX-Q"] },
+  { key: "PRO5000", aliases: ["RTX PRO 5000", "RTXPRO5000", "PRO5000", "PRO 5000"] },
+  { key: "H100", aliases: ["H100", "H 100"] },
+  { key: "H200", aliases: ["H200", "H 200"] },
+  { key: "B200", aliases: ["B200", "B 200"] },
+  { key: "B300", aliases: ["B300", "B 300"] },
+  { key: "GB300", aliases: ["GB300", "GB 300"] },
+  { key: "A100", aliases: ["A100", "A 100"] },
+  { key: "A800", aliases: ["A800", "A 800"] },
+  { key: "L40S", aliases: ["L40S", "L 40S"] },
+];
+
+const cityClusterMap: Record<string, string[]> = {
+  深圳: ["深圳", "香港", "国内", "大陆"],
+  香港: ["香港", "深圳", "国内", "大陆"],
+  上海: ["上海", "国内", "大陆"],
+  北京: ["北京", "国内", "大陆"],
+  广州: ["广州", "深圳", "国内", "大陆"],
+  国内: ["国内", "大陆", "深圳", "香港", "上海", "北京", "广州", "杭州", "苏州", "成都"],
+  大陆: ["大陆", "国内", "深圳", "上海", "北京", "广州", "杭州", "苏州", "成都"],
+};
+
+function generateMatchCandidates(
+  stockItems: StockItem[],
+  posts: MarketPost[],
+  statuses: Record<string, MatchStatus>,
+): MatchCandidate[] {
+  const availableStocks = stockItems.filter((stock) => stock.status !== "EXPIRED" && stock.status !== "SOLD_OUT");
+  const demands = posts.filter((post) => post.postType === "DEMAND");
+  const stockProfiles = new Map(availableStocks.map((stock) => [stock.id, buildOntologyProfile(stock)]));
+  const demandProfiles = new Map(demands.map((demand) => [demand.id, buildOntologyProfile(demand)]));
+  const stocksByCategory = availableStocks.reduce((map, stock) => {
+    const list = map.get(stock.productCategory) ?? [];
+    list.push(stock);
+    map.set(stock.productCategory, list);
+    return map;
+  }, new Map<ProductCategory, StockItem[]>());
+
+  const candidates: MatchCandidate[] = [];
+  demands.forEach((demand) => {
+    const demandProfile = demandProfiles.get(demand.id);
+    if (!demandProfile) return;
+    const scopedStocks = stocksByCategory.get(demand.productCategory) ?? [];
+    const scoredForDemand = scopedStocks
+      .map((stock) => {
+        const stockProfile = stockProfiles.get(stock.id);
+        if (!stockProfile) return null;
+        return scoreSupplyDemandMatch(demand, stock, demandProfile, stockProfile, statuses);
+      })
+      .filter((candidate): candidate is MatchCandidate => Boolean(candidate))
+      .sort((left, right) => right.scoreTotal - left.scoreTotal)
+      .slice(0, 8);
+    candidates.push(...scoredForDemand);
+  });
+
+  return candidates
+    .sort((left, right) => {
+      if (right.scoreTotal !== left.scoreTotal) return right.scoreTotal - left.scoreTotal;
+      return createdTimeValue(right.updatedAt) - createdTimeValue(left.updatedAt);
+    })
+    .slice(0, 3000);
+}
+
+function scoreSupplyDemandMatch(
+  demand: MarketPost,
+  stock: StockItem,
+  demandProfile: OntologyProfile,
+  stockProfile: OntologyProfile,
+  statuses: Record<string, MatchStatus>,
+): MatchCandidate | null {
+  if (demand.productCategory !== stock.productCategory) return null;
+  const scoreDetail: MatchScoreDetail[] = [];
+  const reasons: string[] = [];
+  const riskNotes: string[] = [];
+  let scoreTotal = 0;
+
+  function add(label: string, score: number, max: number, note: string) {
+    const normalizedScore = Math.max(0, Math.min(max, Math.round(score)));
+    scoreTotal += normalizedScore;
+    scoreDetail.push({ label, score: normalizedScore, max, note });
+  }
+
+  add("品类", 15, 15, `${productCategoryText(demand.productCategory)} 对 ${productCategoryText(stock.productCategory)}`);
+  reasons.push(`品类一致：${productCategoryText(demand.productCategory)}`);
+
+  const modelScore = modelMatchScore(demandProfile, stockProfile);
+  add("型号", modelScore.score, 30, modelScore.note);
+  if (modelScore.score >= 24) reasons.push(modelScore.reason);
+  if (modelScore.score > 0 && modelScore.score < 24) riskNotes.push(modelScore.note);
+
+  const specScore = specMatchScore(demandProfile, stockProfile, demand.productCategory);
+  add("规格", specScore.score, 15, specScore.note);
+  if (specScore.matched.length) reasons.push(`规格命中：${specScore.matched.join("、")}`);
+  if (specScore.missing.length) riskNotes.push(`规格需确认：${specScore.missing.join("、")}`);
+
+  const tradeScore = tradeModeMatchScore(demand.tradeMode, stock.tradeMode);
+  add("交易", tradeScore.score, 10, tradeScore.note);
+  if (tradeScore.score >= 8) reasons.push(tradeScore.reason);
+  if (tradeScore.risk) riskNotes.push(tradeScore.risk);
+
+  const cityScore = cityMatchScore(demand.locationCity, stock.locationCity);
+  add("城市", cityScore.score, 10, cityScore.note);
+  if (cityScore.score >= 7) reasons.push(cityScore.reason);
+  if (cityScore.risk) riskNotes.push(cityScore.risk);
+
+  const quantityScore = quantityMatchScore(demand, stock);
+  add("数量", quantityScore.score, 10, quantityScore.note);
+  if (quantityScore.score >= 8) reasons.push(quantityScore.reason);
+  if (quantityScore.risk) riskNotes.push(quantityScore.risk);
+
+  const priceScore = priceMatchScore(demand.priceAmount, stock.priceAmount);
+  add("价格", priceScore.score, 5, priceScore.note);
+  if (priceScore.score >= 5) reasons.push(priceScore.reason);
+  if (priceScore.risk) riskNotes.push(priceScore.risk);
+
+  const recencyScore = recencyMatchScore(stock.createdAt);
+  add("时效", recencyScore.score, 5, recencyScore.note);
+  if (recencyScore.score >= 4) reasons.push(recencyScore.reason);
+
+  const finalScore = Math.min(100, Math.round(scoreTotal));
+  if (finalScore < 58) return null;
+  const id = matchCandidateId(demand.id, stock.id);
+  return {
+    id,
+    demand,
+    stock,
+    scoreTotal: finalScore,
+    level: matchLevel(finalScore),
+    scoreDetail,
+    reasons: uniqueReasons(reasons).slice(0, 6),
+    riskNotes: uniqueReasons(riskNotes).slice(0, 5),
+    status: statuses[id] ?? "NEW",
+    updatedAt: latestIsoTime(demand.publishedAt, stock.createdAt),
+  };
+}
+
+function buildOntologyProfile(item: StockItem | MarketPost): OntologyProfile {
+  const category = item.productCategory;
+  const text = [
+    item.title,
+    item.gpuModel,
+    item.locationCity,
+    item.sourceContact,
+    item.tradeMode,
+    ...item.configItems.flatMap((config) => [config.label, config.value]),
+  ].join(" ");
+  const canonicalText = normalizeHardwareText(text);
+  const specs = extractOntologySpecs(text, category);
+  return {
+    category,
+    text,
+    canonicalText,
+    modelKey: resolveModelKey(canonicalText, specs, category),
+    tokens: hardwareTokens(canonicalText),
+    specs,
+  };
+}
+
+function normalizeHardwareText(value: string): string {
+  return value
+    .toUpperCase()
+    .replace(/海力士|SK HYNIX|SK海力士/g, "SK")
+    .replace(/美光|MICRON/g, "MICRON")
+    .replace(/三星|SAMSUNG/g, "SAMSUNG")
+    .replace(/希捷|SEAGATE/g, "SEAGATE")
+    .replace(/西数|WESTERN DIGITAL|WD/g, "WD")
+    .replace(/英伟达|NVIDIA/g, "NVIDIA")
+    .replace(/涡轮卡/g, "TURBO")
+    .replace(/风扇卡/g, "FAN")
+    .replace(/服务器版/g, "SERVER")
+    .replace(/工作站版/g, "WORKSTATION")
+    .replace(/拆新/g, "OPEN_BOX")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hardwareTokens(value: string): string[] {
+  const matches = value.match(/[A-Z]+\d+[A-Z-]*|\d+(?:\.\d+)?(?:TB|T|GB|G)?|\d{4,5}[A-Z+]?|[A-Z]{2,}|\p{Script=Han}{2,}/gu) ?? [];
+  const ignored = new Set(["SPOT", "FUTURES", "RENTAL", "SERVER", "OPEN_BOX", "NVIDIA"]);
+  return Array.from(new Set(matches.map((token) => token.replace(/\s+/g, "")).filter((token) => token.length > 1 && !ignored.has(token))));
+}
+
+function resolveModelKey(text: string, specs: Record<string, string>, category: ProductCategory): string {
+  for (const group of modelAliasGroups) {
+    if (group.aliases.some((alias) => text.includes(normalizeHardwareText(alias).replace(/\s+/g, "")) || text.includes(normalizeHardwareText(alias)))) {
+      return group.key;
+    }
+  }
+  if (category === "MEMORY") {
+    return [specs.capacity, specs.frequency].filter(Boolean).join("-");
+  }
+  if (category === "STORAGE") {
+    return specs.model || [specs.capacity, specs.interface].filter(Boolean).join("-");
+  }
+  if (category === "CPU") return specs.model;
+  if (category === "NETWORK") return specs.model || specs.speed;
+  return specs.model;
+}
+
+function extractOntologySpecs(rawText: string, category: ProductCategory): Record<string, string> {
+  const text = normalizeHardwareText(rawText);
+  const specs: Record<string, string> = {};
+  const brand = captureBrand(rawText);
+  if (brand) specs.brand = normalizeHardwareText(brand).replace(/\s+/g, "");
+  const capacity = text.match(/\b\d+(?:\.\d+)?\s*(?:TB|T|GB|G)\b/)?.[0]?.replace(/\s+/g, "");
+  const frequency = text.match(/\b(?:DDR[45]\s*)?(\d{4,5})\s*(?:MHZ|MT\/S|M)?\b/)?.[1];
+  const gpuCount = text.match(/\b(\d+)\s*卡\b/)?.[1] ?? text.match(/\b(\d+)\s*GPU\b/)?.[1];
+  const storageModel = text.match(/(?:PM9D3A|PM9A3|PM893|PM983A?|PM1743|P5510|P5500|P5520|P5600|P5620|PS1010|S4520|J5300|H5100|R6100|ES3500P|ST\d{8,}[A-Z]*|WUH[A-Z0-9]+|WUS[A-Z0-9]+|MG\d+[A-Z0-9]+)/i)?.[0]?.toUpperCase();
+  const cpuModel = text.match(/(?:XEON\s*)?(?:\d{4,5}[A-Z+]?|E-\d{4,5}|E5-\d{4}|W[579]-\d{4,5}X?|EPYC\s*\d{4,5}[A-Z]?)/i)?.[0]?.replace(/\s+/g, "").toUpperCase();
+
+  if (capacity) specs.capacity = capacity;
+  if (frequency && !capacity?.startsWith(frequency)) specs.frequency = frequency;
+  if (gpuCount) specs.gpuCount = gpuCount;
+  if (/FAN/.test(text)) specs.variant = "FAN";
+  if (/TURBO/.test(text)) specs.variant = "TURBO";
+  if (/PCB/.test(text)) specs.variant = "PCB";
+  if (/MAX-Q|MAXQ/.test(text)) specs.formFactor = "MAX-Q";
+  if (/U\.?2/.test(text)) specs.interface = "U.2";
+  if (/E1\.?S/.test(text)) specs.interface = "E1.S";
+  if (/M\.?2/.test(text)) specs.interface = "M.2";
+  if (/SATA/.test(text)) specs.interface = "SATA";
+  if (/SAS/.test(text)) specs.interface = "SAS";
+  if (/NVME/.test(text)) specs.protocol = "NVME";
+  if (/DDR5/.test(text)) specs.memoryGen = "DDR5";
+  if (/DDR4/.test(text)) specs.memoryGen = "DDR4";
+  if (category === "STORAGE" && storageModel) specs.model = storageModel;
+  if (category === "CPU" && cpuModel) specs.model = cpuModel;
+  if (category === "NETWORK") {
+    specs.speed = text.match(/\b\d+\s*G\b/)?.[0]?.replace(/\s+/g, "") ?? "";
+    specs.model = text.match(/(?:CONNECTX-\d|CX\d|Q3400)[A-Z0-9-]*/i)?.[0]?.toUpperCase() ?? "";
+  }
+  return specs;
+}
+
+function modelMatchScore(
+  demandProfile: OntologyProfile,
+  stockProfile: OntologyProfile,
+): { score: number; note: string; reason: string } {
+  if (demandProfile.modelKey && stockProfile.modelKey && demandProfile.modelKey === stockProfile.modelKey) {
+    return { score: 30, note: `本体型号一致：${demandProfile.modelKey}`, reason: `型号一致：${demandProfile.modelKey}` };
+  }
+  const overlap = tokenOverlap(demandProfile.tokens, stockProfile.tokens);
+  if (overlap.count >= 2) {
+    const score = Math.min(24, 10 + overlap.count * 5);
+    return { score, note: `关键词部分重合：${overlap.tokens.join("、")}`, reason: `型号关键词重合：${overlap.tokens.join("、")}` };
+  }
+  if (overlap.count === 1) {
+    return { score: 10, note: `仅命中一个型号关键词：${overlap.tokens[0]}`, reason: `型号关键词命中：${overlap.tokens[0]}` };
+  }
+  return { score: 0, note: "型号未命中，需要人工判断是否可替代", reason: "型号待确认" };
+}
+
+function specMatchScore(
+  demandProfile: OntologyProfile,
+  stockProfile: OntologyProfile,
+  category: ProductCategory,
+): { score: number; note: string; matched: string[]; missing: string[] } {
+  const weightedKeys: Record<ProductCategory, Array<{ key: string; label: string; weight: number }>> = {
+    SERVER: [
+      { key: "gpuCount", label: "GPU数量", weight: 6 },
+      { key: "capacity", label: "容量", weight: 3 },
+      { key: "interface", label: "接口", weight: 3 },
+      { key: "brand", label: "品牌", weight: 3 },
+    ],
+    GPU_CARD: [
+      { key: "variant", label: "形态", weight: 6 },
+      { key: "capacity", label: "显存", weight: 4 },
+      { key: "formFactor", label: "版本", weight: 3 },
+      { key: "brand", label: "品牌", weight: 2 },
+    ],
+    MEMORY: [
+      { key: "capacity", label: "容量", weight: 6 },
+      { key: "frequency", label: "频率", weight: 5 },
+      { key: "memoryGen", label: "代际", weight: 2 },
+      { key: "brand", label: "品牌", weight: 2 },
+    ],
+    STORAGE: [
+      { key: "capacity", label: "容量", weight: 5 },
+      { key: "interface", label: "接口", weight: 4 },
+      { key: "protocol", label: "协议", weight: 3 },
+      { key: "brand", label: "品牌", weight: 3 },
+    ],
+    CPU: [
+      { key: "model", label: "型号", weight: 10 },
+      { key: "brand", label: "品牌", weight: 5 },
+    ],
+    NETWORK: [
+      { key: "speed", label: "速率", weight: 6 },
+      { key: "model", label: "型号", weight: 6 },
+      { key: "brand", label: "品牌", weight: 3 },
+    ],
+    OTHER: [
+      { key: "model", label: "型号", weight: 8 },
+      { key: "brand", label: "品牌", weight: 4 },
+      { key: "capacity", label: "规格", weight: 3 },
+    ],
+  };
+  const matched: string[] = [];
+  const missing: string[] = [];
+  let score = 0;
+
+  weightedKeys[category].forEach((item) => {
+    const demandValue = demandProfile.specs[item.key];
+    const stockValue = stockProfile.specs[item.key];
+    if (!demandValue || !stockValue) {
+      if (demandValue || stockValue) missing.push(item.label);
+      return;
+    }
+    if (demandValue === stockValue) {
+      score += item.weight;
+      matched.push(`${item.label}${demandValue}`);
+      return;
+    }
+    if (item.key === "brand" && /SAMSUNG|SK/.test(`${demandValue}${stockValue}`)) {
+      score += Math.floor(item.weight / 2);
+      missing.push(`品牌可替代`);
+    } else {
+      missing.push(`${item.label}不一致`);
+    }
+  });
+
+  const note = matched.length ? `已命中 ${matched.join("、")}` : "规格信息不足，按弱匹配处理";
+  return { score: Math.min(15, score), note, matched, missing };
+}
+
+function tradeModeMatchScore(
+  demandMode: TradeMode,
+  stockMode: TradeMode,
+): { score: number; note: string; reason: string; risk?: string } {
+  if (demandMode === stockMode) {
+    return { score: 10, note: `交易大类一致：${tradeModeText(demandMode)}`, reason: `${tradeModeText(demandMode)}对${tradeModeText(stockMode)}` };
+  }
+  if (demandMode === "FUTURES" && stockMode === "SPOT") {
+    return { score: 8, note: "现货通常可以覆盖期货需求", reason: "现货可优先满足期货需求" };
+  }
+  if (demandMode === "SPOT" && stockMode === "FUTURES") {
+    return { score: 3, note: "需求要现货，供应为期货", reason: "交期需确认", risk: "现货需求遇到期货供应，需确认交付时间" };
+  }
+  return { score: 0, note: `${tradeModeText(demandMode)} 与 ${tradeModeText(stockMode)} 不一致`, reason: "交易大类不一致", risk: "租赁、现货、期货之间不能默认互相替代" };
+}
+
+function cityMatchScore(
+  demandCity: string,
+  stockCity: string,
+): { score: number; note: string; reason: string; risk?: string } {
+  const demand = cleanCity(demandCity);
+  const stock = cleanCity(stockCity);
+  if (!demand || demand === "待确认" || !stock || stock === "待确认") {
+    return { score: 4, note: "城市信息不完整", reason: "城市待确认", risk: "交付城市缺失，需要确认物流或面交位置" };
+  }
+  if (demand === stock) return { score: 10, note: `城市一致：${stock}`, reason: `同城交付：${stock}` };
+  if ((cityClusterMap[demand] ?? []).includes(stock) || (cityClusterMap[stock] ?? []).includes(demand)) {
+    return { score: 7, note: `${demand} 与 ${stock} 属于常见可交付范围`, reason: `交付城市接近：${demand}/${stock}` };
+  }
+  return { score: 2, note: `${demand} 与 ${stock} 跨城`, reason: "跨城可聊", risk: `城市不一致：需求 ${demand}，供应 ${stock}` };
+}
+
+function quantityMatchScore(
+  demand: MarketPost,
+  stock: StockItem,
+): { score: number; note: string; reason: string; risk?: string } {
+  if (!demand.quantity || !stock.quantity) {
+    return { score: 4, note: "需求或供应数量缺失", reason: "数量待确认", risk: "数量不完整，可能无法判断是否满足" };
+  }
+  if (stock.quantity >= demand.quantity) {
+    return { score: 10, note: `供应 ${quantityText(stock.quantity, stock.quantityUnit)} 覆盖需求 ${quantityText(demand.quantity, demand.quantityUnit)}`, reason: "数量可覆盖" };
+  }
+  const ratio = stock.quantity / demand.quantity;
+  const score = ratio >= 0.5 ? 6 : 3;
+  return {
+    score,
+    note: `供应 ${quantityText(stock.quantity, stock.quantityUnit)}，需求 ${quantityText(demand.quantity, demand.quantityUnit)}`,
+    reason: "可部分满足",
+    risk: "供应数量不足，可能需要拼单或补货",
+  };
+}
+
+function priceMatchScore(
+  demandPrice?: number,
+  stockPrice?: number,
+): { score: number; note: string; reason: string; risk?: string } {
+  if (!demandPrice || !stockPrice) {
+    return { score: 2, note: "价格或预算缺失", reason: "价格待确认", risk: "价格缺失，联系前需要补问" };
+  }
+  if (stockPrice <= demandPrice) {
+    return { score: 5, note: `供应报价 ${formatMoney(stockPrice)} 不高于预算 ${formatMoney(demandPrice)}`, reason: "价格在预算内" };
+  }
+  const overRatio = stockPrice / demandPrice;
+  if (overRatio <= 1.1) {
+    return { score: 3, note: "报价略高于预算", reason: "价格接近", risk: "报价略超预算，可以议价" };
+  }
+  return { score: 0, note: "报价明显高于预算", reason: "价格偏高", risk: "报价明显超预算" };
+}
+
+function recencyMatchScore(value: string): { score: number; note: string; reason: string } {
+  const ageHours = Math.max(0, (Date.now() - createdTimeValue(value)) / 36e5);
+  if (ageHours <= 24) return { score: 5, note: "24 小时内录入", reason: "供应很新" };
+  if (ageHours <= 24 * 7) return { score: 3, note: "7 天内录入", reason: "供应较新" };
+  return { score: 1, note: "录入时间较久", reason: "时效一般" };
+}
+
+function tokenOverlap(left: string[], right: string[]): { count: number; tokens: string[] } {
+  const rightSet = new Set(right);
+  const tokens = left.filter((token) => rightSet.has(token));
+  return { count: tokens.length, tokens };
+}
+
+function matchCandidateId(demandId: string, stockId: string): string {
+  return `match:${demandId}:${stockId}`;
+}
+
+function matchLevel(score: number): MatchScoreLevel {
+  if (score >= 90) return "STRONG";
+  if (score >= 75) return "GOOD";
+  return "WEAK";
+}
+
+function matchLevelText(level: MatchScoreLevel): string {
+  const map: Record<MatchScoreLevel, string> = {
+    STRONG: "强匹配",
+    GOOD: "可跟进",
+    WEAK: "弱匹配",
+  };
+  return map[level];
+}
+
+function matchLevelTone(level: MatchScoreLevel): BadgeTone {
+  const map: Record<MatchScoreLevel, BadgeTone> = {
+    STRONG: "green",
+    GOOD: "blue",
+    WEAK: "orange",
+  };
+  return map[level];
+}
+
+function matchStatusText(status: MatchStatus): string {
+  const map: Record<MatchStatus, string> = {
+    NEW: "新机会",
+    CONTACTED: "已联系",
+    IGNORED: "已忽略",
+  };
+  return map[status];
+}
+
+function matchStatusTone(status: MatchStatus): BadgeTone {
+  const map: Record<MatchStatus, BadgeTone> = {
+    NEW: "blue",
+    CONTACTED: "green",
+    IGNORED: "default",
+  };
+  return map[status];
+}
+
+function buildMatchSummary(candidate: MatchCandidate): string {
+  return [
+    `匹配度 ${candidate.scoreTotal}（${matchLevelText(candidate.level)}）`,
+    `需求：${candidate.demand.title}，${quantityText(candidate.demand.quantity, candidate.demand.quantityUnit)}，${candidate.demand.locationCity || "城市待确认"}，来源 ${candidate.demand.sourceContact || "未知"}`,
+    `供应：${candidate.stock.title}，${quantityText(candidate.stock.quantity, candidate.stock.quantityUnit)}，${candidate.stock.locationCity || "城市待确认"}，来源 ${candidate.stock.sourceContact || "未知"}`,
+    `原因：${candidate.reasons.join("；") || "暂无"}`,
+    candidate.riskNotes.length ? `需确认：${candidate.riskNotes.join("；")}` : "需确认：暂无明显风险",
+  ].join("\n");
+}
+
+function latestIsoTime(left: string, right: string): string {
+  return new Date(Math.max(createdTimeValue(left), createdTimeValue(right))).toISOString();
+}
+
+function uniqueReasons(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function cleanCity(value: string): string {
+  return value.replace(/市$/, "").trim();
+}
+
+function matchStatusStorageKey(session: AuthSession | null): string {
+  return `${MATCH_STATUS_STORAGE_PREFIX}:${session?.currentWorkspaceId ?? "guest"}`;
+}
+
+function loadMatchStatuses(session: AuthSession | null): Record<string, MatchStatus> {
+  return load<Record<string, MatchStatus>>(matchStatusStorageKey(session), {});
+}
+
+function saveMatchStatuses(session: AuthSession | null, statuses: Record<string, MatchStatus>): void {
+  if (!session) return;
+  localStorage.setItem(matchStatusStorageKey(session), JSON.stringify(statuses));
+}
 
 function defaultConfig(category: ProductCategory): ConfigItem[] {
   const labels: Record<ProductCategory, string[]> = {
