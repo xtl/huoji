@@ -454,6 +454,7 @@ export default function App() {
   const [matchStatusFilter, setMatchStatusFilter] = useState<MatchStatusFilter>("ALL");
   const [matchFiltersOpen, setMatchFiltersOpen] = useState(false);
   const [matchStatuses, setMatchStatuses] = useState<Record<string, MatchStatus>>(() => loadMatchStatuses(authSession));
+  const [lastMatchRunAt, setLastMatchRunAt] = useState(() => new Date().toISOString());
   const [draftItems, setDraftItems] = useState<TradeDraft[]>([]);
   const [draftPage, setDraftPage] = useState(1);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -480,6 +481,7 @@ export default function App() {
     setDraftPage(1);
     setAccountSection("overview");
     setMatchStatuses(loadMatchStatuses(authSession));
+    setLastMatchRunAt(new Date().toISOString());
   }, [authSession?.currentWorkspaceId]);
 
   const filteredStocks = useMemo(() => {
@@ -796,6 +798,24 @@ export default function App() {
     setNotice({ tone: "success", text: `已标记为${matchStatusText(status)}。` });
   }
 
+  function triggerMatching() {
+    const now = new Date().toISOString();
+    setLastMatchRunAt(now);
+    setMatchPage(1);
+    setSelectedMatchId("");
+    setActiveTab("match");
+    if (!stocks.length || !demandCount) {
+      setNotice({ tone: "warning", text: "需要同时有供应和需求，才能生成匹配机会。" });
+      return;
+    }
+    setNotice({
+      tone: matchCandidates.length ? "success" : "info",
+      text: matchCandidates.length
+        ? `已重新匹配，生成 ${matchCandidates.length} 个机会，其中 ${strongMatchCount} 个强匹配。`
+        : "已重新匹配，但暂时没有达到推荐阈值的机会。",
+    });
+  }
+
   async function copyMatchSummary(candidate: MatchCandidate) {
     const text = buildMatchSummary(candidate);
     try {
@@ -922,9 +942,10 @@ export default function App() {
     setDraftItems(draftItems.filter((item) => !selected.some((saved) => saved.id === item.id)));
     setDraftPage(1);
     const changedCount = result.stockCount + result.marketCount + result.refreshedCount;
+    if (changedCount) setLastMatchRunAt(new Date().toISOString());
     setNotice({
       tone: changedCount ? "success" : "info",
-      text: saveResultNoticeText(result),
+      text: changedCount ? `${saveResultNoticeText(result)} 匹配机会已刷新。` : saveResultNoticeText(result),
     });
     setChatMessages((messages) => [
       ...messages,
@@ -1338,6 +1359,14 @@ export default function App() {
                   setMatchView(value);
                   setMatchPage(1);
                 }} />
+                <MatchRunBar
+                  total={matchCandidates.length}
+                  strongCount={strongMatchCount}
+                  demandCount={demandCount}
+                  supplyCount={stocks.length}
+                  lastRunAt={lastMatchRunAt}
+                  onRun={triggerMatching}
+                />
                 <FilterPanel
                   title="筛选匹配"
                   activeCount={activeMatchFilterCount}
@@ -1950,6 +1979,45 @@ function MatchViewSwitch({ value, onChange }: { value: MatchView; onChange: (val
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function MatchRunBar({
+  total,
+  strongCount,
+  demandCount,
+  supplyCount,
+  lastRunAt,
+  onRun,
+}: {
+  total: number;
+  strongCount: number;
+  demandCount: number;
+  supplyCount: number;
+  lastRunAt: string;
+  onRun: () => void;
+}) {
+  const disabled = !supplyCount || !demandCount;
+  return (
+    <div className="match-run-bar surface-card flex flex-col gap-3 rounded-md p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={total ? "green" : "default"}>{total ? `${total} 个机会` : "暂无机会"}</Badge>
+          <Badge tone="blue">{`${strongCount} 个强匹配`}</Badge>
+          <span className="caption-text">供应 {supplyCount} · 需求 {demandCount} · 上次 {formatMinuteTime(lastRunAt)}</span>
+        </div>
+        <p className="mt-1 text-sm font-medium text-neutral-700">点击后会基于当前供应和需求重新生成匹配机会。</p>
+      </div>
+      <button
+        type="button"
+        onClick={onRun}
+        disabled={disabled}
+        className="primary-button inline-flex shrink-0 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed"
+      >
+        <GitCompareArrows className="h-4 w-4" />
+        重新匹配
+      </button>
     </div>
   );
 }
