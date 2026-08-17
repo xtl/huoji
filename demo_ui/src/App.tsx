@@ -48,6 +48,7 @@ type MatchScoreLevel = "STRONG" | "GOOD" | "WEAK";
 type MatchView = "RECOMMENDED" | "DEMAND_TO_SUPPLY" | "SUPPLY_TO_DEMAND";
 type MatchScoreFilter = "ALL" | MatchScoreLevel;
 type MatchStatusFilter = "ALL" | MatchStatus;
+type DateFilter = "ALL" | "TODAY" | "LAST_3_DAYS" | "LAST_7_DAYS" | "LAST_14_DAYS" | "LAST_30_DAYS";
 
 const LIST_PAGE_SIZE = 30;
 const AUTH_STORAGE_KEY = "huoji_auth_session";
@@ -273,6 +274,37 @@ interface CaptchaConfig {
   scriptUrl?: string;
 }
 
+type PaymentProductType = "CREDIT_PACKAGE" | "MEMBERSHIP_PLAN";
+type PaymentChannel = "page" | "wap";
+type PaymentStatus = "WAITING" | "PAID" | "CLOSED";
+
+interface PaymentOrderView {
+  id: string;
+  productType: PaymentProductType;
+  productId: string;
+  title: string;
+  amountYuan: string;
+  status: PaymentStatus;
+  channel: PaymentChannel;
+  createdAt: string;
+  paidAt?: string;
+  alipayTradeNo?: string;
+  entitlement: {
+    creditAmount: number;
+    planCode?: MembershipPlanCode;
+    planName?: string;
+    membershipDays?: number;
+  };
+}
+
+interface PaymentOrderResponse {
+  success?: boolean;
+  order?: PaymentOrderView;
+  paymentUrl?: string;
+  error?: string;
+  missing?: string[];
+}
+
 interface AliyunCaptchaInstance {
   show?: () => void;
   hide?: () => void;
@@ -437,6 +469,8 @@ export default function App() {
   const [stockModeFilter, setStockModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [stockPriceFilter, setStockPriceFilter] = useState<PriceFilter>("ALL");
   const [marketSourceContactFilter, setMarketSourceContactFilter] = useState("ALL");
+  const [stockDateFilter, setStockDateFilter] = useState<DateFilter>("ALL");
+  const [marketDateFilter, setMarketDateFilter] = useState<DateFilter>("ALL");
   const [stockFiltersOpen, setStockFiltersOpen] = useState(false);
   const [marketFiltersOpen, setMarketFiltersOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -452,6 +486,7 @@ export default function App() {
   const [matchModeFilter, setMatchModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [matchScoreFilter, setMatchScoreFilter] = useState<MatchScoreFilter>("ALL");
   const [matchStatusFilter, setMatchStatusFilter] = useState<MatchStatusFilter>("ALL");
+  const [matchDateFilter, setMatchDateFilter] = useState<DateFilter>("ALL");
   const [matchFiltersOpen, setMatchFiltersOpen] = useState(false);
   const [matchStatuses, setMatchStatuses] = useState<Record<string, MatchStatus>>(() => loadMatchStatuses(authSession));
   const [lastMatchRunAt, setLastMatchRunAt] = useState(() => new Date().toISOString());
@@ -467,6 +502,7 @@ export default function App() {
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [aiParseMessage, setAiParseMessage] = useState("");
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  const [paymentBusyKey, setPaymentBusyKey] = useState("");
 
   useEffect(() => {
     if (!authSession) return;
@@ -484,6 +520,18 @@ export default function App() {
     setLastMatchRunAt(new Date().toISOString());
   }, [authSession?.currentWorkspaceId]);
 
+  useEffect(() => {
+    if (!authSession) return;
+    const params = new URLSearchParams(window.location.search);
+    const returnedOrderId = params.get("payment_order") || "";
+    const pendingOrderId = localStorage.getItem(pendingPaymentStorageKey(authSession)) || "";
+    const orderId = returnedOrderId || pendingOrderId;
+    if (!orderId) return;
+    setActiveTab("account");
+    setAccountSection("ledger");
+    void refreshPaymentOrder(orderId, Boolean(returnedOrderId));
+  }, [authSession?.token]);
+
   const filteredStocks = useMemo(() => {
     const q = query.trim().toLowerCase();
     return stocks
@@ -494,6 +542,7 @@ export default function App() {
         if (stockSourceContactFilter !== "ALL" && item.sourceContact !== stockSourceContactFilter) return false;
         if (stockModeFilter !== "ALL" && item.tradeMode !== stockModeFilter) return false;
         if (!matchesPriceFilter(item.priceAmount, stockPriceFilter)) return false;
+        if (!matchesDateFilter(createdTimeValue(item.createdAt), stockDateFilter)) return false;
         if (!q) return true;
         return [
           item.title,
@@ -512,7 +561,7 @@ export default function App() {
         ].some((value) => String(value).toLowerCase().includes(q));
       })
       .sort((left, right) => createdTimeValue(right.createdAt) - createdTimeValue(left.createdAt));
-  }, [query, stockCategoryFilter, stockCityFilter, stockModeFilter, stockPriceFilter, stockSourceContactFilter, stockSourceFilter, stocks]);
+  }, [query, stockCategoryFilter, stockCityFilter, stockDateFilter, stockModeFilter, stockPriceFilter, stockSourceContactFilter, stockSourceFilter, stocks]);
 
   const stockCityOptions = useMemo(() => {
     const cities: string[] = Array.from(
@@ -534,6 +583,7 @@ export default function App() {
         if (marketModeFilter !== "ALL" && post.tradeMode !== marketModeFilter) return false;
         if (marketCategoryFilter !== "ALL" && post.productCategory !== marketCategoryFilter) return false;
         if (marketSourceContactFilter !== "ALL" && post.sourceContact !== marketSourceContactFilter) return false;
+        if (!matchesDateFilter(createdTimeValue(post.publishedAt), marketDateFilter)) return false;
         if (!q) return true;
         return [
           post.title,
@@ -548,7 +598,7 @@ export default function App() {
         ].some((value) => String(value).toLowerCase().includes(q));
       })
       .sort((left, right) => createdTimeValue(right.publishedAt) - createdTimeValue(left.publishedAt));
-  }, [query, marketCategoryFilter, marketModeFilter, marketPosts, marketSourceContactFilter]);
+  }, [query, marketCategoryFilter, marketDateFilter, marketModeFilter, marketPosts, marketSourceContactFilter]);
 
   const marketSourceContactOptions = useMemo(() => {
     const contacts = uniqueSortedLabels(marketPosts.filter((post) => post.postType === "DEMAND").map((post) => post.sourceContact).filter(Boolean));
@@ -565,6 +615,7 @@ export default function App() {
         if (matchModeFilter !== "ALL" && candidate.demand.tradeMode !== matchModeFilter) return false;
         if (matchScoreFilter !== "ALL" && candidate.level !== matchScoreFilter) return false;
         if (matchStatusFilter !== "ALL" && candidate.status !== matchStatusFilter) return false;
+        if (!matchesDateFilter(matchSourceTimeValue(candidate), matchDateFilter)) return false;
         if (!q) return true;
         return [
           candidate.demand.title,
@@ -582,8 +633,8 @@ export default function App() {
           matchLevelText(candidate.level),
         ].some((value) => String(value).toLowerCase().includes(q));
       });
-    return sortMatchesForView(scopeMatchesForView(filtered, matchView), matchView);
-  }, [matchCandidates, matchCategoryFilter, matchModeFilter, matchScoreFilter, matchStatusFilter, matchView, query]);
+    return sortMatchesForView(scopeMatchesForView(filtered, matchView));
+  }, [matchCandidates, matchCategoryFilter, matchDateFilter, matchModeFilter, matchScoreFilter, matchStatusFilter, matchView, query]);
 
   const stockCurrentPage = clampPage(stockPage, totalPagesFor(filteredStocks.length));
   const marketCurrentPage = clampPage(marketPage, totalPagesFor(filteredMarket.length));
@@ -624,17 +675,20 @@ export default function App() {
     stockSourceContactFilter !== "ALL",
     stockModeFilter !== "ALL",
     stockPriceFilter !== "ALL",
+    stockDateFilter !== "ALL",
   ].filter(Boolean).length;
   const activeMarketFilterCount = [
     marketCategoryFilter !== "ALL",
     marketModeFilter !== "ALL",
     marketSourceContactFilter !== "ALL",
+    marketDateFilter !== "ALL",
   ].filter(Boolean).length;
   const activeMatchFilterCount = [
     matchCategoryFilter !== "ALL",
     matchModeFilter !== "ALL",
     matchScoreFilter !== "ALL",
     matchStatusFilter !== "ALL",
+    matchDateFilter !== "ALL",
   ].filter(Boolean).length;
   const draftSummary = draftItems.reduce(
     (summary, item) => ({
@@ -661,7 +715,11 @@ export default function App() {
     saveAccountWalletForSession(authSession, next);
   }
 
-  function appendCreditTransaction(wallet: AccountWallet, transaction: Omit<CreditTransaction, "id" | "createdAt" | "balanceAfter">): AccountWallet {
+  function appendCreditTransaction(
+    wallet: AccountWallet,
+    transaction: Omit<CreditTransaction, "id" | "createdAt" | "balanceAfter">,
+    transactionId?: string,
+  ): AccountWallet {
     const nextBalance = Math.max(0, wallet.creditBalance + transaction.amount);
     return {
       ...wallet,
@@ -669,7 +727,7 @@ export default function App() {
       transactions: [
         {
           ...transaction,
-          id: `txn_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+          id: transactionId ?? `txn_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
           createdAt: new Date().toISOString(),
           balanceAfter: nextBalance,
         },
@@ -678,44 +736,93 @@ export default function App() {
     };
   }
 
-  function handleRechargeCredits(pack: (typeof creditPackages)[number]) {
-    const totalCredits = pack.credits + pack.bonus;
-    const nextWallet = appendCreditTransaction(accountWallet, {
-      type: "RECHARGE",
-      title: `${pack.title}充值`,
-      amount: totalCredits,
-      note: `${pack.price} · 支付接入前模拟入账`,
-    });
+  async function startAlipayPayment(productType: PaymentProductType, productId: string) {
+    if (!authSession) {
+      setNotice({ tone: "warning", text: "请先登录后再支付。" });
+      return;
+    }
+    const busyKey = `${productType}:${productId}`;
+    setPaymentBusyKey(busyKey);
+    try {
+      const response = await createAlipayPaymentOrder(authSession, productType, productId, preferredPaymentChannel());
+      if (!response.order || !response.paymentUrl) throw new Error(response.error || "支付宝订单创建失败。");
+      localStorage.setItem(pendingPaymentStorageKey(authSession), response.order.id);
+      setNotice({ tone: "info", text: "正在跳转支付宝收银台，请完成付款后返回货记。" });
+      window.location.assign(response.paymentUrl);
+    } catch (error) {
+      setNotice({ tone: "warning", text: error instanceof Error ? error.message : "支付宝支付发起失败。" });
+    } finally {
+      setPaymentBusyKey("");
+    }
+  }
+
+  async function refreshPaymentOrder(orderId: string, cleanupUrl = false, retryCount = 0) {
+    if (!authSession) return;
+    try {
+      const response = await fetchPaymentOrder(authSession, orderId);
+      if (!response.order) throw new Error(response.error || "订单状态查询失败。");
+      if (cleanupUrl) window.history.replaceState({}, "", window.location.pathname);
+      if (response.order.status === "PAID") {
+        applyPaidPaymentOrder(response.order);
+        localStorage.removeItem(pendingPaymentStorageKey(authSession));
+        return;
+      }
+      if (response.order.status === "CLOSED") {
+        localStorage.removeItem(pendingPaymentStorageKey(authSession));
+        setNotice({ tone: "warning", text: "这笔支付宝订单已关闭，未入账。" });
+        return;
+      }
+      setNotice({ tone: "info", text: "已返回货记，正在等待支付宝异步通知确认付款。" });
+      if (retryCount < 3) {
+        window.setTimeout(() => void refreshPaymentOrder(orderId, false, retryCount + 1), 3000);
+      }
+    } catch (error) {
+      setNotice({ tone: "warning", text: error instanceof Error ? error.message : "订单状态查询失败。" });
+    }
+  }
+
+  function applyPaidPaymentOrder(order: PaymentOrderView) {
+    const transactionId = `pay_${order.id}`;
+    if (accountWallet.transactions.some((transaction) => transaction.id === transactionId)) {
+      setNotice({ tone: "success", text: "这笔支付宝订单已入账。" });
+      return;
+    }
+
+    const entitlement = order.entitlement;
+    const baseWallet: AccountWallet =
+      entitlement.planCode && entitlement.planName
+        ? {
+            ...accountWallet,
+            planCode: entitlement.planCode,
+            planName: entitlement.planName,
+            membershipStatus: "ACTIVE",
+            membershipExpiresAt: addDaysFromIso(order.paidAt ?? new Date().toISOString(), entitlement.membershipDays ?? 30),
+          }
+        : accountWallet;
+    const nextWallet = appendCreditTransaction(
+      baseWallet,
+      {
+        type: order.productType === "MEMBERSHIP_PLAN" ? "GRANT" : "RECHARGE",
+        title: order.productType === "MEMBERSHIP_PLAN" ? `${order.title}权益入账` : `${order.title}充值`,
+        amount: entitlement.creditAmount,
+        note: `支付宝 ¥${order.amountYuan} · 订单 ${order.id}`,
+      },
+      transactionId,
+    );
     saveAccountWallet(nextWallet);
-    setNotice({ tone: "success", text: `已模拟充值 ${totalCredits} 货记分。` });
+    setNotice({ tone: "success", text: `${order.title}已支付成功，${entitlement.creditAmount} 货记分已入账。` });
+  }
+
+  function handleRechargeCredits(pack: (typeof creditPackages)[number]) {
+    void startAlipayPayment("CREDIT_PACKAGE", pack.id);
   }
 
   function handleUpgradePlan(planCode: MembershipPlanCode) {
     if (planCode === "FREE") {
-      setNotice({ tone: "info", text: "当前已支持免费版，Pro 支付接入后可正式开通。" });
+      setNotice({ tone: "info", text: "当前已是免费版，可直接使用基础功能。" });
       return;
     }
-    const plan = membershipPlans.find((item) => item.code === planCode);
-    if (!plan) return;
-    const expiresAt = addDaysIso(planCode === "PRO_YEARLY" ? 365 : 30);
-    const bonus = planCode === "PRO_YEARLY" ? 3000 : 300;
-    const upgradedWallet = appendCreditTransaction(
-      {
-        ...accountWallet,
-        planCode,
-        planName: plan.name,
-        membershipStatus: "ACTIVE",
-        membershipExpiresAt: expiresAt,
-      },
-      {
-        type: "GRANT",
-        title: `${plan.name}权益赠送`,
-        amount: bonus,
-        note: "支付接入前模拟开通",
-      },
-    );
-    saveAccountWallet(upgradedWallet);
-    setNotice({ tone: "success", text: `已模拟开通 ${plan.name}，赠送 ${bonus} 货记分。` });
+    void startAlipayPayment("MEMBERSHIP_PLAN", planCode);
   }
 
   function consumeCredits(amount: number, title: string, note?: string): boolean {
@@ -769,6 +876,7 @@ export default function App() {
     setStockSourceContactFilter("ALL");
     setStockModeFilter("ALL");
     setStockPriceFilter("ALL");
+    setStockDateFilter("ALL");
     setStockPage(1);
   }
 
@@ -777,6 +885,7 @@ export default function App() {
     setMarketCategoryFilter("ALL");
     setMarketModeFilter("ALL");
     setMarketSourceContactFilter("ALL");
+    setMarketDateFilter("ALL");
     setMarketPage(1);
   }
 
@@ -786,6 +895,7 @@ export default function App() {
     setMatchModeFilter("ALL");
     setMatchScoreFilter("ALL");
     setMatchStatusFilter("ALL");
+    setMatchDateFilter("ALL");
     setMatchPage(1);
   }
 
@@ -989,7 +1099,6 @@ export default function App() {
               {!sidebarCollapsed && (
                 <div className="min-w-0">
                   <h1 className="truncate text-[15px] font-semibold leading-tight text-neutral-950">货记</h1>
-                  <p className="caption-text truncate">供需情报工作台</p>
                 </div>
               )}
             </div>
@@ -1101,6 +1210,15 @@ export default function App() {
                       options={[{ label: "全部品类", value: "ALL" }, ...productCategoryOptions]}
                       onChange={(value) => {
                         setStockCategoryFilter(value as ProductCategory | "ALL");
+                        setStockPage(1);
+                      }}
+                    />
+                    <FilterPillGroup
+                      label="日期"
+                      value={stockDateFilter}
+                      options={dateFilterOptions}
+                      onChange={(value) => {
+                        setStockDateFilter(value as DateFilter);
                         setStockPage(1);
                       }}
                     />
@@ -1320,6 +1438,15 @@ export default function App() {
                         setMarketPage(1);
                       }}
                     />
+                    <FilterPillGroup
+                      label="日期"
+                      value={marketDateFilter}
+                      options={dateFilterOptions}
+                      onChange={(value) => {
+                        setMarketDateFilter(value as DateFilter);
+                        setMarketPage(1);
+                      }}
+                    />
                     <div className={`${marketFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
                       <FilterPillGroup
                         label="交易"
@@ -1401,6 +1528,15 @@ export default function App() {
                         setMatchPage(1);
                       }}
                     />
+                    <FilterPillGroup
+                      label="日期"
+                      value={matchDateFilter}
+                      options={dateFilterOptions}
+                      onChange={(value) => {
+                        setMatchDateFilter(value as DateFilter);
+                        setMatchPage(1);
+                      }}
+                    />
                     <div className={`${matchFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
                       <FilterPillGroup
                         label="交易"
@@ -1466,12 +1602,14 @@ export default function App() {
               session={authSession}
               wallet={accountWallet}
               section={accountSection}
+              paymentBusyKey={paymentBusyKey}
               onSectionChange={setAccountSection}
               onRecharge={handleRechargeCredits}
               onUpgrade={handleUpgradePlan}
             />
           )}
           </section>
+          <SiteRecordFooter className="px-4 pb-6 md:px-8" />
         </main>
       </div>
 
@@ -1490,6 +1628,7 @@ function AccountCenter({
   session,
   wallet,
   section,
+  paymentBusyKey,
   onSectionChange,
   onRecharge,
   onUpgrade,
@@ -1497,6 +1636,7 @@ function AccountCenter({
   session: AuthSession;
   wallet: AccountWallet;
   section: AccountSection;
+  paymentBusyKey: string;
   onSectionChange: (section: AccountSection) => void;
   onRecharge: (pack: (typeof creditPackages)[number]) => void;
   onUpgrade: (planCode: MembershipPlanCode) => void;
@@ -1592,16 +1732,23 @@ function AccountCenter({
                     </li>
                   ))}
                 </ul>
+                {(() => {
+                  const busy = paymentBusyKey === `MEMBERSHIP_PLAN:${plan.code}`;
+                  const current = wallet.planCode === plan.code;
+                  return (
                 <button
                   type="button"
+                  disabled={current || Boolean(paymentBusyKey)}
                   onClick={() => onUpgrade(plan.code)}
                   className={`mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium ${
-                    wallet.planCode === plan.code ? "ghost-button surface-card-quiet" : "primary-button"
+                    current ? "ghost-button surface-card-quiet" : "primary-button"
                   }`}
                 >
                   <CreditCard className="h-4 w-4" />
-                  {wallet.planCode === plan.code ? "当前方案" : "模拟开通"}
+                  {busy ? "正在唤起支付宝..." : current ? "当前方案" : "支付宝支付"}
                 </button>
+                  );
+                })()}
               </div>
             ))}
           </section>
@@ -1615,7 +1762,7 @@ function AccountCenter({
                   <p className="caption-text">货记分余额</p>
                   <p className="mt-1 text-3xl font-semibold text-neutral-950">{wallet.creditBalance}</p>
                 </div>
-                <p className="max-w-xl text-sm text-neutral-500">货记分用于 AI 解析、批量入库、后续导出和广场刷新等增值能力。当前支付未接入，充值按钮为模拟入账。</p>
+                <p className="max-w-xl text-sm text-neutral-500">货记分用于 AI 解析、批量入库、后续导出和广场刷新等增值能力。付款通过支付宝完成，到账以服务端异步通知确认为准。</p>
               </div>
             </section>
             <section className="grid gap-3 md:grid-cols-3">
@@ -1625,14 +1772,20 @@ function AccountCenter({
                   <h3 className="mt-3 text-lg font-semibold text-neutral-950">{pack.title}</h3>
                   <p className="mt-1 text-sm text-neutral-500">{pack.credits} 分{pack.bonus ? ` + ${pack.bonus} 赠送` : ""}</p>
                   <p className="mt-4 text-2xl font-semibold text-neutral-950">{pack.price}</p>
+                  {(() => {
+                    const busy = paymentBusyKey === `CREDIT_PACKAGE:${pack.id}`;
+                    return (
                   <button
                     type="button"
+                    disabled={Boolean(paymentBusyKey)}
                     onClick={() => onRecharge(pack)}
                     className="primary-button mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium"
                   >
                     <Plus className="h-4 w-4" />
-                    模拟充值
+                    {busy ? "正在唤起支付宝..." : "支付宝支付"}
                   </button>
+                    );
+                  })()}
                 </div>
               ))}
             </section>
@@ -1874,8 +2027,8 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
   }
 
   return (
-    <div className="app-shell flex min-h-screen items-center justify-center px-4 py-8 text-neutral-950">
-      <main className="grid w-full max-w-5xl gap-4 md:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
+    <div className="app-shell flex min-h-screen flex-col px-4 py-8 text-neutral-950">
+      <main className="my-auto grid w-full max-w-5xl gap-4 self-center md:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
         <section className="surface-card rounded-md p-5 md:p-6">
           <div className="mb-6 flex items-center gap-2">
             <BrandIcon />
@@ -1969,7 +2122,23 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           </button>
         </form>
       </main>
+      <SiteRecordFooter className="mt-6" />
     </div>
+  );
+}
+
+function SiteRecordFooter({ className = "" }: { className?: string }) {
+  return (
+    <footer className={`mx-auto w-full max-w-[1440px] text-center text-xs font-medium text-neutral-400 ${className}`}>
+      <a
+        href="https://beian.miit.gov.cn/"
+        target="_blank"
+        rel="noreferrer"
+        className="transition hover:text-neutral-700"
+      >
+        深圳市莫林智链科技有限公司 ICP备案/许可认证号：粤ICP备2026111786号
+      </a>
+    </footer>
   );
 }
 
@@ -3494,6 +3663,15 @@ const matchStatusOptions: Array<{ label: string; value: MatchStatusFilter }> = [
   { label: "已忽略", value: "IGNORED" },
 ];
 
+const dateFilterOptions: Array<{ label: string; value: DateFilter }> = [
+  { label: "全部日期", value: "ALL" },
+  { label: "今天", value: "TODAY" },
+  { label: "近3天", value: "LAST_3_DAYS" },
+  { label: "近7天", value: "LAST_7_DAYS" },
+  { label: "近14天", value: "LAST_14_DAYS" },
+  { label: "近30天", value: "LAST_30_DAYS" },
+];
+
 const modelAliasGroups: Array<{ key: string; aliases: string[] }> = [
   { key: "RTX5090", aliases: ["RTX 5090", "RTX5090", "5090", "5090D", "RTX5090D", "RTX 5090D"] },
   { key: "RTX4090", aliases: ["RTX 4090", "RTX4090", "4090", "4090D", "RTX4090D", "RTX 4090D"] },
@@ -3563,10 +3741,7 @@ function generateMatchCandidates(
   });
 
   return dedupeMatchCandidates(candidates)
-    .sort((left, right) => {
-      if (right.scoreTotal !== left.scoreTotal) return right.scoreTotal - left.scoreTotal;
-      return createdTimeValue(right.updatedAt) - createdTimeValue(left.updatedAt);
-    })
+    .sort((left, right) => compareMatchCandidate(right, left))
     .slice(0, 3000);
 }
 
@@ -4023,23 +4198,23 @@ function topMatchesByGroup(
   );
 }
 
-function sortMatchesForView(candidates: MatchCandidate[], view: MatchView): MatchCandidate[] {
-  return [...candidates].sort((left, right) => {
-    if (view === "DEMAND_TO_SUPPLY") {
-      const demandTime = createdTimeValue(right.demand.publishedAt) - createdTimeValue(left.demand.publishedAt);
-      if (demandTime !== 0) return demandTime;
-    }
-    if (view === "SUPPLY_TO_DEMAND") {
-      const stockTime = createdTimeValue(right.stock.createdAt) - createdTimeValue(left.stock.createdAt);
-      if (stockTime !== 0) return stockTime;
-    }
-    return compareMatchCandidate(right, left);
-  });
+function sortMatchesForView(candidates: MatchCandidate[]): MatchCandidate[] {
+  return [...candidates].sort((left, right) => compareMatchCandidate(right, left));
 }
 
 function compareMatchCandidate(left: MatchCandidate, right: MatchCandidate): number {
+  const timeDelta = matchSourceTimeValue(left) - matchSourceTimeValue(right);
+  if (timeDelta !== 0) return timeDelta;
   if (left.scoreTotal !== right.scoreTotal) return left.scoreTotal - right.scoreTotal;
   return createdTimeValue(left.updatedAt) - createdTimeValue(right.updatedAt);
+}
+
+function matchSourceTimeValue(candidate: MatchCandidate): number {
+  return Math.max(
+    createdTimeValue(candidate.demand.publishedAt),
+    createdTimeValue(candidate.stock.createdAt),
+    createdTimeValue(candidate.updatedAt),
+  );
 }
 
 function matchCandidateId(demand: MarketPost, stock: StockItem): string {
@@ -4400,6 +4575,23 @@ function matchesPriceFilter(amount: number | undefined, filter: PriceFilter): bo
   return amount >= 500000;
 }
 
+function matchesDateFilter(timeValue: number, filter: DateFilter): boolean {
+  if (filter === "ALL") return true;
+  if (!timeValue) return false;
+  if (filter === "TODAY") {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    return timeValue >= start.getTime();
+  }
+  const daysByFilter: Record<Exclude<DateFilter, "ALL" | "TODAY">, number> = {
+    LAST_3_DAYS: 3,
+    LAST_7_DAYS: 7,
+    LAST_14_DAYS: 14,
+    LAST_30_DAYS: 30,
+  };
+  return timeValue >= Date.now() - daysByFilter[filter] * 24 * 60 * 60 * 1000;
+}
+
 function createdTimeValue(value: string): number {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
@@ -4641,6 +4833,10 @@ function accountWalletStorageKey(session: AuthSession | null): string {
   return `${ACCOUNT_STORAGE_PREFIX}:${session?.user.id ?? "guest"}`;
 }
 
+function pendingPaymentStorageKey(session: AuthSession | null): string {
+  return `huoji_pending_payment:${session?.user.id ?? "guest"}:${session?.currentWorkspaceId ?? "personal"}`;
+}
+
 async function fetchCaptchaConfig(): Promise<CaptchaConfig> {
   const response = await fetch("/api/auth/captcha/config");
   const payload = (await response.json()) as CaptchaConfig & { error?: string };
@@ -4698,6 +4894,38 @@ async function logoutAuthSession(token: string): Promise<void> {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   }).catch(() => undefined);
+}
+
+async function createAlipayPaymentOrder(
+  session: AuthSession,
+  productType: PaymentProductType,
+  productId: string,
+  channel: PaymentChannel,
+): Promise<PaymentOrderResponse> {
+  const response = await fetch("/api/payments/alipay/orders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`,
+    },
+    body: JSON.stringify({ productType, productId, channel }),
+  });
+  const payload = (await response.json()) as PaymentOrderResponse;
+  if (!response.ok) throw new Error(payload.error || "支付宝订单创建失败。");
+  return payload;
+}
+
+async function fetchPaymentOrder(session: AuthSession, orderId: string): Promise<PaymentOrderResponse> {
+  const response = await fetch(`/api/payments/orders/${encodeURIComponent(orderId)}`, {
+    headers: { Authorization: `Bearer ${session.token}` },
+  });
+  const payload = (await response.json()) as PaymentOrderResponse;
+  if (!response.ok) throw new Error(payload.error || "订单状态查询失败。");
+  return payload;
+}
+
+function preferredPaymentChannel(): PaymentChannel {
+  return window.matchMedia("(max-width: 768px)").matches ? "wap" : "page";
 }
 
 function normalizePhoneInput(value: string): string {
@@ -4884,7 +5112,13 @@ function formatDate(value: string): string {
 }
 
 function addDaysIso(days: number): string {
+  return addDaysFromIso(new Date().toISOString(), days);
+}
+
+function addDaysFromIso(value: string, days: number): string {
   const date = new Date();
+  const parsed = new Date(value);
+  if (Number.isFinite(parsed.getTime())) date.setTime(parsed.getTime());
   date.setDate(date.getDate() + days);
   return date.toISOString();
 }

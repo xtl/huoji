@@ -8,3 +8,5 @@ __pycache__/
 .venv/
 .DS_Store
 Thumbs.db
+.claude/
+demo_ui/.data/

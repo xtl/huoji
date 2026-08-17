@@ -5,8 +5,9 @@
 
 import dotenv from "dotenv";
 import express from "express";
+import * as fs from "fs";
 import path from "path";
-import { createHash, createHmac, randomUUID } from "crypto";
+import { createHash, createHmac, createSign, createVerify, randomUUID } from "crypto";
 import { createServer as createViteServer } from "vite";
 
 dotenv.config();
@@ -14,6 +15,7 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
 
+app.set("trust proxy", true);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -33,6 +35,10 @@ type PostType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
 type WorkspaceType = "PERSONAL" | "ENTERPRISE";
+type MembershipPlanCode = "FREE" | "PRO_MONTHLY" | "PRO_YEARLY";
+type PaymentProductType = "CREDIT_PACKAGE" | "MEMBERSHIP_PLAN";
+type PaymentChannel = "page" | "wap";
+type PaymentStatus = "WAITING" | "PAID" | "CLOSED";
 
 interface ConfigItem {
   label: string;
@@ -110,6 +116,37 @@ interface SmsChallenge {
   expiresAt: number;
 }
 
+interface PaymentEntitlement {
+  creditAmount: number;
+  planCode?: MembershipPlanCode;
+  planName?: string;
+  membershipDays?: number;
+}
+
+interface PaymentProduct {
+  productType: PaymentProductType;
+  productId: string;
+  title: string;
+  amountYuan: string;
+  entitlement: PaymentEntitlement;
+}
+
+interface PaymentOrder {
+  id: string;
+  userId: string;
+  workspaceId: string;
+  productType: PaymentProductType;
+  productId: string;
+  title: string;
+  amountYuan: string;
+  status: PaymentStatus;
+  channel: PaymentChannel;
+  createdAt: string;
+  paidAt?: string;
+  alipayTradeNo?: string;
+  entitlement: PaymentEntitlement;
+}
+
 interface SmsDeliveryResult {
   provider: "mock" | "tencentcloud" | "aliyun";
   isMock: boolean;
@@ -136,6 +173,47 @@ const usersById = new Map<string, DemoUser>();
 const workspacesById = new Map<string, DemoWorkspace>();
 const memberships: DemoMembership[] = [];
 const sessions = new Map<string, DemoSession>();
+const paymentOrders = new Map<string, PaymentOrder>();
+
+const paymentProducts: PaymentProduct[] = [
+  {
+    productType: "CREDIT_PACKAGE",
+    productId: "credits_100",
+    title: "货记分轻量包",
+    amountYuan: "10.00",
+    entitlement: { creditAmount: 100 },
+  },
+  {
+    productType: "CREDIT_PACKAGE",
+    productId: "credits_600",
+    title: "货记分常用包",
+    amountYuan: "50.00",
+    entitlement: { creditAmount: 600 },
+  },
+  {
+    productType: "CREDIT_PACKAGE",
+    productId: "credits_1500",
+    title: "货记分批量包",
+    amountYuan: "100.00",
+    entitlement: { creditAmount: 1500 },
+  },
+  {
+    productType: "MEMBERSHIP_PLAN",
+    productId: "PRO_MONTHLY",
+    title: "个人 Pro 月卡",
+    amountYuan: "39.00",
+    entitlement: { creditAmount: 300, planCode: "PRO_MONTHLY", planName: "个人 Pro 月卡", membershipDays: 30 },
+  },
+  {
+    productType: "MEMBERSHIP_PLAN",
+    productId: "PRO_YEARLY",
+    title: "个人 Pro 年卡",
+    amountYuan: "399.00",
+    entitlement: { creditAmount: 3000, planCode: "PRO_YEARLY", planName: "个人 Pro 年卡", membershipDays: 365 },
+  },
+];
+
+loadPaymentOrders();
 
 app.post("/api/auth/sms/request", async (req, res) => {
   const phone = normalizePhone(asText(req.body?.phone));
@@ -223,6 +301,97 @@ app.post("/api/auth/logout", (req, res) => {
   const token = parseBearerToken(req.headers.authorization);
   if (token) sessions.delete(token);
   return res.json({ success: true });
+});
+
+app.post("/api/payments/alipay/orders", (req, res) => {
+  const session = readSession(req.headers.authorization);
+  if (!session) return res.status(401).json({ error: "登录已失效，请重新登录后支付。" });
+
+  const productType = asText(req.body?.productType) as PaymentProductType;
+  const productId = asText(req.body?.productId);
+  const channel: PaymentChannel = asText(req.body?.channel) === "wap" ? "wap" : "page";
+  const product = findPaymentProduct(productType, productId);
+  if (!product) return res.status(400).json({ error: "支付商品不存在，请刷新页面后重试。" });
+
+  const config = getAlipayConfig(appBaseUrl(req));
+  if (!config.ready) {
+    return res.status(503).json({
+      error: `支付宝支付尚未配置完整：${config.missing.join("、")}`,
+      missing: config.missing,
+    });
+  }
+
+  const order: PaymentOrder = {
+    id: createOutTradeNo(),
+    userId: session.userId,
+    workspaceId: session.currentWorkspaceId,
+    productType: product.productType,
+    productId: product.productId,
+    title: product.title,
+    amountYuan: product.amountYuan,
+    status: "WAITING",
+    channel,
+    createdAt: new Date().toISOString(),
+    entitlement: product.entitlement,
+  };
+  paymentOrders.set(order.id, order);
+  savePaymentOrders();
+
+  return res.json({
+    success: true,
+    order: serializePaymentOrder(order),
+    paymentUrl: buildAlipayPayUrl(order, config),
+  });
+});
+
+app.get("/api/payments/orders/:orderId", (req, res) => {
+  const session = readSession(req.headers.authorization);
+  if (!session) return res.status(401).json({ error: "登录已失效，请重新登录。" });
+
+  const order = paymentOrders.get(asText(req.params.orderId));
+  if (!order || order.userId !== session.userId) return res.status(404).json({ error: "订单不存在。" });
+  return res.json({ success: true, order: serializePaymentOrder(order) });
+});
+
+app.get("/api/payments/alipay/return", (req, res) => {
+  const baseUrl = appBaseUrl(req);
+  const outTradeNo = asText(req.query.out_trade_no);
+  const status = outTradeNo ? "RETURNED" : "UNKNOWN";
+  const redirectParams = new URLSearchParams({
+    payment_order: outTradeNo,
+    payment_status: status,
+  });
+  return res.redirect(`${baseUrl}/?${redirectParams.toString()}`);
+});
+
+app.post("/api/payments/alipay/notify", (req, res) => {
+  const config = getAlipayConfig(appBaseUrl(req));
+  if (!config.ready) return res.type("text/plain").send("failure");
+
+  const params = flattenStringRecord(req.body);
+  if (!verifyAlipaySignature(params, config.alipayPublicKey)) return res.type("text/plain").send("failure");
+
+  const outTradeNo = asText(params.out_trade_no);
+  const order = paymentOrders.get(outTradeNo);
+  if (!order) return res.type("text/plain").send("failure");
+  if (params.app_id !== config.appId) return res.type("text/plain").send("failure");
+  if (config.sellerId && params.seller_id && params.seller_id !== config.sellerId) return res.type("text/plain").send("failure");
+  if (!sameMoney(params.total_amount, order.amountYuan)) return res.type("text/plain").send("failure");
+
+  const tradeStatus = asText(params.trade_status);
+  if (tradeStatus === "TRADE_SUCCESS" || tradeStatus === "TRADE_FINISHED") {
+    order.status = "PAID";
+    order.paidAt = order.paidAt ?? new Date().toISOString();
+    order.alipayTradeNo = asText(params.trade_no) || order.alipayTradeNo;
+    paymentOrders.set(order.id, order);
+    savePaymentOrders();
+  } else if (tradeStatus === "TRADE_CLOSED") {
+    order.status = "CLOSED";
+    paymentOrders.set(order.id, order);
+    savePaymentOrders();
+  }
+
+  return res.type("text/plain").send("success");
 });
 
 app.post("/api/structure", async (req, res) => {
@@ -676,6 +845,200 @@ function buildAuthPayload(session: DemoSession) {
     },
     expiresAt: new Date(session.expiresAt).toISOString(),
   };
+}
+
+function findPaymentProduct(productType: PaymentProductType, productId: string): PaymentProduct | undefined {
+  return paymentProducts.find((product) => product.productType === productType && product.productId === productId);
+}
+
+function createOutTradeNo(): string {
+  return `HJ${Date.now()}${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+}
+
+function serializePaymentOrder(order: PaymentOrder) {
+  return {
+    id: order.id,
+    productType: order.productType,
+    productId: order.productId,
+    title: order.title,
+    amountYuan: order.amountYuan,
+    status: order.status,
+    channel: order.channel,
+    createdAt: order.createdAt,
+    paidAt: order.paidAt,
+    alipayTradeNo: order.alipayTradeNo,
+    entitlement: order.entitlement,
+  };
+}
+
+function paymentOrdersFilePath(): string {
+  return process.env.PAYMENT_ORDERS_FILE?.trim() || path.join(process.cwd(), ".data", "payment-orders.json");
+}
+
+function loadPaymentOrders(): void {
+  try {
+    const filePath = paymentOrdersFilePath();
+    if (!fs.existsSync(filePath)) return;
+    const raw = fs.readFileSync(filePath, "utf8");
+    const orders = JSON.parse(raw) as PaymentOrder[];
+    if (!Array.isArray(orders)) return;
+    orders.forEach((order) => {
+      if (order?.id) paymentOrders.set(order.id, order);
+    });
+  } catch (error) {
+    console.warn("[货记 Web] payment orders load failed:", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function savePaymentOrders(): void {
+  try {
+    const filePath = paymentOrdersFilePath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(Array.from(paymentOrders.values()), null, 2), "utf8");
+  } catch (error) {
+    console.warn("[货记 Web] payment orders save failed:", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function appBaseUrl(req: express.Request): string {
+  const configured = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  if (configured && !/(MY_APP_URL|YOUR_SERVER_IP)/i.test(configured)) return configured;
+  return `${req.protocol}://${req.get("host")}`;
+}
+
+function getAlipayConfig(baseUrl: string) {
+  const appId = process.env.ALIPAY_APP_ID?.trim() ?? "";
+  const merchantPrivateKey = optionalAnyEnv(["ALIPAY_MERCHANT_PRIVATE_KEY", "ALIPAY_APP_PRIVATE_KEY"]);
+  const alipayPublicKey = optionalAnyEnv(["ALIPAY_PUBLIC_KEY", "ALIPAY_ALIPAY_PUBLIC_KEY"]);
+  const missing = [
+    !appId ? "ALIPAY_APP_ID" : "",
+    !merchantPrivateKey ? "ALIPAY_MERCHANT_PRIVATE_KEY" : "",
+    !alipayPublicKey ? "ALIPAY_PUBLIC_KEY" : "",
+  ].filter(Boolean);
+
+  return {
+    ready: missing.length === 0,
+    missing,
+    appId,
+    merchantPrivateKey: formatPemKey(merchantPrivateKey, "PRIVATE"),
+    alipayPublicKey: formatPemKey(alipayPublicKey, "PUBLIC"),
+    gateway: process.env.ALIPAY_GATEWAY?.trim() || "https://openapi.alipay.com/gateway.do",
+    notifyUrl: process.env.ALIPAY_NOTIFY_URL?.trim() || `${baseUrl}/api/payments/alipay/notify`,
+    returnUrl: process.env.ALIPAY_RETURN_URL?.trim() || `${baseUrl}/api/payments/alipay/return`,
+    sellerId: process.env.ALIPAY_SELLER_ID?.trim() || "",
+  };
+}
+
+function buildAlipayPayUrl(order: PaymentOrder, config: ReturnType<typeof getAlipayConfig>): string {
+  const method = order.channel === "wap" ? "alipay.trade.wap.pay" : "alipay.trade.page.pay";
+  const bizContent = {
+    out_trade_no: order.id,
+    total_amount: order.amountYuan,
+    subject: order.title,
+    body: `货记 ${order.title}`,
+    product_code: order.channel === "wap" ? "QUICK_WAP_WAY" : "FAST_INSTANT_TRADE_PAY",
+    timeout_express: "30m",
+  };
+  const params: Record<string, string> = {
+    app_id: config.appId,
+    method,
+    format: "JSON",
+    charset: "UTF-8",
+    sign_type: "RSA2",
+    timestamp: alipayTimestamp(),
+    version: "1.0",
+    notify_url: config.notifyUrl,
+    return_url: config.returnUrl,
+    biz_content: JSON.stringify(bizContent),
+  };
+  params.sign = signAlipayParams(params, config.merchantPrivateKey);
+  return `${config.gateway}?${new URLSearchParams(params).toString()}`;
+}
+
+function signAlipayParams(params: Record<string, string>, privateKey: string): string {
+  const signer = createSign("RSA-SHA256");
+  signer.update(canonicalAlipayRequestParams(params), "utf8");
+  signer.end();
+  return signer.sign(privateKey, "base64");
+}
+
+function verifyAlipaySignature(params: Record<string, string>, publicKey: string): boolean {
+  const sign = params.sign;
+  if (!sign) return false;
+  try {
+    const verifier = createVerify("RSA-SHA256");
+    verifier.update(canonicalAlipayNotifyParams(params), "utf8");
+    verifier.end();
+    return verifier.verify(publicKey, sign, "base64");
+  } catch {
+    return false;
+  }
+}
+
+function canonicalAlipayRequestParams(params: Record<string, string>): string {
+  return Object.keys(params)
+    .filter((key) => key !== "sign" && params[key] !== "")
+    .sort()
+    .map((key) => `${key}=${params[key]}`)
+    .join("&");
+}
+
+function canonicalAlipayNotifyParams(params: Record<string, string>): string {
+  return Object.keys(params)
+    .filter((key) => key !== "sign" && key !== "sign_type" && params[key] !== "")
+    .sort()
+    .map((key) => `${key}=${params[key]}`)
+    .join("&");
+}
+
+function formatPemKey(value: string, kind: "PRIVATE" | "PUBLIC"): string {
+  const normalized = value.replace(/\\n/g, "\n").trim();
+  if (!normalized) return "";
+  if (/-----BEGIN [A-Z ]+-----/.test(normalized)) return normalized;
+  const body = normalized.replace(/\s+/g, "").match(/.{1,64}/g)?.join("\n") ?? normalized;
+  return `-----BEGIN ${kind} KEY-----\n${body}\n-----END ${kind} KEY-----`;
+}
+
+function alipayTimestamp(date = new Date()): string {
+  const pad = (value: number) => `${value}`.padStart(2, "0");
+  return [
+    date.getFullYear(),
+    "-",
+    pad(date.getMonth() + 1),
+    "-",
+    pad(date.getDate()),
+    " ",
+    pad(date.getHours()),
+    ":",
+    pad(date.getMinutes()),
+    ":",
+    pad(date.getSeconds()),
+  ].join("");
+}
+
+function flattenStringRecord(value: unknown): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return result;
+  for (const [key, raw] of Object.entries(value)) {
+    const item = Array.isArray(raw) ? raw[0] : raw;
+    result[key] = asText(item);
+  }
+  return result;
+}
+
+function sameMoney(left: string, right: string): boolean {
+  const toCents = (value: string) => Math.round(Number(value) * 100);
+  const leftCents = toCents(left);
+  const rightCents = toCents(right);
+  return Number.isFinite(leftCents) && Number.isFinite(rightCents) && leftCents === rightCents;
+}
+
+function optionalAnyEnv(names: string[]): string {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return "";
 }
 
 function readSession(authorization: unknown): DemoSession | null {
