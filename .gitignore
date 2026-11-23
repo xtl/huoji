@@ -3,6 +3,8 @@ dist/
 build/
 .env
 .env.local
+.env.production
+.env.platform
 *.log
 __pycache__/
 .venv/
@@ -10,3 +12,4 @@ __pycache__/
 Thumbs.db
 .claude/
 demo_ui/.data/
+out/releases/

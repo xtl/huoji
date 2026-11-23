@@ -1,0 +1,30 @@
+{
+  "frames": [
+    {"windows": [{"controlType": "WindowControl", "name": "B300真实交易群", "children": [
+      {"controlType": "TextControl", "name": "B300真实交易群"},
+      {"controlType": "TextControl", "name": "无关窗口文字，不应成为消息"},
+      {"controlType": "ListControl", "name": "消息", "children": [
+        {"controlType": "ListItemControl", "children": [
+          {"controlType": "TextControl", "automationId": "sender", "name": "测试商家甲"},
+          {"controlType": "TextControl", "automationId": "messageText", "name": "基线旧消息：B300整机，测试数据"}
+        ]}
+      ]}
+    ]}]},
+    {"windows": [{"controlType": "WindowControl", "name": "B300真实交易群", "children": [
+      {"controlType": "TextControl", "name": "B300真实交易群"},
+      {"controlType": "ListControl", "name": "消息", "children": [
+        {"controlType": "ListItemControl", "children": [
+          {"controlType": "TextControl", "automationId": "sender", "name": "测试商家甲"},
+          {"controlType": "TextControl", "automationId": "messageText", "name": "基线旧消息：B300整机，测试数据"}
+        ]},
+        {"controlType": "ListItemControl", "children": [
+          {"controlType": "TextControl", "automationId": "sender", "name": "测试商家乙"},
+          {"controlType": "TextControl", "automationId": "messageText", "name": "新消息：H200服务器，深圳现货2台"}
+        ]}
+      ]}
+    ]}]},
+    {"windows": [{"controlType": "WindowControl", "name": "B300真实交易群", "children": [
+      {"controlType": "PaneControl", "className": "Weixin"}
+    ]}]}
+  ]
+}

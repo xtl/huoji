@@ -1,11 +1,21 @@
 @import "tailwindcss";
+@import "./components/wechat-inbox.css";
+@import "./workbench.css";
 
 :root {
   color-scheme: light;
-  --font-app:
-    ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    Inter, Roboto, "Helvetica Neue", "Segoe UI", "PingFang SC", "Microsoft YaHei",
-    sans-serif;
+  --font-app: "Inter", "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-headline: var(--font-app);
+  --accent: #2f55b5;
+  --accent-hover: #234397;
+  --accent-soft: #edf2ff;
+  --accent-line: #c3d1f1;
+  --ink: #192536;
+  --muted: #566579;
+  --line: #dbe2ea;
+  --canvas: #f5f7fa;
+  --surface-subtle: #f2f5f9;
+  --control-border: #c7d1dd;
   --text-micro: 11px;
   --text-caption: 12px;
   --text-body: 14px;
@@ -17,21 +27,18 @@
   --line-normal: 1.5;
   font-family:
     var(--font-app);
-  background: #f6f5f2;
+  background: var(--canvas);
 }
 
 html {
-  background: #f6f5f2;
+  background: var(--canvas);
 }
 
 body {
   margin: 0;
   min-width: 320px;
-  background:
-    radial-gradient(circle at 18% -12%, rgba(94, 143, 255, 0.12), transparent 28rem),
-    radial-gradient(circle at 94% 8%, rgba(19, 184, 166, 0.1), transparent 24rem),
-    linear-gradient(180deg, #faf9f6 0%, #f3f2ee 100%);
-  color: #1f1f1f;
+  background: var(--canvas);
+  color: var(--ink);
   font-family: var(--font-app);
   font-size: var(--text-body);
   line-height: var(--line-normal);
@@ -57,7 +64,7 @@ button:disabled {
 }
 
 ::selection {
-  background: rgba(35, 131, 226, 0.18);
+  background: #d5e3ff;
 }
 
 ::-webkit-scrollbar {
@@ -78,34 +85,24 @@ button:disabled {
 @layer components {
   .app-shell {
     min-height: 100vh;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0)),
-      transparent;
-    color: #171717;
+    background: var(--canvas);
+    color: var(--ink);
   }
 
-  .app-workbench {
-    transition: grid-template-columns 180ms ease;
-  }
-
-  .sidebar-surface {
-    border-right: 1px solid rgba(37, 35, 31, 0.08);
-    background: rgba(255, 255, 255, 0.62);
-    box-shadow: inset -1px 0 rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(18px);
-    transition:
-      padding 180ms ease,
-      width 180ms ease;
-  }
-
-  .sidebar-toggle {
-    color: #7a756e;
-  }
 
   .right-inspector {
     max-height: calc(100vh - 7.5rem);
     overflow: auto;
   }
+
+  @media (max-width: 1023px) {
+    .right-inspector {
+      max-height: none;
+      overflow: visible;
+    }
+    .inspector-layout:has(> .inspector-slot[aria-hidden="false"]) > :first-child { display: none; }
+  }
+
 
   .inspector-layout {
     transition:
@@ -134,11 +131,6 @@ button:disabled {
     flex-shrink: 0;
   }
 
-  .topbar-surface {
-    border-bottom: 1px solid rgba(37, 35, 31, 0.08);
-    background: rgba(250, 249, 246, 0.82);
-    backdrop-filter: blur(18px);
-  }
 
   .section-title {
     color: #1f1f1f;
@@ -149,24 +141,21 @@ button:disabled {
   }
 
   .caption-text {
-    color: #76716b;
+    color: var(--muted);
     font-size: var(--text-caption);
     font-weight: 500;
     line-height: 1.45;
   }
 
   .surface-card {
-    border: 1px solid rgba(37, 35, 31, 0.08);
-    background: rgba(255, 255, 255, 0.86);
-    box-shadow:
-      0 1px 1px rgba(17, 24, 39, 0.03),
-      0 14px 36px rgba(17, 24, 39, 0.05);
+    border: 1px solid var(--line);
+    background: white;
+    box-shadow: 0 2px 6px rgb(23 41 69 / 4%);
   }
 
   .surface-card-quiet {
-    border: 1px solid rgba(37, 35, 31, 0.07);
-    background: rgba(255, 255, 255, 0.68);
-    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.03);
+    border: 1px solid var(--line);
+    background: white;
   }
 
   .interactive-card {
@@ -190,8 +179,8 @@ button:disabled {
   }
 
   .field-surface {
-    border: 1px solid rgba(37, 35, 31, 0.06);
-    background: rgba(246, 245, 242, 0.78);
+    border: 1px solid var(--control-border);
+    background: #fff;
     font-size: var(--text-body-compact);
     line-height: 1.45;
     transition:
@@ -201,23 +190,21 @@ button:disabled {
   }
 
   .field-surface:hover {
-    background: rgba(241, 240, 236, 0.95);
+    background: var(--surface-subtle);
   }
 
   .field-surface:focus,
   .field-surface:focus-within {
-    border-color: rgba(36, 99, 235, 0.28);
+    border-color: var(--accent);
     background: #fff;
-    box-shadow: 0 0 0 4px rgba(36, 99, 235, 0.08);
+    box-shadow: 0 0 0 3px rgb(47 85 181 / 12%);
   }
 
   .primary-button {
-    background: #171717;
+    background: var(--accent);
     color: #fff;
     font-weight: 560;
-    box-shadow:
-      inset 0 1px rgba(255, 255, 255, 0.12),
-      0 8px 18px rgba(17, 24, 39, 0.14);
+    box-shadow: 0 1px 2px rgb(23 41 69 / 12%);
     transition:
       background 160ms ease,
       transform 160ms ease,
@@ -225,15 +212,12 @@ button:disabled {
   }
 
   .primary-button:hover {
-    background: #2a2a2a;
-    transform: translateY(-1px);
-    box-shadow:
-      inset 0 1px rgba(255, 255, 255, 0.12),
-      0 12px 24px rgba(17, 24, 39, 0.18);
+    background: var(--accent-hover);
   }
 
   .primary-button:disabled {
-    background: #d4d4d4;
+    background: #e3e8e5;
+    color: #5e6b64;
     box-shadow: none;
     transform: none;
   }
@@ -252,9 +236,8 @@ button:disabled {
   }
 
   .ghost-button.is-active {
-    background: #171717;
-    color: #fff;
-    box-shadow: 0 10px 24px rgba(17, 24, 39, 0.14);
+    background: var(--accent-soft);
+    color: var(--accent);
   }
 
   .meta-pill {
@@ -505,7 +488,6 @@ button:disabled {
   }
 
   .smart-chat-history {
-    min-height: 240px;
     max-height: 280px;
   }
 
@@ -514,10 +496,10 @@ button:disabled {
   }
 
   .smart-input:focus {
-    border-color: rgba(36, 99, 235, 0.32);
+    border-color: var(--accent);
     background: #fff;
     box-shadow:
-      0 0 0 4px rgba(36, 99, 235, 0.08),
+      0 0 0 3px rgb(8 102 83 / 12%),
       inset 0 1px 0 rgba(255, 255, 255, 0.65);
   }
 
@@ -527,15 +509,6 @@ button:disabled {
     background: rgba(246, 245, 242, 0.72);
   }
 
-  .mobile-tabbar {
-    border: 1px solid rgba(37, 35, 31, 0.1);
-    background: rgba(255, 255, 255, 0.86);
-    box-shadow:
-      0 18px 44px rgba(17, 24, 39, 0.16),
-      0 1px 2px rgba(17, 24, 39, 0.08);
-    backdrop-filter: blur(18px);
-    padding-bottom: max(0.375rem, env(safe-area-inset-bottom));
-  }
 
   .huoji-table {
     width: 100%;
@@ -611,7 +584,6 @@ button:disabled {
     }
 
     .smart-chat-history {
-      min-height: 172px;
       max-height: 210px;
       padding: 0.625rem;
     }
@@ -638,8 +610,5 @@ button:disabled {
       padding: 0.75rem;
     }
 
-    .mobile-tabbar {
-      bottom: max(0.75rem, env(safe-area-inset-bottom));
-    }
   }
 }

@@ -8,15 +8,44 @@ import express from "express";
 import * as fs from "fs";
 import path from "path";
 import { createHash, createHmac, createSign, createVerify, randomUUID } from "crypto";
-import { createServer as createViteServer } from "vite";
+import { createRpaRouter, RpaInbox, type RpaParsedResult, type RpaMessage } from "./server/rpa";
+import { DeepSeekKeyStore, DEEPSEEK_ORIGIN, providerError } from "./server/deepseek-settings";
+import { platformAiRouter, PLATFORM_KEY } from "./server/platform-ai";
+import { readJsonSnapshot, writeAtomicJson } from "./server/rpa-persistence";
+import { createLocalBackfillRouter, isLocalRpaRequest, LocalBackfillController } from "./server/rpa-local-control";
+import { readCompactMemorySpec, readMemoryFrequency } from "./src/memory-specs";
+import { unknownSourceWarning } from "./src/rpa-capture-warnings";
+import { createCircleRouter } from "./server/circle";
+import { CreditWallet, InsufficientCredits } from "./server/credit-wallet";
+import { actualCharge, modelPrices } from "./server/model-credit-prices";
+import { creditPackages, monthlyPrice, monthlyCredits, annualPrice, annualMonthlyCredits, pointsPerCostYuan, pricingVersion } from "./src/credit-pricing";
+import { EnterpriseStore, enterpriseRouter, isCompany } from "./server/enterprise";
+import { createWorkspaceLedgerRouter } from "./server/workspace-ledger";
 
-dotenv.config();
+if (process.env.NODE_ENV !== "test") dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
 
 app.set("trust proxy", true);
+const deepSeekKeys = new DeepSeekKeyStore(path.join(path.dirname(identityFilePath()), "platform-ai-keys"), process.env.HUOJI_DEEPSEEK_MASTER_KEY);
+const enterprise = new EnterpriseStore(path.join(path.dirname(identityFilePath()), "enterprise.sqlite"));
+const creditWallet = new CreditWallet(enterprise);
+app.use("/api/platform",platformAiRouter(enterprise, deepSeekKeys,{
+  accounts:()=>[...usersById.values()], sendCode:(phone,code)=>deliverSmsCode(phone,code),
+}));
+app.use("/api/settings/deepseek", (req,res) => {
+  if (!readSession(req.headers.authorization)) return res.status(401).json({error:"请先登录。"});
+  if (req.method!=="GET") return res.status(403).json({error:"DeepSeek 密钥由平台统一管理。"});
+  res.set("Cache-Control","no-store").json({...deepSeekKeys.status(PLATFORM_KEY),managedBy:"PLATFORM"});
+});
 app.use(express.json({ limit: "50mb" }));
+// Only the explicit staff-management routes below can set this server-side scope.
+function businessSession(authorization: unknown, res: express.Response): DemoSession | null {
+  return res.locals.staffScope ?? readSession(authorization);
+}
+const ledgerRouter=createWorkspaceLedgerRouter(path.join(path.dirname(identityFilePath()), "ledger.sqlite"), businessSession);
+app.use("/api/workspace/ledger", ledgerRouter);
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 app.get("/api/health", (_, res) => {
@@ -103,6 +132,9 @@ interface DemoMembership {
 
 interface DemoSession {
   token: string;
+  verifiedSms?: boolean;
+  family?: string;
+  accessVersion?: number;
   userId: string;
   currentWorkspaceId: string;
   createdAt: number;
@@ -121,6 +153,8 @@ interface PaymentEntitlement {
   planCode?: MembershipPlanCode;
   planName?: string;
   membershipDays?: number;
+  months?: number;
+  installments?: number;
 }
 
 interface PaymentProduct {
@@ -165,7 +199,7 @@ interface CaptchaPublicConfig {
 
 const SMS_TTL_MS = 5 * 60 * 1000;
 const SMS_RESEND_COOLDOWN_MS = Number(process.env.SMS_RESEND_COOLDOWN_SECONDS ?? 60) * 1000;
-const SMS_UNIVERSAL_CODE = process.env.SMS_UNIVERSAL_CODE || (process.env.NODE_ENV === "production" ? "" : "11111111");
+const SMS_UNIVERSAL_CODE = process.env.NODE_ENV === "production" ? "" : (process.env.SMS_UNIVERSAL_CODE ?? "11111111");
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const smsChallenges = new Map<string, SmsChallenge>();
 const usersByPhone = new Map<string, DemoUser>();
@@ -176,45 +210,112 @@ const sessions = new Map<string, DemoSession>();
 const paymentOrders = new Map<string, PaymentOrder>();
 
 const paymentProducts: PaymentProduct[] = [
-  {
-    productType: "CREDIT_PACKAGE",
-    productId: "credits_100",
-    title: "货记分轻量包",
-    amountYuan: "10.00",
-    entitlement: { creditAmount: 100 },
-  },
-  {
-    productType: "CREDIT_PACKAGE",
-    productId: "credits_600",
-    title: "货记分常用包",
-    amountYuan: "50.00",
-    entitlement: { creditAmount: 600 },
-  },
-  {
-    productType: "CREDIT_PACKAGE",
-    productId: "credits_1500",
-    title: "货记分批量包",
-    amountYuan: "100.00",
-    entitlement: { creditAmount: 1500 },
-  },
-  {
-    productType: "MEMBERSHIP_PLAN",
-    productId: "PRO_MONTHLY",
-    title: "个人 Pro 月卡",
-    amountYuan: "39.00",
-    entitlement: { creditAmount: 300, planCode: "PRO_MONTHLY", planName: "个人 Pro 月卡", membershipDays: 30 },
-  },
-  {
-    productType: "MEMBERSHIP_PLAN",
-    productId: "PRO_YEARLY",
-    title: "个人 Pro 年卡",
-    amountYuan: "399.00",
-    entitlement: { creditAmount: 3000, planCode: "PRO_YEARLY", planName: "个人 Pro 年卡", membershipDays: 365 },
-  },
+  ...creditPackages.map(pack => ({
+    productType: "CREDIT_PACKAGE" as const, productId: pack.id, title: "货记分"+pack.title,
+    amountYuan: pack.yuan.toFixed(2), entitlement: {creditAmount: pack.credits}
+  })),
+  {productType:"MEMBERSHIP_PLAN",productId:"PRO_MONTHLY",title:"个人 Pro 月卡",amountYuan:monthlyPrice.toFixed(2),
+    entitlement:{creditAmount:monthlyCredits,planCode:"PRO_MONTHLY",planName:"个人 Pro 月卡",months:1}},
+  {productType:"MEMBERSHIP_PLAN",productId:"PRO_YEARLY",title:"个人 Pro 年卡",amountYuan:annualPrice.toFixed(2),
+    entitlement:{creditAmount:annualMonthlyCredits*12,planCode:"PRO_YEARLY",planName:"个人 Pro 年卡",months:12,installments:12}},
 ];
 
+loadIdentityState();
 loadPaymentOrders();
+for (const order of [...paymentOrders.values()].filter(o => o.status==="PAID").sort((a,b)=>(a.paidAt??"").localeCompare(b.paidAt??""))) creditWallet.applyPaid(order);
 
+app.get("/api/wallet",(req,res)=>{
+  const session=readSession(req.headers.authorization);
+  if (!session) return res.status(401).json({error:"请先登录。"});
+  const member=enterprise.member(session.currentWorkspaceId,session.userId);
+  const wallet=creditWallet.snapshot(session,member?.role==="MEMBER");
+  res.set("Cache-Control","no-store").json({...wallet,paymentReady:getAlipayConfig(appBaseUrl(req)).ready});
+});
+
+const circleRouter=createCircleRouter(path.join(path.dirname(identityFilePath()), "circle.sqlite"), (authorization,res) => {
+  const session = businessSession(authorization,res);
+  if (!session) return null;
+  return { userId: session.userId, currentWorkspaceId: session.currentWorkspaceId, displayName: usersById.get(session.userId)!.displayName };
+});
+app.use("/api/circle",circleRouter);
+
+const rpaInbox = new RpaInbox({
+  ...(process.env.NODE_ENV === "production" || process.env.HUOJI_CLOUD === "1" || (process.env.HUOJI_DESKTOP_TEST === "1" && process.env.NODE_ENV === "test") ? {allowedGroups: []} : {}),
+  filePath: process.env.RPA_MESSAGES_FILE?.trim() || path.join(process.cwd(), ".data", "rpa-messages.json"),
+  parse: parseRpaMessage,
+  onError: (error) => console.error("[货记 RPA] worker stopped:", error instanceof Error ? error.message : "unknown"),
+});
+let localController: LocalBackfillController | undefined;
+if (process.env.NODE_ENV !== "test" || process.env.RPA_LOCAL_CONTROL === "1") {
+  const postDue = () => {
+    try { for (const workspace of creditWallet.postDueGrants()) {
+      rpaInbox.resumeAfterRecharge(workspace);
+      creditWallet.acknowledgeRecharge(workspace);
+    } }
+    catch {console.error("[货记] 会员发分暂未完成，将自动重试。");}
+  };
+  postDue();
+  setInterval(postDue,60000).unref();
+}
+if (process.env.NODE_ENV === "test" && process.env.RPA_LOCAL_CONTROL === "1" && process.env.RPA_LOCAL_ORIGIN && process.env.RPA_LOCAL_REPOSITORY_ROOT) {
+  const localOrigin = process.env.RPA_LOCAL_ORIGIN;
+  localController = new LocalBackfillController({ repositoryDirectory: process.env.RPA_LOCAL_REPOSITORY_ROOT, localOrigin, readSession,
+    runtime: process.env.HUOJI_DESKTOP_TEST === "1" ? process.env.HUOJI_DESKTOP_RUNTIME : undefined,
+    enabledGroups: (session) => rpaInbox.enabledGroups(session) });
+  app.use("/api/rpa/local", createLocalBackfillRouter({ enabled: true, controller: localController, readSession, localOrigin }));
+  app.use("/api/rpa/groups", (request, response, next) => {
+    if (["POST", "PATCH", "DELETE"].includes(request.method) && !isLocalRpaRequest(request, localOrigin)) {
+      response.status(403).json({ error: "请从当前本机货记地址管理采集群。" });
+      return;
+    }
+    next();
+  });
+} else {
+  app.use("/api/rpa/local", (_request, response) => { response.sendStatus(404); });
+}
+const rpaRouter=createRpaRouter({ inbox: rpaInbox, readSession:businessSession, baseUrl: appBaseUrl,
+  syncGroups: (session, groups) => localController?.syncGroups(session, groups) });
+app.use("/api/rpa",rpaRouter);
+const staffRouter=express.Router();
+staffRouter.use("/ledger",ledgerRouter);
+staffRouter.use("/capture",rpaRouter);
+staffRouter.use("/circle",circleRouter);
+app.use("/api/enterprise/staff/:id",(req,res,next)=>{
+  const actor=readSession(req.headers.authorization);
+  if(!actor){res.sendStatus(401);return;}
+  const subject=String(req.params.id);
+  if(!enterprise.managerTarget(actor,subject)){res.status(403).json({error:"无权管理该成员的资料。"});return;}
+  const allowed=(req.path==="/ledger" && ["GET","POST"].includes(req.method)) ||
+    (req.method==="GET" && (req.path==="/capture/messages" || (req.path==="/circle/posts" && req.query.mine==="1"))) ||
+    (req.method==="POST" && /^\/capture\/messages\/[^/]+\/(dismiss|retry)$/.test(req.path)) ||
+    (req.method==="PATCH" && /^\/circle\/posts\/[^/]+$/.test(req.path));
+  if(!allowed){res.sendStatus(404);return;}
+  res.locals.staffScope={...actor,userId:subject};
+  next();
+},staffRouter);
+app.use("/api/enterprise", enterpriseRouter(enterprise,{
+  session:readSession, user:id=>usersById.get(id), personal:personalWorkspaceId,
+  switchSpace(scope,workspace){
+    const current=scope as DemoSession;
+    if(current.currentWorkspaceId===workspace) return buildAuthPayload(current);
+    const family=current.family??current.token;
+    const accessVersion=enterprise.member(workspace,scope.userId)?.accessVersion;
+    const previous=[...sessions.values()].find(s=>(s.family??s.token)===family && s.currentWorkspaceId===workspace && s.accessVersion===accessVersion && s.expiresAt>Date.now());
+    if(previous) return buildAuthPayload(previous);
+    const next={...current,family,accessVersion,token:randomUUID(),currentWorkspaceId:workspace};
+    sessions.set(next.token,next);
+    try { saveIdentityState(); } catch(e){sessions.delete(next.token);throw e;}
+    return buildAuthPayload(next);
+  }
+}));
+
+function cloudSmsReady() { return ["aliyun","tencentcloud"].includes(process.env.SMS_PROVIDER || ""); }
+app.get("/api/cloud/capabilities",(req,res)=>{
+  const test = process.env.NODE_ENV === "test" && req.hostname === "127.0.0.1" &&
+    ["127.0.0.1","::ffff:127.0.0.1"].includes(req.socket.remoteAddress || "") && !req.headers["x-forwarded-for"];
+  res.set("Cache-Control","no-store").json({service:"huoji",syncVersion:1,aiBilling:"platform",loginReady:cloudSmsReady() || test});
+});
+app.use("/api/auth/sms",(_req,res,next)=>{if (process.env.NODE_ENV === "production" && !cloudSmsReady()) {res.status(503).json({error:"云端短信登录尚未开通。"});return;}next();});
 app.post("/api/auth/sms/request", async (req, res) => {
   const phone = normalizePhone(asText(req.body?.phone));
   if (!phone) {
@@ -278,17 +379,27 @@ app.post("/api/auth/sms/login", (req, res) => {
     return res.status(400).json({ error: "验证码不正确。" });
   }
 
-  smsChallenges.delete(phone);
-  const { user, personalWorkspace } = ensurePersonalAccount(phone);
-  const session: DemoSession = {
-    token: randomUUID(),
-    userId: user.id,
-    currentWorkspaceId: personalWorkspace.id,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + SESSION_TTL_MS,
-  };
-  sessions.set(session.token, session);
-  return res.json(buildAuthPayload(session));
+  const before = identitySnapshot();
+  try {
+    const { user, personalWorkspace } = ensurePersonalAccount(phone);
+    if (user.status !== "ACTIVE" || personalWorkspace.status !== "ACTIVE") return res.status(403).json({ error: "账号或工作空间已停用。" });
+    const session: DemoSession = {
+      token: randomUUID(),
+      verifiedSms: !usesUniversalCode && ["aliyun","tencentcloud"].includes(process.env.SMS_PROVIDER || ""),
+      userId: user.id,
+      currentWorkspaceId: personalWorkspace.id,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + SESSION_TTL_MS,
+    };
+    sessions.set(session.token, session);
+    saveIdentityState();
+    smsChallenges.delete(phone);
+    return res.json(buildAuthPayload(session));
+  } catch (error) {
+    restoreIdentityState(before);
+    console.error("[货记 Web] identity save failed:", error instanceof Error ? error.message : "unknown");
+    return res.status(503).json({ error: "登录状态保存失败，请稍后重试。" });
+  }
 });
 
 app.get("/api/auth/me", (req, res) => {
@@ -299,7 +410,18 @@ app.get("/api/auth/me", (req, res) => {
 
 app.post("/api/auth/logout", (req, res) => {
   const token = parseBearerToken(req.headers.authorization);
-  if (token) sessions.delete(token);
+  const before = identitySnapshot();
+  try {
+    const current=sessions.get(token);
+    if(current){
+      const family=current.family??current.token;
+      for(const [key,item] of sessions) if((item.family??key)===family) sessions.delete(key);
+    }
+    saveIdentityState();
+  } catch {
+    restoreIdentityState(before);
+    return res.status(503).json({ error: "退出状态保存失败，请稍后重试。" });
+  }
   return res.json({ success: true });
 });
 
@@ -309,6 +431,8 @@ app.post("/api/payments/alipay/orders", (req, res) => {
 
   const productType = asText(req.body?.productType) as PaymentProductType;
   const productId = asText(req.body?.productId);
+  if (isCompany(session.currentWorkspaceId) && productType==="MEMBERSHIP_PLAN") return res.status(400).json({error:"个人会员请在个人空间购买。"});
+  if (req.body?.pricingVersion !== pricingVersion) return res.status(409).json({error:"货记分价格已更新，请刷新页面或更新采集助手后再购买。"});
   const channel: PaymentChannel = asText(req.body?.channel) === "wap" ? "wap" : "page";
   const product = findPaymentProduct(productType, productId);
   if (!product) return res.status(400).json({ error: "支付商品不存在，请刷新页面后重试。" });
@@ -335,7 +459,7 @@ app.post("/api/payments/alipay/orders", (req, res) => {
     entitlement: product.entitlement,
   };
   paymentOrders.set(order.id, order);
-  savePaymentOrders();
+  try {savePaymentOrders();} catch {paymentOrders.delete(order.id);return res.status(503).json({error:"订单保存失败，请重试。"});}
 
   return res.json({
     success: true,
@@ -349,7 +473,7 @@ app.get("/api/payments/orders/:orderId", (req, res) => {
   if (!session) return res.status(401).json({ error: "登录已失效，请重新登录。" });
 
   const order = paymentOrders.get(asText(req.params.orderId));
-  if (!order || order.userId !== session.userId) return res.status(404).json({ error: "订单不存在。" });
+  if (!order || order.userId !== session.userId || order.workspaceId!==session.currentWorkspaceId) return res.status(404).json({ error: "订单不存在。" });
   return res.json({ success: true, order: serializePaymentOrder(order) });
 });
 
@@ -380,31 +504,44 @@ app.post("/api/payments/alipay/notify", (req, res) => {
 
   const tradeStatus = asText(params.trade_status);
   if (tradeStatus === "TRADE_SUCCESS" || tradeStatus === "TRADE_FINISHED") {
-    order.status = "PAID";
-    order.paidAt = order.paidAt ?? new Date().toISOString();
-    order.alipayTradeNo = asText(params.trade_no) || order.alipayTradeNo;
-    paymentOrders.set(order.id, order);
-    savePaymentOrders();
-  } else if (tradeStatus === "TRADE_CLOSED") {
-    order.status = "CLOSED";
-    paymentOrders.set(order.id, order);
-    savePaymentOrders();
+    const paid = {...order,status:"PAID" as const,paidAt:order.paidAt??new Date().toISOString(),alipayTradeNo:asText(params.trade_no)||order.alipayTradeNo};
+    paymentOrders.set(order.id,paid);
+    try { savePaymentOrders(); } catch {paymentOrders.set(order.id,order);return res.type("text/plain").send("failure");}
+    try { if(creditWallet.applyPaid(paid)) rpaInbox.resumeAfterRecharge(paid.workspaceId); } catch {return res.type("text/plain").send("failure");}
+  } else if (tradeStatus === "TRADE_CLOSED" && order.status!=="PAID") {
+    paymentOrders.set(order.id,{...order,status:"CLOSED"});
+    try { savePaymentOrders(); } catch {paymentOrders.set(order.id,order);return res.type("text/plain").send("failure");}
   }
 
   return res.type("text/plain").send("success");
 });
 
+function resolveDeepSeek(userId?: string, workspaceId?: string): { apiKey: string; baseUrl: string } | null {
+  if (!userId) return null;
+  const company = !!workspaceId && isCompany(workspaceId);
+  if (company && !enterprise.member(workspaceId, userId)?.active) throw new Error("企业成员授权已失效。");
+  try {
+    const apiKey = deepSeekKeys.get(PLATFORM_KEY);
+    return apiKey ? { apiKey, baseUrl: DEEPSEEK_ORIGIN } : null;
+  } catch {
+    throw new Error("无法读取平台 AI 密钥，请联系平台管理员。");
+  }
+}
+
 app.post("/api/structure", async (req, res) => {
+  const session = readSession(req.headers.authorization);
+  if (req.headers.authorization !== undefined && !session) return res.status(401).json({ error: "请重新登录后解析。" });
   const rawText = asText(req.body?.text);
   if (!rawText) {
     return res.status(400).json({ error: "请先输入需要解析的货源文字。" });
   }
 
   const provider = String(process.env.AI_PROVIDER ?? "deepseek").toLowerCase();
-  if (provider === "deepseek" && process.env.DEEPSEEK_API_KEY) {
-    try {
+  try {
+    const connection = resolveDeepSeek(session?.userId,session?.currentWorkspaceId);
+    if (connection) {
       const startedAt = Date.now();
-      const deepseek = await callDeepSeek(rawText);
+      const deepseek = await callDeepSeek(rawText, connection, "",session??undefined,"PASTE", asText(req.body?.requestId).slice(0,128)||randomUUID());
       return res.json({
         data: deepseek.result,
         isMock: false,
@@ -413,32 +550,47 @@ app.post("/api/structure", async (req, res) => {
         tokenUsage: deepseek.tokenUsage,
         latencyMs: Date.now() - startedAt,
       });
-    } catch (error) {
-      const fallback = mockStructuredExtract(rawText);
-      return res.json({
-        data: fallback,
-        isMock: true,
-        provider: "local-fallback",
-        error: error instanceof Error ? error.message : String(error),
-      });
     }
+  } catch (error) {
+    if(error instanceof InsufficientCredits)return res.status(402).json({error:error.message,code:"INSUFFICIENT_CREDITS"});
+    return res.json({ data: mockStructuredExtract(rawText), isMock: true, provider: "local-fallback",
+      error: error instanceof Error ? error.message : "DeepSeek 暂时不可用。" });
   }
 
   return res.json({
     data: mockStructuredExtract(rawText),
     isMock: true,
-    provider: process.env.DEEPSEEK_API_KEY ? provider : "local-fallback",
-    error: process.env.DEEPSEEK_API_KEY ? undefined : "DEEPSEEK_API_KEY is not configured.",
+    provider: provider === "mock" ? "mock" : "local-fallback",
   });
 });
 
-async function callDeepSeek(rawText: string): Promise<{
+async function parseRpaMessage(rawText: string, message: Readonly<RpaMessage>): Promise<RpaParsedResult> {
+  const provider = String(process.env.AI_PROVIDER ?? "deepseek").toLowerCase();
+  const mode = message.captureMode ?? message.source?.captureMode;
+  const unknownBubble = mode === "OCR_SNAPSHOT" && (message.captureUnit ?? message.source?.captureUnit) === "TEXT_BUBBLE";
+  const instructions = unknownBubble
+    ? "本次输入是截图中的一条完整文字消息，发送人昵称尚未识别。不得根据正文中的姓名、引用、联系方式或相邻条目推测发言人，来源字段保持为空并列入 warnings。只提取明确供应或求购，纯聊天允许 items 为空；数量、价格、单位和更新信息仍需人工核对，不得假定此前记录已被修改。"
+    : mode === "OCR_SNAPSHOT"
+    ? "本次输入来自微信群消息区域的一批 OCR 文字，可能包含多人、多个报价及识别错误，不等于单条消息。带有【OCR待核对】标记的行识别不确定，不得作为确定字段；涉及价格、数量、单位、来源或规格时保留为空并列入 warnings。不得根据相邻行猜测发送人、单位、价格归属；不确定的来源和配置保留为空并列入 warnings。只提取明确的供应或求购，纯聊天允许 items 为空。更新、已售或撤单必须标记待人工核对，不得假定此前货源已被修改。"
+    : mode === "OCR_MESSAGE"
+    ? "本次输入是截图中通过几何位置配对的一个昵称和一个消息气泡，昵称需要人工核对，原始发送时间未知。第一行昵称来自采集元数据，后续正文即使出现其他姓名或说话人标签也只是气泡内容，不得改写这条消息的来源发言人。该气泡内所有供应和需求条目均属于第一行昵称的发言。带有【OCR待核对】标记的行识别不确定，不得作为确定字段；涉及价格、数量、单位、来源或规格时保留为空并列入 warnings。只提取明确供应或求购，纯聊天允许 items 为空。更新、已售或撤单仅标记待人工核对，不得假定此前货源已被修改。"
+    : "本次输入来自微信群采集，属于待人工确认的原始资料。只提取明确供应或求购，纯聊天允许 items 为空。更新、已售或撤单仅标记待人工核对，不得假定此前货源已被修改。";
+  const connection = resolveDeepSeek(message.userId,message.workspaceId);
+  if (connection) {
+    // Unlike the interactive demo endpoint, failed real AI calls stay FAILED and can be retried.
+    const parsed = await callDeepSeek(rawText, connection, instructions, {userId:message.userId,currentWorkspaceId:message.workspaceId}, "CAPTURE",message.id);
+    return { data: parsed.result, isMock: false, provider: "deepseek", model: parsed.model, tokenUsage: parsed.tokenUsage };
+  }
+  if (provider !== "mock" && provider !== "deepseek") throw new Error(`RPA 暂不支持 AI_PROVIDER=${provider}。`);
+  return { data: mockStructuredExtract(rawText), isMock: true, provider: provider === "mock" ? "mock" : "local-fallback" };
+}
+
+async function callDeepSeek(rawText: string, connection: { apiKey: string; baseUrl: string }, additionalInstructions = "", scope?:Pick<DemoSession,"userId"|"currentWorkspaceId">, kind="PASTE",requestId=randomUUID() as string): Promise<{
   model: string;
   result: ExtractionEnvelope;
   tokenUsage: unknown;
 }> {
-  const baseUrl = process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com";
-  const model = process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash";
+  const model = process.env.DEEPSEEK_MODEL ?? "deepseek-flash";
   const maxTokens = Number(process.env.DEEPSEEK_MAX_TOKENS ?? 12000);
   const payload = {
     model,
@@ -447,37 +599,44 @@ async function callDeepSeek(rawText: string): Promise<{
     response_format: { type: "json_object" },
     thinking: { type: "disabled" },
     messages: [
-      { role: "system", content: DEEPSEEK_SYSTEM_PROMPT },
+      { role: "system", content: `${DEEPSEEK_SYSTEM_PROMPT}\n${additionalInstructions}` },
       { role: "user", content: rawText },
     ],
   };
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  const responseText = await response.text();
-  if (!response.ok) {
-    throw new Error(`DeepSeek ${response.status}: ${responseText.slice(0, 500)}`);
-  }
-
-  const data = JSON.parse(responseText) as {
-    model?: string;
-    usage?: unknown;
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("DeepSeek returned an empty completion.");
-
-  return {
-    model: data.model ?? model,
-    result: normalizeEnvelope(parseJsonObject(content), rawText),
-    tokenUsage: data.usage ?? {},
-  };
+  if(!scope)throw Error("请登录后使用平台 AI。");
+  const prices=modelPrices(model,new Date(),pointsPerCostYuan);
+  const digest=createHash("sha256").update(rawText).digest("hex");
+  const task=JSON.stringify([scope.currentWorkspaceId,scope.userId,kind,requestId]);
+  const inputBound=payload.messages.reduce((n,m)=>n+Buffer.byteLength(m.content,"utf8")+32,128);
+  if(!Number.isSafeInteger(maxTokens)||maxTokens<1)throw Error("模型输出额度配置无效。");
+  const hold=creditWallet.reserve(scope,task,digest,inputBound*prices.miss,prices.out,maxTokens);
+  if(hold.cached)return hold.cached;
+  const attempt=hold.attempt!;
+  payload.max_tokens=hold.outputLimit!;
+  try {
+    const usageId=enterprise.beginUsage(scope,kind,model);
+    const response=await fetch(connection.baseUrl+"/chat/completions",{
+      method:"POST",headers:{Authorization:"Bearer "+connection.apiKey,"Content-Type":"application/json"},
+      body:JSON.stringify(payload),signal:AbortSignal.timeout(90_000),redirect:"error"
+    }).catch(()=>{throw Error("暂时无法连接 DeepSeek，请检查网络后重试。");});
+    if(!response.ok){
+      await response.body?.cancel();
+      if(response.status<500)enterprise.finishUsage(usageId,model,null,true);
+      throw providerError(response.status);
+    }
+    const data=await response.json().catch(()=>{throw Error("DeepSeek 返回的响应格式无效。");});
+    const charge=actualCharge(prices,data.usage);
+    enterprise.finishUsage(usageId,data.model??model,data.usage,false,charge===null?null:Math.round(charge/pointsPerCostYuan*10));
+    const content=data.choices?.[0]?.message?.content;
+    if(typeof content!=="string" || !content)throw Error("DeepSeek 返回了空结果。");
+    let envelope:ExtractionEnvelope;
+    try {envelope=normalizeEnvelope(parseJsonObject(content),rawText);}
+    catch {throw Error("DeepSeek 返回的供需结果格式无效。");}
+    const result={model:data.model??model,result:envelope,tokenUsage:data.usage??{}};
+    creditWallet.settle(attempt,charge,{usageId,prices,usage:data.usage??null},result,kind==="CAPTURE"?"微信采集解析":"粘贴录入解析");
+    return result;
+  } catch (error) {creditWallet.release(attempt);throw error;}
 }
 
 const DEEPSEEK_SYSTEM_PROMPT = `
@@ -512,7 +671,7 @@ const DEEPSEEK_SYSTEM_PROMPT = `
 
 抽取规则：
 1. “出、出售、供应、现货出、含税出、明价出、甩货”是 GOODS；“收、求购、找货、找、现款找、批量收、高价收、天价收”是 DEMAND。
-2. “租赁、出租、租用”对应 RENTAL；“期货、小期货、预售、4-6周、8月”对应 FUTURES；“现货、秒发、当天可发”对应 SPOT。
+2. “出租”是 GOODS，“求租、承租”是 DEMAND，交易方式均为 RENTAL。租金的计费周期和单位按原文保留。“期货、小期货、预售、4-6周、8月”对应 FUTURES；“现货、秒发、当天可发”对应 SPOT。
 3. sourceContact 是必填字段，必须优先从微信群聊天记录的说话人行提取，例如“Leo~D:”或“AI&GPU_阿琳:”。同一个说话人下面的每一条 SKU 都继承这个说话人。
 4. 不要把手机号、品牌、群名、城市、货源标题当作 sourceContact；手机号应进入 contactMethod。只有确实没有说话人时，sourceContact 才写“未知来源”，并在 warnings 里提醒。
 5. 一段消息里有多行 SKU 时拆成多条 item；重复转发的完全相同 SKU 只保留一条，但不同 sourceContact 的同款货要保留为不同 item。
@@ -534,14 +693,15 @@ function normalizeItem(value: unknown, inputText = ""): ExtractedTradeItem | nul
   const model = asText(value.model ?? value.gpuModel ?? value.gpu_model);
   const category = normalizeCategory(value.productCategory ?? value.product_category ?? `${title} ${model} ${rawText}`);
   const postType = normalizePostType(value.postType ?? value.post_type ?? rawText);
+  const tradeMode = normalizeTradeMode(value.tradeMode ?? value.trade_mode ?? rawText);
   const sourceContact = normalizeSourceContact(value.sourceContact ?? value.source_contact, value.configItems ?? value.config_items, rawText, inputText);
   if (!title && !model && !rawText) return null;
 
   return {
     postType,
-    tradeMode: normalizeTradeMode(value.tradeMode ?? value.trade_mode ?? rawText),
+    tradeMode,
     productCategory: category,
-    title: title || buildTitle(postType, category, model || rawText),
+    title: title || buildTitle(postType, category, model || rawText, tradeMode),
     model: model || parseModelText(rawText || title, category),
     quantity: asNumber(value.quantity),
     quantityUnit: asText(value.quantityUnit ?? value.quantity_unit) || unitForCategory(category),
@@ -580,9 +740,7 @@ function mockStructuredExtract(rawText: string): ExtractionEnvelope {
     }
   }
 
-  return buildEnvelope(dedupeItems(items), [
-    "当前为本地离线解析。配置 DEEPSEEK_API_KEY 后会调用 DeepSeek 做完整语义抽取。",
-  ]);
+  return buildEnvelope(dedupeItems(items), []);
 }
 
 function parseTradeLine(line: string, speaker: string, contextIntent: PostType | null): ExtractedTradeItem | null {
@@ -595,7 +753,7 @@ function parseTradeLine(line: string, speaker: string, contextIntent: PostType |
   const price = parsePrice(line);
   const contact = parseContact(`${speaker} ${line}`);
   const sourceContact = speaker.replace(/[:：]\s*$/, "");
-  const title = buildTitle(postType, category, model || line);
+  const title = buildTitle(postType, category, model || line, tradeMode);
   const priceHint = parsePriceHint(line);
 
   return {
@@ -664,6 +822,8 @@ function shouldAttachQuantityLine(line: string, nextLine: string): boolean {
 }
 
 function detectPostType(text: string): PostType | null {
+  if (/求租|承租/.test(text)) return "DEMAND";
+  if (/出租/.test(text)) return "GOODS";
   if (/高价收|天价收|提价收|批量收|现款找|实单找|找货|求购|收[:：]?|^收|找|需要进/i.test(text)) return "DEMAND";
   if (/现货出|含税出|明价出|特价出|出售|供应|出[:：]?|^出|甩货|可接|库存/i.test(text)) return "GOODS";
   return null;
@@ -671,7 +831,7 @@ function detectPostType(text: string): PostType | null {
 
 function normalizePostType(value: unknown): PostType {
   const text = asText(value).toUpperCase();
-  if (text === "DEMAND" || /收|求购|找/.test(text)) return "DEMAND";
+  if (text === "DEMAND" || /收|求购|求租|承租|找/.test(text)) return "DEMAND";
   return "GOODS";
 }
 
@@ -679,7 +839,8 @@ function detectCategory(text: string): ProductCategory | null {
   if (/网卡|交换机|迈络思|Mellanox|ConnectX|Q3400|400g/i.test(text)) return "NETWORK";
   if (/CPU|至强|Xeon|AMD|EPYC|6767P|6776P|6760P|6747P|6740P|8468V|8558P?|6530P?|9554|9655|9555/i.test(text)) return "CPU";
   if (/硬盘|固态|SSD|HDD|NVMe|SATA|U\.?2|E1\.?S|M\.?2|SAS|PM9|PM8|P55|P56|ST\d|WD|WUH|WUS|希捷|西数|东芝|思得|SOLIDIGM|SOLINIGM|大普微|忆联|小海豚|\d+(?:\.\d+)?\s*T/i.test(text)) return "STORAGE";
-  if (/内存|DDR[45]?|RDIMM|LRDIMM|DIMM|ECC|REG|三星\/SK|三星\/sk|海力士|镁光|长鑫|64G\s*(?:4800|5600|6400|7200)|128G\s*(?:5600|6400|7200)|96G\s*(?:5600|6400)/i.test(text)) return "MEMORY";
+  if (/内存|DDR[45]?|RDIMM|LRDIMM|DIMM|ECC|REG|三星\/SK|海力士|镁光|长鑫/i.test(text)) return "MEMORY";
+  if (!/整机|工作站|服务器|显卡/i.test(text) && readCompactMemorySpec(text)) return "MEMORY";
   if (/整机|服务器|工作站|机头|8卡|万卡集群|H100整机|H200整机|B300整机|GB300/i.test(text)) return "SERVER";
   if (/显卡|风扇卡|涡轮卡|公版|PCB|5090|4090|4080|5080|5060|A100|A800|A40|A2|A30|A10|A5000|A6000|RTX|PRO\s?6000|6000D|PRO\s?5000|L20|L40S|T4/i.test(text)) return "GPU_CARD";
   return null;
@@ -695,7 +856,7 @@ function normalizeCategory(value: unknown): ProductCategory {
 
 function normalizeTradeMode(value: unknown): TradeMode {
   const text = asText(value).toUpperCase();
-  if (text === "RENTAL" || /租赁|出租|租用|月租|年租/.test(text)) return "RENTAL";
+  if (text === "RENTAL" || /租赁|出租|求租|承租|租用|租金|日租|月租|年租/.test(text)) return "RENTAL";
   if (text === "FUTURES" || /期货|小期货|预售|交期|排产|4-6周|8月/.test(text)) return "FUTURES";
   return "SPOT";
 }
@@ -786,6 +947,50 @@ function ensurePersonalAccount(phone: string): { user: DemoUser; personalWorkspa
   return { user, personalWorkspace };
 }
 
+interface IdentitySnapshot {
+  version: 1;
+  users: DemoUser[];
+  workspaces: DemoWorkspace[];
+  memberships: DemoMembership[];
+  sessions: DemoSession[];
+}
+
+function identityFilePath(): string {
+  return process.env.AUTH_STATE_FILE?.trim() || path.join(process.cwd(), ".data", "identity.json");
+}
+
+function identitySnapshot(): IdentitySnapshot {
+  return { version: 1, users: [...usersById.values()], workspaces: [...workspacesById.values()], memberships: [...memberships], sessions: [...sessions.values()] };
+}
+
+function restoreIdentityState(snapshot: IdentitySnapshot): void {
+  usersByPhone.clear();
+  usersById.clear();
+  workspacesById.clear();
+  sessions.clear();
+  memberships.splice(0, memberships.length, ...snapshot.memberships);
+  for (const user of snapshot.users) { usersById.set(user.id, user); usersByPhone.set(user.phone, user); }
+  for (const workspace of snapshot.workspaces) workspacesById.set(workspace.id, workspace);
+  for (const session of snapshot.sessions) sessions.set(session.token, session);
+}
+
+function loadIdentityState(): void {
+  const snapshot = readJsonSnapshot(identityFilePath());
+  if (snapshot === undefined) return;
+  if (!isRecord(snapshot) || snapshot.version !== 1 || !Array.isArray(snapshot.users) || !Array.isArray(snapshot.workspaces) || !Array.isArray(snapshot.memberships) || !Array.isArray(snapshot.sessions) ||
+    snapshot.users.some((user) => !isRecord(user) || typeof user.id !== "string" || typeof user.phone !== "string") ||
+    snapshot.workspaces.some((workspace) => !isRecord(workspace) || typeof workspace.id !== "string" || typeof workspace.ownerUserId !== "string") ||
+    snapshot.memberships.some((member) => !isRecord(member) || typeof member.userId !== "string" || typeof member.workspaceId !== "string") ||
+    snapshot.sessions.some((session) => !isRecord(session) || typeof session.token !== "string" || typeof session.userId !== "string" || typeof session.currentWorkspaceId !== "string" || typeof session.expiresAt !== "number")) {
+    throw new Error("身份存储格式无效，请保留原文件并修复后重启。");
+  }
+  restoreIdentityState(snapshot as unknown as IdentitySnapshot);
+}
+
+function saveIdentityState(): void {
+  writeAtomicJson(identityFilePath(), identitySnapshot());
+}
+
 function createPersonalWorkspace(user: DemoUser): DemoWorkspace {
   const now = new Date().toISOString();
   const workspace: DemoWorkspace = {
@@ -827,7 +1032,10 @@ function buildAuthPayload(session: DemoSession) {
       };
     })
     .filter(Boolean);
-
+  for (const company of enterprise.spaces(user.id)) workspaces.push({
+    id:company.id,name:company.name,type:"ENTERPRISE",status:"ACTIVE",planCode:"enterprise",
+    role:company.role,dataScope:company.role==="MEMBER"?"PERSONAL":"WORKSPACE",
+  });
   return {
     token: session.token,
     user: {
@@ -840,7 +1048,7 @@ function buildAuthPayload(session: DemoSession) {
     workspaces,
     currentWorkspaceId: session.currentWorkspaceId,
     enterprise: {
-      status: "RESERVED",
+      status: workspaces.some(space=>space?.type==="ENTERPRISE") ? "ACTIVE" : "RESERVED",
       supportedWorkspaceType: "ENTERPRISE",
     },
     expiresAt: new Date(session.expiresAt).toISOString(),
@@ -876,28 +1084,14 @@ function paymentOrdersFilePath(): string {
 }
 
 function loadPaymentOrders(): void {
-  try {
-    const filePath = paymentOrdersFilePath();
-    if (!fs.existsSync(filePath)) return;
-    const raw = fs.readFileSync(filePath, "utf8");
-    const orders = JSON.parse(raw) as PaymentOrder[];
-    if (!Array.isArray(orders)) return;
-    orders.forEach((order) => {
-      if (order?.id) paymentOrders.set(order.id, order);
-    });
-  } catch (error) {
-    console.warn("[货记 Web] payment orders load failed:", error instanceof Error ? error.message : String(error));
-  }
+  const orders=readJsonSnapshot(paymentOrdersFilePath());
+  if(orders===undefined)return;
+  if(!Array.isArray(orders) || orders.some(order=>!order?.id))throw Error("支付订单文件无效，请核对持久化数据。");
+  orders.forEach(order=>paymentOrders.set(order.id,order));
 }
 
 function savePaymentOrders(): void {
-  try {
-    const filePath = paymentOrdersFilePath();
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(Array.from(paymentOrders.values()), null, 2), "utf8");
-  } catch (error) {
-    console.warn("[货记 Web] payment orders save failed:", error instanceof Error ? error.message : String(error));
-  }
+  writeAtomicJson(paymentOrdersFilePath(), Array.from(paymentOrders.values()));
 }
 
 function appBaseUrl(req: express.Request): string {
@@ -1045,11 +1239,19 @@ function readSession(authorization: unknown): DemoSession | null {
   const token = parseBearerToken(authorization);
   if (!token) return null;
   const session = sessions.get(token);
-  if (!session) return null;
+  if (!session || (process.env.NODE_ENV === "production" && !session.verifiedSms)) return null;
   if (session.expiresAt < Date.now()) {
     sessions.delete(token);
     return null;
   }
+  const user = usersById.get(session.userId);
+  if (isCompany(session.currentWorkspaceId)) {
+    const member=enterprise.member(session.currentWorkspaceId,session.userId);
+    return user?.status==="ACTIVE" && member?.active && member.accessVersion===session.accessVersion ? session : null;
+  }
+  const workspace = workspacesById.get(session.currentWorkspaceId);
+  const membership = memberships.find((item) => item.userId === session.userId && item.workspaceId === session.currentWorkspaceId && item.status === "ACTIVE");
+  if (!user || user.status !== "ACTIVE" || !workspace || workspace.status !== "ACTIVE" || !membership) return null;
   return session;
 }
 
@@ -1522,7 +1724,8 @@ function configFromText(text: string, category: ProductCategory): ConfigItem[] {
   if (brand) items.push({ label: "品牌", value: brand });
   if (category === "MEMORY") {
     pushMatch(items, "容量", text, /(?:32|48|64|96|128|256)G/i);
-    pushMatch(items, "频率", text, /\b(?:2666|2933|3200|4800|5600|6400|7200)\b/);
+    const frequency = readMemoryFrequency(text);
+    if (frequency) items.push({ label: "频率", value: frequency });
     pushMatch(items, "批次", text, /DC\d{2}\+?|PB0|EB2|ws/i);
   }
   if (category === "STORAGE") {
@@ -1581,7 +1784,7 @@ function pushMatch(items: ConfigItem[], label: string, text: string, pattern: Re
 
 function buildEnvelope(items: ExtractedTradeItem[], warnings: string[]): ExtractionEnvelope {
   const sourceWarnings = items.some((item) => item.sourceContact === "未知来源")
-    ? ["部分条目没有识别到微信来源用户，请在待确认结果中补齐。"]
+    ? [unknownSourceWarning]
     : [];
   return {
     summary: {
@@ -1590,7 +1793,7 @@ function buildEnvelope(items: ExtractedTradeItem[], warnings: string[]): Extract
       demandCount: items.filter((item) => item.postType === "DEMAND").length,
     },
     items,
-    warnings: [...warnings, ...sourceWarnings],
+    warnings: [...new Set([...warnings, ...sourceWarnings])],
   };
 }
 
@@ -1613,8 +1816,8 @@ function dedupeItems(items: ExtractedTradeItem[]): ExtractedTradeItem[] {
   });
 }
 
-function buildTitle(postType: PostType, category: ProductCategory, model: string): string {
-  const verb = postType === "GOODS" ? "出" : "收";
+function buildTitle(postType: PostType, category: ProductCategory, model: string, mode: TradeMode): string {
+  const verb = mode === "RENTAL" ? (postType === "GOODS" ? "出租" : "求租") : postType === "GOODS" ? "出" : "收";
   return `${verb}${categoryLabel(category)} ${model}`.trim();
 }
 
@@ -1690,7 +1893,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function startServer() {
+  rpaInbox.kick();
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1709,4 +1914,6 @@ async function startServer() {
   });
 }
 
-void startServer();
+export { app };
+export function stopLocalRealtime() { localController?.stopRealtime(); }
+if (process.env.NODE_ENV !== "test") void startServer();

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "deviceId": "offline-fixture-device",
+  "apiBaseUrl": "http://localhost:3000",
+  "token": "",
+  "scope": {"userId": "fixture-user", "workspaceId": "fixture-workspace"},
+  "groups": ["B300真实交易群", "真实货源群"],
+  "pollIntervalSeconds": 10,
+  "statePath": "../.data/fixture-replay.sqlite3",
+  "upload": {"enabled": false, "batchSize": 50},
+  "selectors": {
+    "window": {"controlType": "WindowControl", "name": "{chatName}", "maxDepth": 1},
+    "title": {"controlType": "TextControl", "name": "{chatName}", "maxDepth": 2},
+    "messageList": {"controlType": "ListControl", "name": "消息", "maxDepth": 2},
+    "messageItem": {"controlType": "ListItemControl", "maxDepth": 1},
+    "sender": {"controlType": "TextControl", "automationId": "sender", "maxDepth": 2},
+    "text": {"controlType": "TextControl", "automationId": "messageText", "maxDepth": 2}
+  }
+}

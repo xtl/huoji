@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "deviceId": "replace-with-a-stable-device-id",
+  "apiBaseUrl": "http://localhost:3000",
+  "token": "",
+  "scope": {"userId": "replace-with-your-user-id", "workspaceId": "replace-with-your-workspace-id"},
+  "groups": ["B300真实交易群", "真实货源群"],
+  "pollIntervalSeconds": 10,
+  "statePath": ".data/wechat-rpa.sqlite3",
+  "upload": {"enabled": false, "batchSize": 50},
+  "selectors": {
+    "window": {"controlType": "WindowControl", "name": "{chatName}", "maxDepth": 1},
+    "title": {"controlType": "TextControl", "name": "{chatName}", "maxDepth": 6},
+    "messageList": {"controlType": "ListControl", "name": "消息", "maxDepth": 8},
+    "messageItem": {"controlType": "ListItemControl", "maxDepth": 1},
+    "sender": {"controlType": "TextControl", "automationId": "REPLACE_WITH_INSPECTED_SENDER_ID", "maxDepth": 4},
+    "text": {"controlType": "TextControl", "automationId": "REPLACE_WITH_INSPECTED_MESSAGE_TEXT_ID", "maxDepth": 4}
+  }
+}

@@ -1,0 +1,6 @@
+.data/
+config.local.json
+connection.local.json
+wechat-rpa.config*.json
+__pycache__/
+*.sqlite3*

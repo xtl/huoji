@@ -1,0 +1,107 @@
+.platform-ai {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 24px clamp(16px, 4vw, 48px);
+  color: var(--ink);
+}
+.platform-ai > header,
+.platform-ai nav,
+.platform-filters,
+.platform-login > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.platform-ai > header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 18px;
+  font-size: 21px;
+}
+.platform-ai header span,
+.platform-ai small,
+.platform-ai p {
+  color: var(--muted);
+  font-size: 14px;
+}
+.platform-ai nav {
+  margin: 24px 0;
+}
+.platform-ai button,
+.platform-ai input {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 12px;
+  background: white;
+  font-size: 14px;
+}
+.platform-ai button[aria-pressed="true"],
+.platform-ai button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.platform-ai button:disabled {
+  opacity: 0.5;
+}
+.platform-ai h1,
+.platform-ai h2 {
+  font-size: 25px;
+  font-weight: 650;
+  margin: 16px 0;
+}
+.platform-ai h3 {
+  font-weight: 650;
+}
+.platform-ai p {
+  margin: 10px 0;
+}
+.platform-table {
+  overflow-x: auto;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.platform-table table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.platform-table td,
+.platform-table th {
+  text-align: right;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.platform-table th:first-child,
+.platform-table td:first-child {
+  text-align: left;
+}
+.platform-login,
+.platform-detail {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+  margin: 24px 0;
+}
+.platform-login {
+  max-width: 400px;
+  margin: 10vh auto 0;
+}
+.platform-ai label {
+  display: grid;
+  gap: 5px;
+  margin: 12px 0;
+  font-size: 14px;
+}
+.platform-detail input {
+  max-width: 240px;
+}
+.platform-notice {
+  padding: 10px 14px;
+  background: var(--surface-subtle);
+}

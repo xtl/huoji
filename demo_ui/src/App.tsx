@@ -1,36 +1,50 @@
+import { creditPackages, monthlyCredits, monthlyPrice, annualPrice, annualMonthlyCredits, annualBonusCredits, pointsPerCostYuan, creditsPerYuan, pricingVersion } from "./credit-pricing";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { WorkbenchHeader, MobileNavigation } from "./components/WorkspaceChrome";
+import TradeSearch from "./components/TradeSearch";
+import CircleWorkspace from "./components/CircleWorkspace";
+import { useCircleLive } from "./components/circle-client";
+import type { CircleSource } from "./circle-types";
+import { navigateWorkspace, useWorkspaceRoute, useMessageEntry, setIntakeView, setAccountSection, DEEPSEEK_SETTINGS_HASH, TALK_HASH, type AccountSection, type TabKey } from "./workspace-navigation";
+import { readCompactMemorySpec, readMemoryFrequency } from "./memory-specs";
+import { startLedgerSync, type SyncState } from "./workspace-ledger-client";
+import "./trade-workspace.css";
+import "./related-matches.css";
+import { compareChronology, sortTradesByTime, tradeChronology } from "./trade-chronology";
+import "./review-workspace.css";
+import { improvesPublishedTime, wechatClockMarker, type WechatPublishedTime } from "./wechat-published-time";
+import { readWechatTime, tradeTimeCaption, wechatTimeLabel, wechatTimestamp } from "./wechat-time-label";
 import {
   AlertCircle,
-  Bot,
-  Boxes,
-  Building2,
+  ArrowLeft,
   Check,
+  ChevronRight,
+  Users,
   ClipboardCheck,
-  Compass,
   CreditCard,
-  GitCompareArrows,
-  LogOut,
-  MessageCircle,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
+  KeyRound,
+  Radio,
   Phone,
   Plus,
   ReceiptText,
-  RotateCcw,
   Search,
-  SendHorizontal,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
   Trash2,
   UserRound,
   WalletCards,
   X,
 } from "lucide-react";
+import WechatRpaInbox, { rpaMessageResult, rpaItemSource, rpaItemIsImported, rpaMessageCanBulkImport, type WechatRpaMessage } from "./components/WechatRpaInbox";
+import { monitorSession, readStoredSession, removeExpiredStoredSession, SESSION_EXPIRED_NOTICE } from "./auth-session";
+import { SupplyVerificationPanel } from "./components/SupplyVerificationPanel";
+import WorkspaceSwitcher from "./components/WorkspaceSwitcher";
+import EnterpriseHome, { TokenUsage } from "./components/EnterpriseHome";
+import "./components/account-center.css";
+import { appendMatchHistory, matchHistoryPrefix, readMatchHistory } from "./match-verification-history";
+import type { VerificationEntry } from "./supply-verification";
 
-type TabKey = "input" | "stock" | "market" | "match" | "account";
+const pageTitles: Record<TabKey, string> = { input: "消息工作台", stock: "供应库", market: "需求库", match: "供需匹配", account: "个人中心", circle: "同行广场" };
 type MarketType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
@@ -40,7 +54,6 @@ type NoticeTone = "info" | "success" | "warning";
 type WorkspaceType = "PERSONAL" | "ENTERPRISE";
 type WorkspaceCollection = "stocks" | "market";
 type CaptchaStatus = "disabled" | "loading" | "ready" | "error";
-type AccountSection = "overview" | "membership" | "credits" | "ledger";
 type MembershipPlanCode = "FREE" | "PRO_MONTHLY" | "PRO_YEARLY";
 type CreditTransactionType = "RECHARGE" | "CONSUME" | "GRANT" | "REFUND" | "ADJUST";
 type MatchStatus = "NEW" | "CONTACTED" | "IGNORED";
@@ -52,7 +65,6 @@ type DateFilter = "ALL" | "TODAY" | "LAST_3_DAYS" | "LAST_7_DAYS" | "LAST_14_DAY
 
 const LIST_PAGE_SIZE = 30;
 const AUTH_STORAGE_KEY = "huoji_auth_session";
-const ACCOUNT_STORAGE_PREFIX = "huoji_account_wallet";
 const MATCH_STATUS_STORAGE_PREFIX = "huoji_match_statuses";
 const AI_EXAMPLE_TEXT = "深圳现货 H100 8卡服务器 2台 全新 价格120万";
 
@@ -61,7 +73,74 @@ interface ConfigItem {
   value: string;
 }
 
-interface StockItem {
+interface RpaProvenance {
+  sourceCaptureId?: string;
+  sourceItemKey?: string;
+  sourceMessageId?: string;
+  sourceChatName?: string;
+  sourceSender?: string;
+  sourceSentAt?: string | null;
+  sourcePublishedTime?: WechatPublishedTime;
+  sourceCanLookupPublishedTime?: boolean;
+  sourceObservedAt?: string;
+  sourceCaptureMode?: "UIA_MESSAGE" | "OCR_SNAPSHOT" | "OCR_MESSAGE";
+}
+
+type CaptureTime = {
+  id: string;
+  sentAt: string | null;
+  publishedTime?: WechatPublishedTime;
+  repeatedContent?: boolean;
+  legacyTimeAmbiguous?: boolean;
+};
+
+function useWechatTimes(session: AuthSession | null, sources: RpaProvenance[]) {
+  const token = session?.token;
+  const workspaceId = session?.currentWorkspaceId;
+  const ids = useMemo(() => [...new Set(sources.filter(item => item.sourceCanLookupPublishedTime !== false)
+    .map(item => item.sourceCaptureId).filter((id): id is string => Boolean(id && /^[a-zA-Z0-9_-]{1,128}$/.test(id))))].sort().join(","), [sources]);
+  const [loaded, setLoaded] = useState<{ token: string; workspaceId: string; ids: string; values: Map<string, CaptureTime> } | null>(null);
+  useEffect(() => {
+    if (!token || !workspaceId || !ids) { setLoaded(null); return; }
+    const controller = new AbortController();
+    async function read() {
+      const keys = ids.split(",");
+      const values = new Map<string, CaptureTime>();
+      for (let offset = 0; offset < keys.length && !controller.signal.aborted; offset += 50) {
+        const params = new URLSearchParams({ ids: keys.slice(offset, offset + 50).join(",") });
+        try {
+          const response = await fetch(`/api/rpa/publication-times?${params}`, {
+            headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
+          });
+          if (!response.ok) break;
+          const body = await response.json() as { items: CaptureTime[] };
+          for (const item of body.items) values.set(item.id, item);
+        } catch { break; }
+      }
+      if (!controller.signal.aborted) setLoaded({ token, workspaceId, ids, values });
+    }
+    void read();
+    return () => controller.abort();
+  }, [token, workspaceId, ids]);
+  return loaded && loaded.workspaceId === workspaceId && loaded.token === token && loaded.ids === ids ? loaded.values : undefined;
+}
+
+function enrichWechatTime<T extends StockItem | MarketPost | TradeDraft>(item: T, times?: Map<string, CaptureTime>): T {
+  const source = item.sourceCaptureId && times?.get(item.sourceCaptureId);
+  const usable = source && item.sourceCanLookupPublishedTime !== false
+    && (item.sourceCanLookupPublishedTime === true || !(source.repeatedContent || source.legacyTimeAmbiguous));
+  const saved = item.sourcePublishedTime;
+  const prior = saved?.kind === "WECHAT_CLOCK" && item.sourceObservedAt
+    ? wechatClockMarker(saved.clock, item.sourceObservedAt) : saved;
+  const sentAt = usable ? item.sourceSentAt || source.sentAt : item.sourceSentAt;
+  const evidence = usable && source.publishedTime && improvesPublishedTime(prior, source.publishedTime)
+    ? source.publishedTime : prior;
+  if (sentAt === item.sourceSentAt && evidence === item.sourcePublishedTime) return item;
+  const updated = { ...item, sourceSentAt: sentAt, sourcePublishedTime: evidence };
+  return { ...updated, configItems: configWithRpaProvenance(item.configItems, updated) };
+}
+
+interface StockItem extends RpaProvenance {
   id: string;
   productCategory: ProductCategory;
   title: string;
@@ -81,7 +160,7 @@ interface StockItem {
   createdAt: string;
 }
 
-interface MarketPost {
+interface MarketPost extends RpaProvenance {
   id: string;
   productCategory: ProductCategory;
   tradeMode: TradeMode;
@@ -125,8 +204,9 @@ interface NoticeState {
   text: string;
 }
 
-interface TradeDraft {
+interface TradeDraft extends RpaProvenance {
   id: string;
+  createdAt?: string;
   postType: MarketType;
   productCategory: ProductCategory;
   tradeMode: TradeMode;
@@ -194,6 +274,14 @@ interface SaveParsedResult {
   refreshedCount: number;
 }
 
+interface WorkspaceSnapshot {
+  version: 1;
+  stocks: StockItem[];
+  market: MarketPost[];
+  drafts: TradeDraft[];
+  confirmedRpaItemKeys: string[];
+}
+
 interface AiStructureResponse {
   data?: {
     summary?: { total?: number; goodsCount?: number; demandCount?: number };
@@ -223,7 +311,7 @@ interface WorkspaceSummary {
   dataScope: "PERSONAL" | "WORKSPACE";
 }
 
-interface AuthSession {
+export interface AuthSession {
   token: string;
   user: UserProfile;
   workspaces: WorkspaceSummary[];
@@ -246,12 +334,13 @@ interface CreditTransaction {
 }
 
 interface AccountWallet {
+  paymentReady: boolean;
   planCode: MembershipPlanCode;
   planName: string;
   membershipStatus: "ACTIVE" | "FREE" | "EXPIRED";
   membershipExpiresAt?: string;
   creditBalance: number;
-  monthlyAiParseCount: number;
+  nextGrant?: {amount:number; due:string} | null;
   transactions: CreditTransaction[];
 }
 
@@ -342,75 +431,12 @@ declare global {
   }
 }
 
-const initialStocks: StockItem[] = [
-  {
-    id: "stock-demo-1",
-    productCategory: "SERVER",
-    title: "Supermicro H100 8卡整机",
-    gpuModel: "H100",
-    gpuCount: 8,
-    quantity: 2,
-    quantityUnit: "台",
-    locationCity: "深圳",
-    priceAmount: 1200000,
-    condition: "全新",
-    availabilityType: "现货",
-    tradeMode: "SPOT",
-    configItems: [
-      { label: "品牌", value: "Supermicro" },
-      { label: "整机型号", value: "HGX H100 8-GPU" },
-      { label: "GPU", value: "H100" },
-      { label: "GPU数量", value: "8卡" },
-      { label: "CPU", value: "双路 Intel Xeon" },
-      { label: "内存", value: "2TB DDR5 ECC" },
-      { label: "硬盘", value: "8 * 3.84T NVMe" },
-      { label: "网络", value: "双口 200G IB" },
-      { label: "电源", value: "冗余电源" },
-      { label: "质保", value: "三年" },
-    ],
-    status: "SELLABLE",
-    source: "AI",
-    sourceContact: "演示微信群-小林",
-    createdAt: new Date().toISOString(),
-  },
-];
-
-const initialMarket: MarketPost[] = [
-  {
-    id: "market-demo-1",
-    productCategory: "SERVER",
-    tradeMode: "SPOT",
-    postType: "DEMAND",
-    title: "求购 H200 8卡服务器 4台",
-    gpuModel: "H200",
-    quantity: 4,
-    quantityUnit: "台",
-    locationCity: "上海",
-    priceAmount: 0,
-    contactMethod: "站内联系",
-    sourceContact: "演示微信群-采购A",
-    configItems: [
-      { label: "品牌", value: "不限" },
-      { label: "整机型号", value: "HGX H200" },
-      { label: "GPU", value: "H200" },
-      { label: "GPU数量", value: "8卡" },
-      { label: "CPU", value: "双路" },
-      { label: "内存", value: "2TB 以上" },
-      { label: "硬盘", value: "NVMe" },
-      { label: "网络", value: "200G IB" },
-      { label: "电源", value: "" },
-      { label: "质保", value: "原厂优先" },
-    ],
-    publishedAt: new Date().toISOString(),
-  },
-];
 
 const membershipPlans: Array<{
   code: MembershipPlanCode;
   name: string;
   price: string;
   period: string;
-  badge: string;
   features: string[];
 }> = [
   {
@@ -418,47 +444,82 @@ const membershipPlans: Array<{
     name: "免费版",
     price: "¥0",
     period: "长期",
-    badge: "当前可用",
-    features: ["每日 10 次 AI 解析", "单次最多 50 条", "基础供应/需求管理", "基础筛选"],
+    features: ["整理供应与需求", "查看供需匹配"],
   },
   {
     code: "PRO_MONTHLY",
     name: "个人 Pro 月卡",
-    price: "¥39",
-    period: "30 天",
-    badge: "高频使用",
-    features: ["每日 300 次 AI 解析", "单次最多 1000 条", "高级筛选与导出", "批量入库优先"],
+    price: "¥"+monthlyPrice,
+    period: "月",
+    features: [`每月含 ${monthlyCredits.toLocaleString("zh-CN")} 货记分`],
   },
   {
     code: "PRO_YEARLY",
     name: "个人 Pro 年卡",
-    price: "¥399",
-    period: "365 天",
-    badge: "更划算",
-    features: ["包含月卡全部权益", "赠送 3000 货记分", "后续经营报表优先体验", "企业版折扣预留"],
+    price: "¥"+annualPrice,
+    period: "年",
+    features: [`全年 ${(annualMonthlyCredits*12).toLocaleString("zh-CN")} 分，含额外赠送的 ${annualBonusCredits.toLocaleString("zh-CN")} 分`, `分 12 期，每月到账 ${annualMonthlyCredits.toLocaleString("zh-CN")} 分`],
   },
 ];
 
-const creditPackages: Array<{ id: string; title: string; price: string; credits: number; bonus: number; label: string }> = [
-  { id: "credits_100", title: "轻量包", price: "¥10", credits: 100, bonus: 0, label: "临时解析够用" },
-  { id: "credits_600", title: "常用包", price: "¥50", credits: 500, bonus: 100, label: "多送 100 分" },
-  { id: "credits_1500", title: "批量包", price: "¥100", credits: 1000, bonus: 500, label: "适合批量群记录" },
-];
+function CaptureInboxPanel({ visible, ...props }: Parameters<typeof WechatRpaInbox>[0] & { visible: boolean }) {
+  const [visited, setVisited] = useState(false);
+  useEffect(() => { if (visible) setVisited(true); }, [visible]);
+  if (!visited && !visible) return null;
+  return <div hidden={!visible}><WechatRpaInbox {...props} /></div>;
+}
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabKey>("input");
-  const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
+  const { activeTab, intakeView, accountSection, hash } = useWorkspaceRoute();
+  const rental = hash === "#stock/rental" || hash === "#market/rental";
+  const [initialAuth] = useState(() => loadAuthSession());
+  const [authSession, setAuthSession] = useState<AuthSession | null>(initialAuth.session);
+  const liveCircle = useCircleLive(authSession?.token, authSession?.currentWorkspaceId);
+  const messageScope = authSession ? JSON.stringify([authSession.user.id, authSession.currentWorkspaceId]) : "";
+  const messageEntry = useMessageEntry(messageScope, hash, intakeView, liveCircle.unread, Boolean(liveCircle.actor));
+  const [authNotice, setAuthNotice] = useState(initialAuth.expired ? SESSION_EXPIRED_NOTICE : "");
+  const currentAuthToken = useRef<string | null>(authSession?.token ?? null);
+  currentAuthToken.current = authSession?.token ?? null;
+  useEffect(() => {
+    if (!initialAuth.expired) return;
+    try {
+      // Recheck before removing only the stale auth key; a newer login survives.
+      removeExpiredStoredSession(localStorage, AUTH_STORAGE_KEY);
+    } catch { /* Expired authentication is already rejected in memory. */ }
+  }, [initialAuth.expired]);
   const currentWorkspace = authSession?.workspaces.find((workspace) => workspace.id === authSession.currentWorkspaceId) ?? null;
   const currentWorkspaceId = currentWorkspace?.id ?? "";
   const [stocks, setStocks] = useState<StockItem[]>(() =>
-    normalizeStocks(loadWorkspaceCollection(authSession, "stocks", "huoji_web_stocks", initialStocks)),
+    normalizeStocks(loadWorkspaceCollection<StockItem[]>(authSession, "stocks", [])),
   );
   const [marketPosts, setMarketPosts] = useState<MarketPost[]>(() =>
-    normalizeMarketPosts(loadWorkspaceCollection(authSession, "market", "huoji_web_market", initialMarket)),
+    normalizeMarketPosts(loadWorkspaceCollection<MarketPost[]>(authSession, "market", [])),
   );
-  const [accountWallet, setAccountWallet] = useState<AccountWallet>(() => loadAccountWallet(authSession));
-  const [accountSection, setAccountSection] = useState<AccountSection>("overview");
-  const [aiText, setAiText] = useState(AI_EXAMPLE_TEXT);
+  const [accountWallet, setAccountWallet] = useState<AccountWallet|null>(null);
+  const [walletError,setWalletError]=useState("");
+  const [walletVersion,refreshWallet]=useState(0);
+  useEffect(()=>{
+    const token=authSession?.token;
+    if(!token)return;
+    let active=true;
+    let latest=0;
+    async function read(){
+      const sequence=++latest;
+      try{
+        const response=await fetch("/api/wallet",{headers:{Authorization:"Bearer "+token},cache:"no-store"});
+        if(!response.ok)throw Error("暂时无法读取当前空间的钱包。");
+        const data=await response.json();
+        if(active && sequence===latest && currentAuthToken.current===token){setAccountWallet(data);setWalletError("");}
+      }catch{
+        if(active && sequence===latest && currentAuthToken.current===token){setAccountWallet(null);setWalletError("暂时无法读取当前空间的钱包。");}
+      }
+    }
+    void read();
+    const timer=setInterval(()=>{if(!document.hidden)void read();},30000);
+    window.addEventListener("focus",read);
+    return ()=>{active=false;clearInterval(timer);window.removeEventListener("focus",read);};
+  },[authSession?.token,walletVersion,activeTab,accountSection]);
+  const [aiText, setAiText] = useState("");
   const [query, setQuery] = useState("");
   const [marketModeFilter, setMarketModeFilter] = useState<TradeMode | "ALL">("ALL");
   const [marketCategoryFilter, setMarketCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
@@ -473,14 +534,92 @@ export default function App() {
   const [marketDateFilter, setMarketDateFilter] = useState<DateFilter>("ALL");
   const [stockFiltersOpen, setStockFiltersOpen] = useState(false);
   const [marketFiltersOpen, setMarketFiltersOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
+  const inspectorRef = useRef<HTMLDivElement>(null);
+  const listScroll = useRef(0);
+  const detailTrigger = useRef<HTMLElement | null>(null);
+  const searchReturnRow = useRef("");
+  function openInspector() {
+    searchReturnRow.current = "";
+    if (inspectorCollapsed) {
+      listScroll.current = window.scrollY;
+      detailTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+    setInspectorCollapsed(false);
+  }
+  function closeInspector() {
+    setInspectorCollapsed(true);
+    requestAnimationFrame(() => {
+      if (searchReturnRow.current) {
+        const trigger = tradeListRef.current?.querySelector<HTMLButtonElement>(`button[data-trade-id="${CSS.escape(searchReturnRow.current)}"]`);
+        searchReturnRow.current = "";
+        if (trigger) {
+          trigger.focus({ preventScroll: true });
+          trigger.scrollIntoView({ block: "center" });
+          return;
+        }
+      }
+      if (window.matchMedia("(max-width: 1023px)").matches) window.scrollTo(0, listScroll.current);
+      detailTrigger.current?.focus({ preventScroll: true });
+    });
+  }
+  function navigateTo(tab: TabKey) {
+    if (tab === activeTab) {
+      if (rental) {
+        if (tab === "stock") resetStockFilters(); else resetMarketFilters();
+        navigateWorkspace(`#${tab}`);
+      }
+      if (tab === "circle") navigateWorkspace("#circle");
+      if (tab === "input") navigateWorkspace(messageEntry.href);
+      if (tab === "account") setAccountSection("overview");
+      if (!inspectorCollapsed) closeInspector();
+      return;
+    }
+    setRelatedTarget(null);
+    setInspectorCollapsed(true);
+    setNotice(null);
+    setQuery("");
+    navigateWorkspace(tab === "input" ? messageEntry.href : `#${tab}`);
+  }
+  useEffect(() => { window.scrollTo(0, 0); }, [activeTab, intakeView, accountSection, rental]);
+  useEffect(() => {
+    document.title = authSession ? `${activeTab === "input" && intakeView === "paste" ? "粘贴录入" : pageTitles[activeTab]} · 货记` : "登录 · 货记";
+  }, [authSession, activeTab, intakeView]);
+  useEffect(() => {
+    const onBack = () => { setInspectorCollapsed(true); setQuery(""); setNotice(null); };
+    window.addEventListener("popstate", onBack);
+    return () => window.removeEventListener("popstate", onBack);
+  }, []);
+  useEffect(() => {
+    if (inspectorCollapsed) return;
+    const frame = window.requestAnimationFrame(() => {
+      const panel = inspectorRef.current;
+      if (!panel) return;
+      panel.tabIndex = -1;
+      panel.focus({ preventScroll: true });
+      const { top } = panel.getBoundingClientRect();
+      if (top < 64 || top > window.innerHeight - 120) {
+        panel.scrollIntoView({ block: "start" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, inspectorCollapsed]);
   const [stockPage, setStockPage] = useState(1);
+  const tradeListRef = useRef<HTMLDivElement>(null);
+  function changeTradePage(setPage: (page: number) => void, page: number) {
+    setPage(page);
+    requestAnimationFrame(() => {
+      tradeListRef.current?.focus({ preventScroll: true });
+      tradeListRef.current?.scrollIntoView({ block: "start" });
+    });
+  }
   const [marketPage, setMarketPage] = useState(1);
   const [matchPage, setMatchPage] = useState(1);
   const [selectedStockId, setSelectedStockId] = useState("");
   const [selectedMarketId, setSelectedMarketId] = useState("");
   const [selectedMatchId, setSelectedMatchId] = useState("");
+  const [relatedTarget, setRelatedTarget] = useState<{ kind: "stock" | "market"; id: string } | null>(null);
+  useEffect(() => setRelatedTarget(null), [activeTab, rental]);
   const [matchView, setMatchView] = useState<MatchView>("RECOMMENDED");
   const [matchCategoryFilter, setMatchCategoryFilter] = useState<ProductCategory | "ALL">("ALL");
   const [matchModeFilter, setMatchModeFilter] = useState<TradeMode | "ALL">("ALL");
@@ -489,35 +628,41 @@ export default function App() {
   const [matchDateFilter, setMatchDateFilter] = useState<DateFilter>("ALL");
   const [matchFiltersOpen, setMatchFiltersOpen] = useState(false);
   const [matchStatuses, setMatchStatuses] = useState<Record<string, MatchStatus>>(() => loadMatchStatuses(authSession));
-  const [lastMatchRunAt, setLastMatchRunAt] = useState(() => new Date().toISOString());
-  const [draftItems, setDraftItems] = useState<TradeDraft[]>([]);
+  const [draftItems, setDraftItems] = useState<TradeDraft[]>(() => loadTradeDrafts(authSession));
+  const [confirmedRpaItemKeys, setConfirmedRpaItemKeys] = useState<string[]>(() => loadRpaConfirmedItemKeys(authSession));
+  const [ledgerSyncState, setLedgerSyncState] = useState<SyncState>("loading");
+  const ledgerSync = useRef<ReturnType<typeof startLedgerSync<WorkspaceSnapshot>> | null>(null);
   const [draftPage, setDraftPage] = useState(1);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: "assistant-welcome",
-      role: "assistant",
-      text: "把微信群货源、求购、租赁信息直接发给我。我会自动识别类型、交易大类和品类；也可以直接说“匹配供需”，我会生成机会。",
-    },
-  ]);
+  const [reviewFilter, setReviewFilter] = useState<"all" | "missing" | "complete">("all");
+  const [editingDraftId, setEditingDraftId] = useState("");
+  const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const clearDraftDialog = useRef<HTMLDialogElement>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isAiParsing, setIsAiParsing] = useState(false);
+  const pendingAiRequest=useRef<{token:string;text:string;id:string} | null>(null);
   const [aiParseMessage, setAiParseMessage] = useState("");
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [paymentBusyKey, setPaymentBusyKey] = useState("");
+  useEffect(() => {
+    if (activeTab !== "input" || intakeView !== "review") setEditingDraftId("");
+  }, [activeTab, intakeView]);
 
   useEffect(() => {
     if (!authSession) return;
-    setStocks(normalizeStocks(loadWorkspaceCollection(authSession, "stocks", "huoji_web_stocks", initialStocks)));
-    setMarketPosts(normalizeMarketPosts(loadWorkspaceCollection(authSession, "market", "huoji_web_market", initialMarket)));
-    setAccountWallet(loadAccountWallet(authSession));
-    setDraftItems([]);
+    setStocks(normalizeStocks(loadWorkspaceCollection<StockItem[]>(authSession, "stocks", [])));
+    setMarketPosts(normalizeMarketPosts(loadWorkspaceCollection<MarketPost[]>(authSession, "market", [])));
+    setAccountWallet(null);setWalletError("");
+    setDraftItems(loadTradeDrafts(authSession));
+    setConfirmedRpaItemKeys(loadRpaConfirmedItemKeys(authSession));
     setQuery("");
     setStockPage(1);
     setMarketPage(1);
     setMatchPage(1);
     setDraftPage(1);
-    setAccountSection("overview");
+    setReviewFilter("all");
+    setEditingDraftId("");
     setMatchStatuses(loadMatchStatuses(authSession));
-    setLastMatchRunAt(new Date().toISOString());
+    setRelatedTarget(null);
   }, [authSession?.currentWorkspaceId]);
 
   useEffect(() => {
@@ -527,20 +672,32 @@ export default function App() {
     const pendingOrderId = localStorage.getItem(pendingPaymentStorageKey(authSession)) || "";
     const orderId = returnedOrderId || pendingOrderId;
     if (!orderId) return;
-    setActiveTab("account");
     setAccountSection("ledger");
     void refreshPaymentOrder(orderId, Boolean(returnedOrderId));
   }, [authSession?.token]);
 
+  const timeSources = useMemo(() => [...stocks, ...marketPosts, ...draftItems], [stocks, marketPosts, draftItems]);
+  const times = useWechatTimes(authSession, timeSources);
+  const enrichedDrafts = useMemo(() => draftItems.map(item => enrichWechatTime(item, times)), [draftItems, times]);
+  const orderedStocks = useMemo(() => sortTradesByTime(stocks.map(item => enrichWechatTime(item, times))), [stocks, times]);
+  const orderedDemands = useMemo(() => sortTradesByTime(marketPosts.filter(post => post.postType === "DEMAND")
+    .map(item => enrichWechatTime(item, times))), [marketPosts, times]);
+  const circleSources = useMemo((): CircleSource[] => [
+    ...orderedStocks.filter(item=>item.status!=="SOLD_OUT"&&item.status!=="EXPIRED").map(item=>({item,kind:"供应" as const})),
+    ...orderedDemands.map(item=>({item,kind:"求购" as const})),
+  ].map(({item,kind})=>({id:item.id,kind,title:item.gpuModel||item.title,model:item.gpuModel,city:item.locationCity,
+    quantity:item.quantity>0?quantityText(item.quantity,item.quantityUnit):"",mode:tradeModeText(item.tradeMode)})),[orderedStocks,orderedDemands]);
+  const ledgerStocks = useMemo(() => orderedStocks.filter(item => (item.tradeMode === "RENTAL") === rental), [orderedStocks, rental]);
+  const ledgerDemands = useMemo(() => orderedDemands.filter(item => (item.tradeMode === "RENTAL") === rental), [orderedDemands, rental]);
   const filteredStocks = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return stocks
+    return ledgerStocks
       .filter((item) => {
         if (stockCategoryFilter !== "ALL" && item.productCategory !== stockCategoryFilter) return false;
         if (stockCityFilter !== "ALL" && item.locationCity !== stockCityFilter) return false;
         if (stockSourceFilter !== "ALL" && item.source !== stockSourceFilter) return false;
         if (stockSourceContactFilter !== "ALL" && item.sourceContact !== stockSourceContactFilter) return false;
-        if (stockModeFilter !== "ALL" && item.tradeMode !== stockModeFilter) return false;
+        if (!rental && stockModeFilter !== "ALL" && item.tradeMode !== stockModeFilter) return false;
         if (!matchesPriceFilter(item.priceAmount, stockPriceFilter)) return false;
         if (!matchesDateFilter(createdTimeValue(item.createdAt), stockDateFilter)) return false;
         if (!q) return true;
@@ -549,6 +706,9 @@ export default function App() {
           item.gpuModel,
           item.locationCity,
           item.sourceContact,
+          item.sourceChatName || "",
+          item.sourceSender || "",
+          statusText(item.status),
           item.status,
           item.source,
           stockSourceText(item.source),
@@ -559,28 +719,26 @@ export default function App() {
           item.priceAmount,
           ...item.configItems.flatMap((config) => [config.label, config.value]),
         ].some((value) => String(value).toLowerCase().includes(q));
-      })
-      .sort((left, right) => createdTimeValue(right.createdAt) - createdTimeValue(left.createdAt));
-  }, [query, stockCategoryFilter, stockCityFilter, stockDateFilter, stockModeFilter, stockPriceFilter, stockSourceContactFilter, stockSourceFilter, stocks]);
+      });
+  }, [query, stockCategoryFilter, stockCityFilter, stockDateFilter, stockModeFilter, stockPriceFilter, stockSourceContactFilter, stockSourceFilter, ledgerStocks, rental]);
 
   const stockCityOptions = useMemo(() => {
     const cities: string[] = Array.from(
-      new Set<string>(stocks.map((item) => item.locationCity).filter((city) => city.trim().length > 0)),
+      new Set<string>(ledgerStocks.map((item) => item.locationCity).filter((city) => city.trim().length > 0)),
     ).sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
     return [{ label: "全部城市", value: "ALL" }, ...cities.map((city) => ({ label: city, value: city }))];
-  }, [stocks]);
+  }, [ledgerStocks]);
 
   const stockSourceContactOptions = useMemo(() => {
-    const contacts = uniqueSortedLabels(stocks.map((item) => item.sourceContact).filter(Boolean));
+    const contacts = uniqueSortedLabels(ledgerStocks.map((item) => item.sourceContact).filter(Boolean));
     return [{ label: "全部来源用户", value: "ALL" }, ...contacts.map((contact) => ({ label: contact, value: contact }))];
-  }, [stocks]);
+  }, [ledgerStocks]);
 
   const filteredMarket = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return marketPosts
-      .filter((post) => post.postType === "DEMAND")
+    return ledgerDemands
       .filter((post) => {
-        if (marketModeFilter !== "ALL" && post.tradeMode !== marketModeFilter) return false;
+        if (!rental && marketModeFilter !== "ALL" && post.tradeMode !== marketModeFilter) return false;
         if (marketCategoryFilter !== "ALL" && post.productCategory !== marketCategoryFilter) return false;
         if (marketSourceContactFilter !== "ALL" && post.sourceContact !== marketSourceContactFilter) return false;
         if (!matchesDateFilter(createdTimeValue(post.publishedAt), marketDateFilter)) return false;
@@ -590,22 +748,46 @@ export default function App() {
           post.gpuModel,
           post.locationCity,
           post.sourceContact,
+          post.sourceChatName || "",
+          post.sourceSender || "",
           post.contactMethod,
           post.tradeMode,
+          tradeModeText(post.tradeMode),
           post.productCategory,
           productCategoryText(post.productCategory),
           ...post.configItems.flatMap((config) => [config.label, config.value]),
         ].some((value) => String(value).toLowerCase().includes(q));
-      })
-      .sort((left, right) => createdTimeValue(right.publishedAt) - createdTimeValue(left.publishedAt));
-  }, [query, marketCategoryFilter, marketDateFilter, marketModeFilter, marketPosts, marketSourceContactFilter]);
+      });
+  }, [query, marketCategoryFilter, marketDateFilter, marketModeFilter, ledgerDemands, marketSourceContactFilter, rental]);
 
   const marketSourceContactOptions = useMemo(() => {
-    const contacts = uniqueSortedLabels(marketPosts.filter((post) => post.postType === "DEMAND").map((post) => post.sourceContact).filter(Boolean));
+    const contacts = uniqueSortedLabels(ledgerDemands.map((post) => post.sourceContact).filter(Boolean));
     return [{ label: "全部来源用户", value: "ALL" }, ...contacts.map((contact) => ({ label: contact, value: contact }))];
-  }, [marketPosts]);
+  }, [ledgerDemands]);
 
-  const matchCandidates = useMemo(() => generateMatchCandidates(stocks, marketPosts, matchStatuses), [marketPosts, matchStatuses, stocks]);
+  const scoredMatches = useMemo(() => generateMatchCandidates(stocks, marketPosts, matchStatuses), [marketPosts, matchStatuses, stocks]);
+  const matchCandidates = useMemo(() => {
+    const stockById = new Map(orderedStocks.map(item => [item.id, item]));
+    const demandById = new Map(orderedDemands.map(item => [item.id, item]));
+    return scoredMatches.map(pair => ({ ...pair, stock: stockById.get(pair.stock.id) ?? pair.stock, demand: demandById.get(pair.demand.id) ?? pair.demand }));
+  }, [scoredMatches, orderedStocks, orderedDemands]);
+  const relatedSource = relatedTarget?.kind === "stock" ? orderedStocks.find(item => item.id === relatedTarget.id)
+    : relatedTarget && orderedDemands.find(item => item.id === relatedTarget.id);
+  const relatedMatches = useMemo(() => {
+    if (!relatedTarget) return [];
+    const isStock = relatedTarget.kind === "stock";
+    return sortMatchesForView(matchCandidates.filter(pair => (isStock ? pair.stock.id : pair.demand.id) === relatedTarget.id),
+      isStock ? "SUPPLY_TO_DEMAND" : "DEMAND_TO_SUPPLY");
+  }, [matchCandidates, relatedTarget]);
+  const relatedCounts = useMemo(() => {
+    const stock = new Map<string, number>();
+    const market = new Map<string, number>();
+    for (const pair of matchCandidates) {
+      stock.set(pair.stock.id, (stock.get(pair.stock.id) ?? 0) + 1);
+      market.set(pair.demand.id, (market.get(pair.demand.id) ?? 0) + 1);
+    }
+    return { stock, market };
+  }, [matchCandidates]);
   const filteredMatches = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = matchCandidates
@@ -626,6 +808,10 @@ export default function App() {
           candidate.stock.gpuModel,
           candidate.stock.locationCity,
           candidate.stock.sourceContact,
+          candidate.stock.sourceChatName || "",
+          candidate.demand.sourceChatName || "",
+          candidate.stock.sourceSender || "",
+          candidate.demand.sourceSender || "",
           candidate.reasons.join(" "),
           candidate.riskNotes.join(" "),
           candidate.scoreTotal,
@@ -633,38 +819,66 @@ export default function App() {
           matchLevelText(candidate.level),
         ].some((value) => String(value).toLowerCase().includes(q));
       });
-    return sortMatchesForView(scopeMatchesForView(filtered, matchView));
+    return sortMatchesForView(scopeMatchesForView(filtered, matchView), matchView);
   }, [matchCandidates, matchCategoryFilter, matchDateFilter, matchModeFilter, matchScoreFilter, matchStatusFilter, matchView, query]);
 
   const stockCurrentPage = clampPage(stockPage, totalPagesFor(filteredStocks.length));
   const marketCurrentPage = clampPage(marketPage, totalPagesFor(filteredMarket.length));
   const matchCurrentPage = clampPage(matchPage, totalPagesFor(filteredMatches.length));
-  const draftCurrentPage = clampPage(draftPage, totalPagesFor(draftItems.length));
+  const draftGroups = useMemo(() => {
+    const ordered = enrichedDrafts.map(draft => ({ draft, chronology: draftChronology(draft) }))
+      .sort((a, b) => compareChronology(a.chronology, b.chronology)).map(({ draft }) => draft);
+    const groups: Record<"all" | "missing" | "complete", TradeDraft[]> = { all: ordered, missing: [], complete: [] };
+    for (const draft of ordered) groups[tradeDraftMissingFields(draft).length ? "missing" : "complete"].push(draft);
+    return groups;
+  }, [enrichedDrafts]);
+  const pendingGoods = draftItems.filter(item => item.postType === "GOODS" && (item.tradeMode === "RENTAL") === rental).length;
+  const pendingDemands = draftItems.filter(item => item.postType === "DEMAND" && (item.tradeMode === "RENTAL") === rental).length;
+  function enterLedgerIntake(pending: number) {
+    setReviewFilter("all");
+    setDraftPage(1);
+    setIntakeView(pending ? "review" : "paste");
+  }
+  const reviewDrafts = draftGroups[reviewFilter];
+  const reviewScopes = [["all", "全部"], ["missing", "待补字段"], ["complete", "关键项齐全"]] as const;
+  function changeReviewFilter(scope: typeof reviewFilter) {
+    setReviewFilter(scope);
+    setDraftPage(1);
+  }
+  const draftCurrentPage = clampPage(draftPage, totalPagesFor(reviewDrafts.length));
+  const editingDraft = enrichedDrafts.find(draft => draft.id === editingDraftId);
   const pagedStocks = filteredStocks.slice((stockCurrentPage - 1) * LIST_PAGE_SIZE, stockCurrentPage * LIST_PAGE_SIZE);
   const pagedMarket = filteredMarket.slice((marketCurrentPage - 1) * LIST_PAGE_SIZE, marketCurrentPage * LIST_PAGE_SIZE);
   const pagedMatches = filteredMatches.slice((matchCurrentPage - 1) * LIST_PAGE_SIZE, matchCurrentPage * LIST_PAGE_SIZE);
-  const pagedDrafts = draftItems.slice((draftCurrentPage - 1) * LIST_PAGE_SIZE, draftCurrentPage * LIST_PAGE_SIZE);
-  const selectedStock = filteredStocks.find((item) => item.id === selectedStockId) ?? pagedStocks[0] ?? null;
-  const selectedMarket = filteredMarket.find((item) => item.id === selectedMarketId) ?? pagedMarket[0] ?? null;
-  const selectedMatch = filteredMatches.find((item) => item.id === selectedMatchId) ?? pagedMatches[0] ?? null;
+  const pagedDrafts = reviewDrafts.slice((draftCurrentPage - 1) * LIST_PAGE_SIZE, draftCurrentPage * LIST_PAGE_SIZE);
+  const selectedStock = pagedStocks.find((item) => item.id === selectedStockId) ?? pagedStocks[0] ?? null;
+  const selectedMarket = pagedMarket.find((item) => item.id === selectedMarketId) ?? pagedMarket[0] ?? null;
+  const selectedMatch = pagedMatches.find((item) => item.id === selectedMatchId) ?? pagedMatches[0] ?? null;
   const demandCount = marketPosts.filter((post) => post.postType === "DEMAND").length;
-  const verifiedStockCount = stocks.filter((item) => item.status === "VERIFIED" || item.status === "SELLABLE").length;
+  const verifiedStockCount = ledgerStocks.filter((item) => item.status === "VERIFIED" || item.status === "SELLABLE").length;
   const strongMatchCount = matchCandidates.filter((item) => item.level === "STRONG").length;
+  const pasteEntry = (
+    <button type="button" className="quick-entry" onClick={() => {
+      setInspectorCollapsed(true); setNotice(null); setIntakeView("paste");
+    }}><Plus size={16} aria-hidden="true" />粘贴录入</button>
+  );
   const chatCommandHint = isMatchCommand(aiText.trim());
   const listSearchBox = (
-    <div className="surface-card group flex items-center gap-2 rounded-md px-3 py-2.5">
-      <Search className="h-4 w-4 text-neutral-400 transition group-focus-within:text-neutral-700" />
+    <div className="trade-search">
+      <Search size={17} aria-hidden="true" />
       <input
         value={query}
+        aria-label="搜索记录"
+        autoComplete="off"
         onChange={(event) => {
           setQuery(event.target.value);
           setStockPage(1);
           setMarketPage(1);
           setMatchPage(1);
         }}
-        placeholder="搜索型号、城市、来源用户、状态、配置"
-        className="w-full bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
+        placeholder="搜索型号、城市、昵称或群名"
       />
+      {query && <button type="button" aria-label="清除搜索" onClick={() => { setQuery(""); setStockPage(1); setMarketPage(1); setMatchPage(1); }}><X size={15} /></button>}
     </div>
   );
   const aiLineCount = aiText.trim() ? aiText.trim().split(/\r?\n/).filter(Boolean).length : 0;
@@ -673,13 +887,13 @@ export default function App() {
     stockCityFilter !== "ALL",
     stockSourceFilter !== "ALL",
     stockSourceContactFilter !== "ALL",
-    stockModeFilter !== "ALL",
+    !rental && stockModeFilter !== "ALL",
     stockPriceFilter !== "ALL",
     stockDateFilter !== "ALL",
   ].filter(Boolean).length;
   const activeMarketFilterCount = [
     marketCategoryFilter !== "ALL",
-    marketModeFilter !== "ALL",
+    !rental && marketModeFilter !== "ALL",
     marketSourceContactFilter !== "ALL",
     marketDateFilter !== "ALL",
   ].filter(Boolean).length;
@@ -690,50 +904,93 @@ export default function App() {
     matchStatusFilter !== "ALL",
     matchDateFilter !== "ALL",
   ].filter(Boolean).length;
-  const draftSummary = draftItems.reduce(
-    (summary, item) => ({
-      goods: summary.goods + (item.postType === "GOODS" ? 1 : 0),
-      demands: summary.demands + (item.postType === "DEMAND" ? 1 : 0),
-      incomplete: summary.incomplete + (tradeDraftMissingFields(item).length ? 1 : 0),
-    }),
-    { goods: 0, demands: 0, incomplete: 0 },
-  );
-  const saveableDraftCount = draftItems.length;
+  const importedRpaItemKeys = useMemo(() => new Set(
+    [...confirmedRpaItemKeys, ...[...draftItems, ...stocks, ...marketPosts].map((item) => item.sourceItemKey).filter((id): id is string => Boolean(id))],
+  ), [confirmedRpaItemKeys, draftItems, stocks, marketPosts]);
+  const pendingRpaItemKeys = useMemo(() => new Set(draftItems.map(item => item.sourceItemKey).filter((key): key is string => Boolean(key))), [draftItems]);
+  const rpaImportScopeKey = authSession ? JSON.stringify([authSession.token, authSession.user.id, currentWorkspaceId]) : "";
+  const rpaImportContext = useRef<{ scopeKey: string; workspaceId: string; snapshot: WorkspaceSnapshot }>({
+    scopeKey: rpaImportScopeKey, workspaceId: currentWorkspaceId,
+    snapshot: { version: 1, stocks, market: marketPosts, drafts: draftItems, confirmedRpaItemKeys },
+  });
+  // Async inbox pagination must use the current workspace and edits. Synchronous
+  // commits also update this ref before React renders, preventing double imports.
+  rpaImportContext.current = {
+    scopeKey: rpaImportScopeKey, workspaceId: currentWorkspaceId,
+    snapshot: { version: 1, stocks, market: marketPosts, drafts: draftItems, confirmedRpaItemKeys },
+  };
 
-  function saveStocks(next: StockItem[]) {
-    setStocks(next);
-    saveWorkspaceCollection(currentWorkspaceId, "stocks", next);
+  useEffect(() => {
+    if (!authSession || !currentWorkspaceId) return;
+    const token = authSession.token;
+    const sync = startLedgerSync<WorkspaceSnapshot>({
+      userId: authSession.user.id, workspaceId: currentWorkspaceId, token,
+      isCurrent: () => currentAuthToken.current === token &&
+        readStoredSession<AuthSession>(localStorage, AUTH_STORAGE_KEY).session?.token === token,
+      readCache: () => ({
+        version: 1, stocks: normalizeStocks(loadWorkspaceCollection<StockItem[]>(authSession, "stocks", [])),
+        market: normalizeMarketPosts(loadWorkspaceCollection<MarketPost[]>(authSession, "market", [])),
+        drafts: loadTradeDrafts(authSession), confirmedRpaItemKeys: loadRpaConfirmedItemKeys(authSession),
+      }),
+      writeCache: snapshot => persistWorkspaceSnapshot(workspaceCacheId(authSession), snapshot),
+      receive: snapshot => {
+        const stocks = normalizeStocks(snapshot.stocks), market = normalizeMarketPosts(snapshot.market);
+        rpaImportContext.current = { scopeKey: rpaImportScopeKey, workspaceId: currentWorkspaceId, snapshot: { ...snapshot, stocks, market } };
+        setStocks(stocks); setMarketPosts(market); setDraftItems(snapshot.drafts); setConfirmedRpaItemKeys(snapshot.confirmedRpaItemKeys);
+      },
+      status: setLedgerSyncState,
+    });
+    ledgerSync.current = sync;
+    return () => { sync.stop(); ledgerSync.current = null; };
+  }, [authSession?.token, currentWorkspaceId]);
+
+  function commitLedger(before: WorkspaceSnapshot, after: WorkspaceSnapshot) {
+    if (!ledgerSync.current) throw new Error("工作空间尚未就绪");
+    ledgerSync.current.commit(before, after);
   }
 
-  function saveMarket(next: MarketPost[]) {
-    setMarketPosts(next);
-    saveWorkspaceCollection(currentWorkspaceId, "market", next);
-  }
-
-  function saveAccountWallet(next: AccountWallet) {
-    setAccountWallet(next);
-    saveAccountWalletForSession(authSession, next);
-  }
-
-  function appendCreditTransaction(
-    wallet: AccountWallet,
-    transaction: Omit<CreditTransaction, "id" | "createdAt" | "balanceAfter">,
-    transactionId?: string,
-  ): AccountWallet {
-    const nextBalance = Math.max(0, wallet.creditBalance + transaction.amount);
-    return {
-      ...wallet,
-      creditBalance: nextBalance,
-      transactions: [
-        {
-          ...transaction,
-          id: transactionId ?? `txn_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
-          createdAt: new Date().toISOString(),
-          balanceAfter: nextBalance,
-        },
-        ...wallet.transactions,
-      ].slice(0, 80),
+  useEffect(() => {
+    if (!authSession) return;
+    const token = authSession.token;
+    const monitor = monitorSession({
+      session: authSession,
+      currentToken: () => currentAuthToken.current,
+      onExpired: () => {
+        if (currentAuthToken.current !== token) return;
+        currentAuthToken.current = null;
+        rpaImportContext.current = { ...rpaImportContext.current, scopeKey: "" };
+        // Keep all workspace data, including existing draft edits and imported keys.
+        try {
+          const stored = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || "null");
+          if (stored?.token === token) localStorage.removeItem(AUTH_STORAGE_KEY);
+        } catch { /* Login is still cleared in memory if storage is unavailable. */ }
+        setAuthNotice(SESSION_EXPIRED_NOTICE);
+        setAuthSession(null);
+      },
+    });
+    const onVisible = () => { if (document.visibilityState === "visible") monitor.check(); };
+    window.addEventListener("focus", monitor.check);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      monitor.stop();
+      window.removeEventListener("focus", monitor.check);
+      document.removeEventListener("visibilitychange", onVisible);
     };
+  }, [authSession?.token, authSession?.expiresAt]);
+
+  function saveDraftItems(next: TradeDraft[]): boolean {
+    const current = rpaImportContext.current;
+    if (!rpaImportScopeKey || current.scopeKey !== rpaImportScopeKey) return false;
+    try {
+      const snapshot = { ...current.snapshot, drafts: next };
+      commitLedger(current.snapshot, snapshot);
+      rpaImportContext.current = { scopeKey: rpaImportScopeKey, workspaceId: currentWorkspaceId, snapshot };
+      setDraftItems(next);
+      return true;
+    } catch {
+      setNotice({ tone: "warning", text: "本机存储空间不足或暂不可用，操作未保存，原有待确认结果已保留。请释放空间后重试。" });
+      return false;
+    }
   }
 
   async function startAlipayPayment(productType: PaymentProductType, productId: string) {
@@ -745,6 +1002,7 @@ export default function App() {
     setPaymentBusyKey(busyKey);
     try {
       const response = await createAlipayPaymentOrder(authSession, productType, productId, preferredPaymentChannel());
+      if(currentAuthToken.current!==authSession.token)return;
       if (!response.order || !response.paymentUrl) throw new Error(response.error || "支付宝订单创建失败。");
       localStorage.setItem(pendingPaymentStorageKey(authSession), response.order.id);
       setNotice({ tone: "info", text: "正在跳转支付宝收银台，请完成付款后返回货记。" });
@@ -760,10 +1018,16 @@ export default function App() {
     if (!authSession) return;
     try {
       const response = await fetchPaymentOrder(authSession, orderId);
+      if (currentAuthToken.current!==authSession.token) return;
       if (!response.order) throw new Error(response.error || "订单状态查询失败。");
-      if (cleanupUrl) window.history.replaceState({}, "", window.location.pathname);
+      if (cleanupUrl) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("payment_order");
+        window.history.replaceState(window.history.state, "", url);
+      }
       if (response.order.status === "PAID") {
-        applyPaidPaymentOrder(response.order);
+        refreshWallet(n=>n+1);
+        setNotice({tone:"success",text:"支付已确认，可在当前空间查看到账积分和会员权益。"});
         localStorage.removeItem(pendingPaymentStorageKey(authSession));
         return;
       }
@@ -772,45 +1036,13 @@ export default function App() {
         setNotice({ tone: "warning", text: "这笔支付宝订单已关闭，未入账。" });
         return;
       }
-      setNotice({ tone: "info", text: "已返回货记，正在等待支付宝异步通知确认付款。" });
+      setNotice({ tone: "info", text: "正在等待支付宝确认付款，请稍后查看账户明细。" });
       if (retryCount < 3) {
         window.setTimeout(() => void refreshPaymentOrder(orderId, false, retryCount + 1), 3000);
       }
     } catch (error) {
       setNotice({ tone: "warning", text: error instanceof Error ? error.message : "订单状态查询失败。" });
     }
-  }
-
-  function applyPaidPaymentOrder(order: PaymentOrderView) {
-    const transactionId = `pay_${order.id}`;
-    if (accountWallet.transactions.some((transaction) => transaction.id === transactionId)) {
-      setNotice({ tone: "success", text: "这笔支付宝订单已入账。" });
-      return;
-    }
-
-    const entitlement = order.entitlement;
-    const baseWallet: AccountWallet =
-      entitlement.planCode && entitlement.planName
-        ? {
-            ...accountWallet,
-            planCode: entitlement.planCode,
-            planName: entitlement.planName,
-            membershipStatus: "ACTIVE",
-            membershipExpiresAt: addDaysFromIso(order.paidAt ?? new Date().toISOString(), entitlement.membershipDays ?? 30),
-          }
-        : accountWallet;
-    const nextWallet = appendCreditTransaction(
-      baseWallet,
-      {
-        type: order.productType === "MEMBERSHIP_PLAN" ? "GRANT" : "RECHARGE",
-        title: order.productType === "MEMBERSHIP_PLAN" ? `${order.title}权益入账` : `${order.title}充值`,
-        amount: entitlement.creditAmount,
-        note: `支付宝 ¥${order.amountYuan} · 订单 ${order.id}`,
-      },
-      transactionId,
-    );
-    saveAccountWallet(nextWallet);
-    setNotice({ tone: "success", text: `${order.title}已支付成功，${entitlement.creditAmount} 货记分已入账。` });
   }
 
   function handleRechargeCredits(pack: (typeof creditPackages)[number]) {
@@ -825,46 +1057,42 @@ export default function App() {
     void startAlipayPayment("MEMBERSHIP_PLAN", planCode);
   }
 
-  function consumeCredits(amount: number, title: string, note?: string): boolean {
-    if (accountWallet.creditBalance < amount) {
-      setAccountSection("credits");
-      setActiveTab("account");
-      setNotice({ tone: "warning", text: `货记分不足，本次需要 ${amount} 分。请先充值后再解析。` });
-      return false;
-    }
-    const nextWallet = appendCreditTransaction(
-      {
-        ...accountWallet,
-        monthlyAiParseCount: accountWallet.monthlyAiParseCount + 1,
-      },
-      {
-        type: "CONSUME",
-        title,
-        amount: -amount,
-        note,
-      },
-    );
-    saveAccountWallet(nextWallet);
-    return true;
-  }
-
   function handleLogin(nextSession: AuthSession) {
     persistAuthSession(nextSession);
-    setStocks(normalizeStocks(loadWorkspaceCollection(nextSession, "stocks", "huoji_web_stocks", initialStocks)));
-    setMarketPosts(normalizeMarketPosts(loadWorkspaceCollection(nextSession, "market", "huoji_web_market", initialMarket)));
-    setAccountWallet(loadAccountWallet(nextSession));
-    setDraftItems([]);
+    currentAuthToken.current = nextSession.token;
+    setInspectorCollapsed(true);
+    setAiText("");
+    setAiParseMessage("");
+    setChatMessages([]);
+    setAuthNotice("");
+    rpaImportContext.current = { ...rpaImportContext.current, scopeKey: "" };
+    setStocks(normalizeStocks(loadWorkspaceCollection<StockItem[]>(nextSession, "stocks", [])));
+    setMarketPosts(normalizeMarketPosts(loadWorkspaceCollection<MarketPost[]>(nextSession, "market", [])));
+    setAccountWallet(null);setWalletError("");
+    setDraftItems(loadTradeDrafts(nextSession));
+    setConfirmedRpaItemKeys(loadRpaConfirmedItemKeys(nextSession));
     setQuery("");
     setStockPage(1);
     setMarketPage(1);
     setDraftPage(1);
     setAuthSession(nextSession);
-    setNotice({ tone: "success", text: "已进入个人空间。" });
+    setNotice(null);
+  }
+
+  function changeWorkspace(next: AuthSession) {
+    if (readStoredSession<AuthSession>(localStorage,AUTH_STORAGE_KEY).session?.token!==authSession?.token) return;
+    persistAuthSession(next);
+    window.location.hash=next.workspaces.find(w=>w.id===next.currentWorkspaceId)?.type==="ENTERPRISE"?"#account/enterprise":"#input";
+    window.location.reload();
   }
 
   function handleLogout() {
+    currentAuthToken.current = null;
+    setAuthNotice("");
+    rpaImportContext.current = { ...rpaImportContext.current, scopeKey: "" };
     if (authSession?.token) void logoutAuthSession(authSession.token);
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    navigateWorkspace("#input", true);
     setAuthSession(null);
   }
 
@@ -899,19 +1127,26 @@ export default function App() {
     setMatchPage(1);
   }
 
+  function showRelatedMatches(kind: "stock" | "market", item: StockItem | MarketPost) {
+    setRelatedTarget({ kind, id: item.id });
+  }
+
   function updateMatchStatus(candidateId: string, status: MatchStatus) {
     const next = { ...matchStatuses, [candidateId]: status };
     setMatchStatuses(next);
     saveMatchStatuses(authSession, next);
+    if (relatedTarget) return;
+    if ((matchStatusFilter !== "ALL" && matchStatusFilter !== status)
+        || (matchView === "RECOMMENDED" && selectedMatch && selectedMatch.scoreTotal < 75 && status !== "CONTACTED")) {
+      closeInspector();
+    }
     setNotice({ tone: "success", text: `已标记为${matchStatusText(status)}。` });
   }
 
   function triggerMatchingFromChat(input: string) {
-    const now = new Date().toISOString();
-    setLastMatchRunAt(now);
     setMatchPage(1);
     setSelectedMatchId("");
-    setActiveTab("match");
+    navigateTo("match");
     setAiText("");
     if (!stocks.length || !demandCount) {
       const text = "需要同时有供应和需求，才能生成匹配机会。先用货记录入一些供需信息。";
@@ -925,13 +1160,13 @@ export default function App() {
       return;
     }
     const text = matchCandidates.length
-      ? `我已重新跑了一次供需匹配，生成 ${matchCandidates.length} 个机会，其中 ${strongMatchCount} 个强匹配。`
-      : "我重新跑了供需匹配，但暂时没有达到推荐阈值的机会。可以继续补充型号、规格、城市或数量。";
+      ? `找到 ${matchCandidates.length} 个匹配机会，其中 ${strongMatchCount} 个为强匹配。`
+      : "暂时没有匹配机会。可以补充型号、规格、交付地或数量后再查看。";
     setNotice({
       tone: matchCandidates.length ? "success" : "info",
       text,
     });
-    setAiParseMessage("已由智能货记触发供需匹配。");
+    setAiParseMessage("");
     setChatMessages((messages) => [
       ...messages,
       { id: `user-${Date.now()}`, role: "user", text: input },
@@ -939,53 +1174,27 @@ export default function App() {
     ]);
   }
 
-  async function copyMatchSummary(candidate: MatchCandidate) {
+  async function copyMatchSummary(candidate: MatchCandidate, notify: (notice: { tone: NoticeTone; text: string }) => void = setNotice) {
     const text = buildMatchSummary(candidate);
     try {
-      await navigator.clipboard?.writeText(text);
-      setNotice({ tone: "success", text: "匹配摘要已复制。" });
+      await navigator.clipboard.writeText(text);
+      notify({ tone: "success", text: "匹配摘要已复制。" });
     } catch {
-      setNotice({ tone: "info", text });
+      notify({ tone: "info", text });
     }
-  }
-
-  function saveParsedItems(materialized: { stockItems: StockItem[]; marketItems: MarketPost[] }): SaveParsedResult {
-    const stockResult = upsertStockItems(materialized.stockItems, stocks);
-    const marketResult = upsertMarketPosts(materialized.marketItems, marketPosts);
-    if (materialized.stockItems.length) {
-      saveStocks(stockResult.items);
-      resetStockFilters();
-    }
-    if (materialized.marketItems.length) {
-      saveMarket(marketResult.items);
-      resetMarketFilters();
-    }
-    return {
-      stockCount: stockResult.createdCount,
-      marketCount: marketResult.createdCount,
-      refreshedStockCount: stockResult.refreshedCount,
-      refreshedMarketCount: marketResult.refreshedCount,
-      refreshedCount: stockResult.refreshedCount + marketResult.refreshedCount,
-    };
   }
 
   async function parseAssistantInput() {
     const input = aiText.trim();
     if (!input) {
       setAiParseMessage("请先输入或粘贴需要解析的供需文本。");
-      setNotice({ tone: "warning", text: "货记输入为空。" });
+      setNotice({ tone: "warning", text: "先粘贴报价或求购原文，再识别供需。" });
       return;
     }
     if (isMatchCommand(input)) {
       triggerMatchingFromChat(input);
       return;
     }
-    const creditCost = aiParseCreditCost(input);
-    if (!consumeCredits(creditCost, "AI 解析供需文本", `${input.split(/\r?\n/).filter(Boolean).length || 1} 行文本`)) {
-      setAiParseMessage(`货记分不足，本次解析需要 ${creditCost} 分。`);
-      return;
-    }
-
     const overrides: EntryOverrides = {};
     setIsAiParsing(true);
     setNotice(null);
@@ -993,32 +1202,46 @@ export default function App() {
     setChatMessages((messages) => [...messages, { id: `user-${Date.now()}`, role: "user", text: input }]);
 
     try {
-      const aiResult = await parseWithAiGateway(input);
+      if(pendingAiRequest.current?.token!==authSession.token || pendingAiRequest.current?.text!==input){
+        pendingAiRequest.current={token:authSession.token,text:input,id:crypto.randomUUID()};
+      }
+      const aiResult = await parseWithAiGateway(input, authSession.token,pendingAiRequest.current.id);
+      if (currentAuthToken.current !== authSession.token) return;
+      refreshWallet(n=>n+1);
       const parsedDrafts = createDraftsFromParsedItems(aiResult.items, "AI", overrides);
       if (!parsedDrafts.length) throw new Error("没有识别到可确认的供需条目");
       const result = appendDrafts(parsedDrafts);
+      if (result.failed) return;
+      pendingAiRequest.current=null;
       const summary = countDrafts(parsedDrafts);
       setAiText("");
-      setAiParseMessage(
-        `${aiResult.isMock ? "离线解析" : "DeepSeek"}完成：${summary.goods} 条供应、${summary.demands} 条需求进入待确认${result.mergedCount ? `，合并 ${result.mergedCount} 条重复待确认` : ""}。`,
-      );
-      setNotice({ tone: "success", text: `已生成 ${result.addedCount} 条待确认结果。` });
+      const parser = aiResult.isMock ? "本地规则" : aiResult.provider === "deepseek" ? "DeepSeek" : "服务端";
+      const feedback = `${aiResult.fallbackError ? aiResult.fallbackError + " " : ""}${parser}解析完成，${summary.goods} 条供应、${summary.demands} 条需求${result.mergedCount ? `，合并 ${result.mergedCount} 条重复结果` : ""}。`;
+      setAiParseMessage("");
+      setNotice({ tone: aiResult.fallbackError ? "warning" : "success", text: feedback });
       setChatMessages((messages) => [
         ...messages,
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          tone: "success",
-          text: `我拆出了 ${summary.goods} 条供应、${summary.demands} 条需求。先检查右侧字段，确认后再保存。`,
+          tone: aiResult.fallbackError ? "warning" : "success",
+          text: feedback,
         },
       ]);
     } catch (error) {
+      if(currentAuthToken.current!==authSession.token)return;
+      if(error instanceof Error && error.message.includes("货记分不足")){
+        setAiParseMessage(error.message);
+        return;
+      }
       const fallbackDrafts = createDraftsFromParsedItems([parseAiText(input)], "MANUAL", overrides);
       const result = appendDrafts(fallbackDrafts);
-      setAiParseMessage(error instanceof Error ? `DeepSeek 解析失败，已用本地解析生成待确认：${error.message}` : "已用本地解析生成待确认。");
+      if (result.failed) return;
+      setAiParseMessage(error instanceof Error ? `在线识别未完成：${error.message}` : "在线识别暂时不可用。");
+      const fallbackText = result.addedCount ? `已按本地规则整理 ${result.addedCount} 条，请对照原文核对。` : "这段原文已经整理过了。";
       setNotice({
         tone: result.addedCount ? "warning" : "info",
-        text: result.addedCount ? `本地兜底生成 ${result.addedCount} 条待确认结果。` : "本地兜底没有新增待确认结果。",
+        text: fallbackText,
       });
       setChatMessages((messages) => [
         ...messages,
@@ -1026,7 +1249,7 @@ export default function App() {
           id: `assistant-${Date.now()}`,
           role: "assistant",
           tone: result.addedCount ? "warning" : "info",
-          text: result.addedCount ? `DeepSeek 没跑通，我先用本地规则拆了 ${result.addedCount} 条，你可以继续改字段。` : "这段内容和现有待确认结果重复，暂时没有新增。",
+          text: fallbackText,
         },
       ]);
     } finally {
@@ -1035,25 +1258,35 @@ export default function App() {
   }
 
   function appendDrafts(nextDrafts: TradeDraft[]) {
-    const newDrafts = dedupeNewTradeDrafts(nextDrafts, draftItems);
+    const current = rpaImportContext.current;
+    if (!rpaImportScopeKey || current.scopeKey !== rpaImportScopeKey) return { addedCount: 0, mergedCount: 0, failed: true };
+    const drafts = current.snapshot.drafts;
+    const newDrafts = dedupeNewTradeDrafts(nextDrafts, drafts);
     if (newDrafts.length) {
-      setDraftItems([...newDrafts, ...draftItems]);
+      if (!saveDraftItems([...newDrafts, ...drafts])) return { addedCount: 0, mergedCount: 0, failed: true };
       setDraftPage(1);
     }
-    return { addedCount: newDrafts.length, mergedCount: nextDrafts.length - newDrafts.length };
+    if (nextDrafts.length) {
+      setReviewFilter("all");
+      setEditingDraftId("");
+      setIntakeView("review");
+    }
+    return { addedCount: newDrafts.length, mergedCount: nextDrafts.length - newDrafts.length, failed: false };
   }
 
   function updateDraftItem(id: string, patch: Partial<TradeDraft>) {
-    setDraftItems((items) => items.map((item) => (item.id === id ? applyDraftPatch(item, patch) : item)));
+    saveDraftItems(draftItems.map((item) => (item.id === id ? applyDraftPatch(item, patch) : item)));
   }
 
   function removeDraftItem(id: string) {
-    setDraftItems((items) => items.filter((item) => item.id !== id));
+    if (saveDraftItems(draftItems.filter((item) => item.id !== id))) setEditingDraftId("");
   }
 
   function clearDraftItems() {
-    setDraftItems([]);
+    if (!saveDraftItems([])) return;
     setDraftPage(1);
+    setReviewFilter("all");
+    setEditingDraftId("");
     setNotice({ tone: "info", text: "已清空待确认结果。" });
   }
 
@@ -1065,11 +1298,24 @@ export default function App() {
       setNotice({ tone: "warning", text: "没有可保存的待确认结果。" });
       return;
     }
-    const result = saveParsedItems(materializeConfirmedDrafts(selected));
-    setDraftItems(draftItems.filter((item) => !selected.some((saved) => saved.id === item.id)));
-    setDraftPage(1);
+    const current = rpaImportContext.current.snapshot;
+    const prepared = buildConfirmedWorkspaceSnapshot(current, selected);
+    try {
+      commitLedger(current, prepared.snapshot);
+    } catch {
+      setNotice({ tone: "warning", text: "本机存储空间不足或暂不可用，本次未保存任何供需记录，待确认结果已保留。请释放空间后重试。" });
+      return;
+    }
+    const result = prepared.result;
+    rpaImportContext.current = { scopeKey: rpaImportScopeKey, workspaceId: currentWorkspaceId, snapshot: prepared.snapshot };
+    setStocks(prepared.snapshot.stocks);
+    setMarketPosts(prepared.snapshot.market);
+    setDraftItems(prepared.snapshot.drafts);
+    setConfirmedRpaItemKeys(prepared.snapshot.confirmedRpaItemKeys);
+    setEditingDraftId("");
+    resetStockFilters();
+    resetMarketFilters();
     const changedCount = result.stockCount + result.marketCount + result.refreshedCount;
-    if (changedCount) setLastMatchRunAt(new Date().toISOString());
     setNotice({
       tone: changedCount ? "success" : "info",
       text: changedCount ? `${saveResultNoticeText(result)} 匹配机会已刷新。` : saveResultNoticeText(result),
@@ -1085,120 +1331,126 @@ export default function App() {
     ]);
   }
 
+  function importWechatRpaMessage(message: WechatRpaMessage): { addedCount: number; alreadyImported?: boolean } {
+    return importWechatRpaMessages([message], false);
+  }
+
+  function importWechatRpaMessages(messages: WechatRpaMessage[], bulkOnly = true): { addedCount: number; alreadyImported?: boolean } {
+    const current = rpaImportContext.current;
+    if (!rpaImportScopeKey || current.scopeKey !== rpaImportScopeKey || current.workspaceId !== currentWorkspaceId) {
+      throw new Error("账号或工作空间已切换，本次未加入任何内容，请在当前空间重新操作。");
+    }
+    const prepared = buildRpaImportSnapshot(current.snapshot, messages, bulkOnly);
+    if (!prepared.addedCount) return { addedCount: 0, alreadyImported: true };
+    try {
+      commitLedger(current.snapshot, prepared.snapshot);
+    } catch {
+      throw new Error("本机存储暂不可用，本次未加入任何内容，原有待确认结果已保留，请释放空间后重试。");
+    }
+    rpaImportContext.current = { ...current, snapshot: prepared.snapshot };
+    setDraftItems(prepared.snapshot.drafts);
+    setDraftPage(1);
+    setReviewFilter("all");
+    setEditingDraftId("");
+    if (bulkOnly) {
+      setIntakeView("review");
+      setNotice({ tone: "success", text: `已加入 ${prepared.addedCount} 条供需，可以开始核对。` });
+    }
+    return { addedCount: prepared.addedCount };
+  }
+
   if (!authSession || !currentWorkspace) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleLogin} sessionNotice={authNotice} />;
   }
 
   return (
-    <div className="app-shell">
-      <div className={`app-workbench mx-auto grid min-h-screen max-w-[1440px] ${sidebarCollapsed ? "md:grid-cols-[72px_1fr]" : "md:grid-cols-[248px_1fr]"}`}>
-        <aside className={`sidebar-surface hidden py-4 md:block ${sidebarCollapsed ? "px-2" : "px-3"}`}>
-          <div className={`mb-5 flex items-center gap-2 px-2 ${sidebarCollapsed ? "justify-center" : "justify-between"}`}>
-            <div className="flex min-w-0 items-center gap-2">
-              <BrandIcon size="sm" />
-              {!sidebarCollapsed && (
-                <div className="min-w-0">
-                  <h1 className="truncate text-[15px] font-semibold leading-tight text-neutral-950">货记</h1>
-                </div>
-              )}
-            </div>
-            {!sidebarCollapsed && (
-              <button
-                type="button"
-                title="收起左侧栏"
-                aria-label="收起左侧栏"
-                onClick={() => setSidebarCollapsed(true)}
-                className="sidebar-toggle ghost-button flex h-8 w-8 items-center justify-center rounded-md"
-              >
-                <PanelLeftClose className="h-4 w-4" />
-              </button>
-            )}
-          </div>
+    <div className="app-shell" onKeyDown={event => {
+      if (event.key === "Escape" && !event.defaultPrevented && !inspectorCollapsed
+          && event.target instanceof HTMLElement && !event.target.closest("dialog, select, input, textarea")) {
+        closeInspector();
+      }
+    }}>
+      <a className="skip-navigation" href="#workspace-content" onClick={event => {
+        event.preventDefault();
+        document.getElementById("workspace-content")?.focus();
+      }}>跳到工作区内容</a>
+      <div className="workspace-layout" data-page={activeTab}>
+        <WorkbenchHeader activeTab={activeTab} onNavigate={navigateTo} messageHref={messageEntry.href} unread={liveCircle.unread} workspace={currentWorkspace.name} maskedPhone={authSession.user.maskedPhone}
+          company={currentWorkspace.type==="ENTERPRISE"} onEnterprise={()=>setAccountSection("enterprise")} credits={accountWallet?.creditBalance??null} onCredits={() => { setNotice(null); setAccountSection("credits"); }}
+          onAccount={() => { setNotice(null); setAccountSection("overview"); }} onLogout={handleLogout}>
+          <WorkspaceSwitcher session={authSession} onSwitch={changeWorkspace} onManage={()=>setAccountSection("enterprise")}/>
+          <TradeSearch stocks={orderedStocks} demands={orderedDemands} onChoose={(kind, id, position) => {
+            const ordered = kind === "stock" ? orderedStocks : orderedDemands;
+            const chosen = ordered[position];
+            if (!chosen || chosen.id !== id) return;
+            const isRental = chosen.tradeMode === "RENTAL";
+            const index = ordered.slice(0, position).filter(item => (item.tradeMode === "RENTAL") === isRental).length;
+            navigateWorkspace(`#${kind}${isRental ? "/rental" : ""}`);
+            setNotice(null);
+            setRelatedTarget(null);
+            const page = Math.floor(index / LIST_PAGE_SIZE) + 1;
+            if (kind === "stock") {
+              resetStockFilters(); setStockPage(page); setSelectedStockId(id);
+            } else {
+              resetMarketFilters(); setMarketPage(page); setSelectedMarketId(id);
+            }
+            listScroll.current = 0;
+            detailTrigger.current = null;
+            searchReturnRow.current = id;
+            setInspectorCollapsed(false);
+            requestAnimationFrame(() => {
+              inspectorRef.current?.focus({ preventScroll: true });
+              inspectorRef.current?.scrollIntoView({ block: "nearest" });
+            });
+          }} />
+        </WorkbenchHeader>
 
-          {sidebarCollapsed ? (
-            <button
-              type="button"
-              title="展开左侧栏"
-              aria-label="展开左侧栏"
-              onClick={() => setSidebarCollapsed(false)}
-              className="sidebar-toggle ghost-button mx-auto mb-4 flex h-9 w-9 items-center justify-center rounded-md"
-            >
-              <PanelLeftOpen className="h-4 w-4" />
-            </button>
-          ) : (
-            <WorkspaceSwitcher currentWorkspace={currentWorkspace} />
-          )}
-
-          <nav className="space-y-1">
-            <NavButton compact={sidebarCollapsed} active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
-            <NavButton compact={sidebarCollapsed} active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
-            <NavButton compact={sidebarCollapsed} active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
-            <NavButton compact={sidebarCollapsed} active={activeTab === "match"} icon={<GitCompareArrows />} label="匹配" onClick={() => setActiveTab("match")} />
-            <NavButton compact={sidebarCollapsed} active={activeTab === "account"} icon={<WalletCards />} label="个人中心" onClick={() => setActiveTab("account")} />
-          </nav>
-
-          {!sidebarCollapsed && (
-          <div className="mt-6 space-y-2 border-t border-neutral-200/80 pt-4">
-            <SideMetric label="我的供应" value={`${stocks.length}`} />
-            <SideMetric label="已核实" value={`${verifiedStockCount}`} />
-            <SideMetric label="需求" value={`${demandCount}`} />
-            <SideMetric label="强匹配" value={`${strongMatchCount}`} />
-            <SideMetric label="货记分" value={`${accountWallet.creditBalance}`} />
-          </div>
-          )}
-        </aside>
-
-        <main className="min-w-0 pb-32 md:pb-8">
-          <header className="topbar-surface sticky top-0 z-30">
-            <div className="flex items-center justify-end gap-3 px-4 py-3 md:px-8">
-              <div className="flex shrink-0 items-center gap-2">
-                <div className="surface-card-quiet caption-text hidden items-center gap-2 rounded-md px-3 py-1.5 sm:flex">
-                  <UserRound className="h-3.5 w-3.5 text-neutral-500" />
-                  {authSession.user.maskedPhone}
-                </div>
-                <button
-                  type="button"
-                  title="个人中心"
-                  aria-label="个人中心"
-                  onClick={() => setActiveTab("account")}
-                  className="surface-card-quiet ghost-button flex h-9 w-9 items-center justify-center rounded-md"
-                >
-                  <WalletCards className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  title="退出登录"
-                  aria-label="退出登录"
-                  onClick={handleLogout}
-                  className="surface-card-quiet ghost-button flex h-9 w-9 items-center justify-center rounded-md"
-                >
-                  <LogOut className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  title={inspectorCollapsed ? "打开右侧栏" : "收起右侧栏"}
-                  aria-label={inspectorCollapsed ? "打开右侧栏" : "收起右侧栏"}
-                  onClick={() => setInspectorCollapsed((collapsed) => !collapsed)}
-                  className={`surface-card-quiet ghost-button hidden h-9 w-9 items-center justify-center rounded-md lg:flex ${inspectorCollapsed ? "" : "is-active"}`}
-                >
-                  {inspectorCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-          </header>
-
-          <section className="mx-auto max-w-none space-y-5 px-4 py-5 md:px-8 md:py-7">
-
+        <main className="workspace-main">
+          <section id="workspace-content" tabIndex={-1} className="workspace-content">
+            <h1 className="sr-only">{activeTab === "input" && intakeView === "paste" ? "粘贴录入" : pageTitles[activeTab]}</h1>
+            {activeTab === "input" && intakeView === "paste" && <button type="button" className="back-to-inbox" onClick={() => setIntakeView(messageEntry.last)}>
+              <ArrowLeft size={15} />返回消息工作台
+            </button>}
           {notice && <InlineNotice tone={notice.tone} text={notice.text} onDismiss={() => setNotice(null)} />}
+          {(activeTab === "stock" || activeTab === "market" || activeTab === "match" || (activeTab === "input" && intakeView !== "talk")) &&
+            (ledgerSyncState === "offline" ? <p role="status" className="ledger-sync-note">账号资料同步暂未完成，浏览器副本已保留。<button type="button" onClick={() => ledgerSync.current?.refresh()}>重试同步</button></p> :
+              (ledgerSyncState === "loading" || ledgerSyncState === "pending") && <p role="status" className="ledger-sync-note">{ledgerSyncState === "pending" ? "正在保存到账号…" : "正在同步账号资料…"}</p>)}
+          {(activeTab === "stock" || activeTab === "market") && <div className="view-bar ledger-scope">
+            <nav aria-label="交易类型">
+              {[false, true].map(isRental => <a key={String(isRental)}
+                href={`#${activeTab}${isRental ? "/rental" : ""}`} aria-current={rental === isRental ? "page" : undefined}
+                onClick={() => {
+                  if (isRental === rental) return;
+                  if (activeTab === "stock") resetStockFilters(); else resetMarketFilters();
+                  setInspectorCollapsed(true); setRelatedTarget(null); setNotice(null);
+                }}>
+                {isRental ? (activeTab === "stock" ? "出租货源" : "求租需求") : (activeTab === "stock" ? "出售货源" : "采购需求")}
+              </a>)}
+            </nav>
+          </div>}
+          {activeTab === "input" && intakeView !== "paste" && <div className="view-bar">
+            <nav aria-label="消息视图">
+              <a href={TALK_HASH} aria-current={intakeView === "talk" ? "page" : undefined}
+                aria-label={liveCircle.unread ? `同行会话，${liveCircle.unread} 条未读` : undefined}>
+                同行会话{liveCircle.unread > 0 && <b className="circle-unread" aria-hidden="true">{liveCircle.unread > 99 ? "99+" : liveCircle.unread}</b>}
+              </a>
+              <a href="#input/wechat" aria-current={!messageEntry.landing && intakeView !== "talk" ? "page" : undefined}>微信采集</a>
+            </nav>
+            {!messageEntry.landing && (intakeView === "wechat" || intakeView === "review") && pasteEntry}
+          </div>}
+          {activeTab === "input" && messageEntry.landing && <p className="message-opening" role="status">正在打开消息…</p>}
+          {(activeTab==="circle" || (activeTab==="input" && intakeView==="talk"))&&<React.Fragment key={messageScope}><CircleWorkspace token={authSession.token}
+            actor={liveCircle.actor} name={liveCircle.name||authSession.user.maskedPhone} version={liveCircle.version} hash={hash} sources={circleSources} refresh={liveCircle.refresh}/></React.Fragment>}
 
           {activeTab === "stock" && (
             <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
-              <div className="min-w-0 space-y-3">
-                {listSearchBox}
+              <div ref={tradeListRef} tabIndex={-1} role="region" aria-label="供应结果" className="trade-list-region min-w-0 space-y-3">
                 <FilterPanel
+                  search={listSearchBox}
                   title="筛选供应"
+                  action={pasteEntry}
                   activeCount={activeStockFilterCount}
-                  resultText={`已显示 ${filteredStocks.length} 条，按录入时间最新在前`}
+                  resultText={query.trim() || activeStockFilterCount ? `找到 ${filteredStocks.length} 条供应` : <><strong>{ledgerStocks.length}</strong> 条{rental ? "出租货源" : "供应"}{verifiedStockCount > 0 && <small>已核实 {verifiedStockCount} 条</small>}</>}
                   isOpen={stockFiltersOpen}
                   onToggle={() => setStockFiltersOpen((open) => !open)}
                   onReset={resetStockFilters}
@@ -1214,7 +1466,7 @@ export default function App() {
                       }}
                     />
                     <FilterPillGroup
-                      label="日期"
+                      label="记录日期"
                       value={stockDateFilter}
                       options={dateFilterOptions}
                       onChange={(value) => {
@@ -1223,15 +1475,15 @@ export default function App() {
                       }}
                     />
                     <div className={`${stockFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
-                      <FilterPillGroup
+                      {!rental && <FilterPillGroup
                         label="交易"
                         value={stockModeFilter}
-                        options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
+                        options={[{ label: "全部", value: "ALL" }, ...saleModeOptions]}
                         onChange={(value) => {
                           setStockModeFilter(value as TradeMode | "ALL");
                           setStockPage(1);
                         }}
-                      />
+                      />}
                       <FilterPillGroup
                         label="价格"
                         value={stockPriceFilter}
@@ -1276,154 +1528,161 @@ export default function App() {
                     </div>
                   </div>
                 </FilterPanel>
-                <StockDataTable
+                <TradeDataTable kind="stock" rental={rental}
                   items={pagedStocks}
-                  selectedId={selectedStock?.id ?? ""}
-                  onSelect={(stock) => setSelectedStockId(stock.id)}
+                  relatedCounts={relatedCounts.stock} onShowMatches={item => showRelatedMatches("stock", item)}
+                  selectedId={inspectorCollapsed ? "" : selectedStock?.id ?? ""}
+                  onSelect={stock => { setSelectedStockId(stock.id); openInspector(); }}
                 />
-                {!pagedStocks.length && <EmptyState title="暂无符合条件的货源" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
-                {filteredStocks.length > 0 && (
+                {!pagedStocks.length && (query.trim() || activeStockFilterCount
+                  ? <EmptyState title="没有找到符合条件的供应" actionLabel="清除搜索和筛选" onAction={resetStockFilters} />
+                  : <EmptyState title={rental ? "还没有出租货源" : "供应库里还没有货源"} description={pendingGoods ? `待入库清单里有 ${pendingGoods} 条供应，确认后就会出现在这里。` : rental ? "粘贴设备出租消息，核对型号和租金后即可入库。" : "粘贴供货方的报价或现货消息，核对后即可入库。"}
+                      actionLabel={pendingGoods ? "核对待入库供应" : "去录入供应"} onAction={() => enterLedgerIntake(pendingGoods)} />)}
+                {filteredStocks.length > LIST_PAGE_SIZE && (
                   <Pagination
                     total={filteredStocks.length}
                     page={stockCurrentPage}
-                    onPageChange={setStockPage}
+                    onPageChange={page => changeTradePage(setStockPage, page)}
                   />
                 )}
               </div>
-              <div className={`inspector-slot hidden lg:block ${inspectorCollapsed ? "is-collapsed" : ""}`} aria-hidden={inspectorCollapsed}>
+              <div id="workspace-inspector" ref={inspectorRef} className={`inspector-slot order-first scroll-mt-20 self-start lg:order-none lg:sticky lg:top-20 ${inspectorCollapsed ? "hidden" : ""}`} aria-hidden={inspectorCollapsed}>
+                <InspectorBack onBack={closeInspector} />
                 <TradeDetailDrawer
                   kind="stock"
                   item={selectedStock}
+                  relatedCount={selectedStock ? relatedCounts.stock.get(selectedStock.id) ?? 0 : 0}
+                  onShowMatches={showRelatedMatches}
                 />
               </div>
             </div>
           )}
 
           {activeTab === "input" && (
-            <div className="space-y-3 md:space-y-4">
-              <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]"}`}>
-                <Panel title="智能货记" icon={<Bot />}>
-                  <div className="smart-chat-history space-y-2 overflow-y-auto rounded-md bg-[#f3f2ee]/80 p-3">
-                    {chatMessages.map((message) => (
-                      <ChatBubble key={message.id} message={message} />
-                    ))}
-                  </div>
+            <div className="space-y-4">
+              {!messageEntry.landing && (intakeView === "wechat" || intakeView === "review") && <nav aria-label="微信采集视图" className="capture-sections">
+                <a href="#input/wechat" aria-current={intakeView === "wechat" ? "page" : undefined}>采集记录</a>
+                <a href="#input/review" aria-current={intakeView === "review" ? "page" : undefined}>待入库 <span>{draftItems.length}</span></a>
+              </nav>}
 
-                  <div className="mt-3 space-y-3">
-                    <div className="smart-chip-row">
-                      <SmartChip label="类型" value="自动判断" />
-                      <SmartChip label="品类" value="自动归类" />
-                      <SmartChip label="重复" value="更新时间" />
-                      <SmartChip label="缺字段" value="可先入库" />
+              <React.Fragment key={messageScope}>
+                <CaptureInboxPanel visible={!messageEntry.landing && intakeView === "wechat"} token={authSession.token} userId={authSession.user.id} workspaceId={currentWorkspaceId}
+                  destination={authSession.user.maskedPhone+" · "+(currentWorkspace.type==="ENTERPRISE"?currentWorkspace.name+"（企业版）":"个人版")} sessionExpiresAt={authSession.expiresAt} importedItemKeys={importedRpaItemKeys} pendingItemKeys={pendingRpaItemKeys}
+                  onImport={importWechatRpaMessage} onImportMany={importWechatRpaMessages} />
+              </React.Fragment>
+              {intakeView === "paste" && (
+                <section className="paste-workspace" aria-labelledby="paste-title">
+                  <form className="paste-paper" onSubmit={event => {
+                    event.preventDefault();
+                    if (!isAiParsing && aiText.trim()) void parseAssistantInput();
+                  }}>
+                    <div className="paste-head">
+                      <div><h2 id="paste-title"><label htmlFor="paste-original">聊天原文</label></h2>
+                        <p id="paste-help">可一次粘贴多条报价或求购，保留发言人昵称方便核对来源。</p></div>
+                      {!aiText.trim() && <button type="button" className="review-link" onClick={() => {
+                        setAiText(AI_EXAMPLE_TEXT);
+                        document.getElementById("paste-original")?.focus();
+                      }}>填入示例</button>}
                     </div>
-                    <textarea
-                      value={aiText}
-                      onChange={(event) => setAiText(event.target.value)}
-                      className="smart-input field-surface min-h-32 w-full resize-y rounded-md p-4 text-neutral-900 outline-none placeholder:text-neutral-400 md:min-h-36"
-                      placeholder="粘贴微信群聊天记录，或输入“匹配供需”。"
-                    />
-                    {aiParseMessage && (
-                      <p className="meta-pill rounded-md px-3 py-2">{aiParseMessage}</p>
-                    )}
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <span className="caption-text text-neutral-400">{aiLineCount ? `${aiLineCount} 行文本，AI 会自动拆分多条记录` : "等待输入"}</span>
-                      <div className="flex items-center gap-1">
-                        <ToolbarButton icon={<Sparkles />} label="示例" onClick={() => setAiText(AI_EXAMPLE_TEXT)} />
-                        <ToolbarButton icon={<Trash2 />} label="清空" onClick={() => setAiText("")} />
+                    <textarea id="paste-original" aria-label="供需消息原文" aria-describedby="paste-help" placeholder="在此粘贴消息…"
+                      value={aiText} readOnly={isAiParsing} onChange={event => setAiText(event.target.value)}
+                      onKeyDown={event => {
+                        if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+                          event.preventDefault();
+                          event.currentTarget.form?.requestSubmit();
+                        }
+                      }} />
+                    <div className="paste-foot">
+                      <div className="paste-cost" aria-live="polite">{aiText.trim()
+                        ? <><strong>{aiLineCount} 行原文</strong><span>{chatCommandHint ? "查看匹配免费" : (currentWorkspace.type === "ENTERPRISE" ? "企业 Token · 按实际用量记录" : "个人 Token · 按实际用量记录")}</span></>
+                        : <span>识别结果将进入待入库清单</span>}</div>
+                      <div className="paste-submit">
+                        <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + Enter</kbd>
+                        <button className="review-primary" type="submit" disabled={isAiParsing || !aiText.trim()}>
+                          {isAiParsing ? "正在识别…" : chatCommandHint ? "查看供需匹配" : "识别供需"}<ChevronRight size={15} aria-hidden="true" />
+                        </button>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={parseAssistantInput}
-                      disabled={isAiParsing}
-                      className="primary-button inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-sm font-medium disabled:cursor-not-allowed"
-                    >
-                      <SendHorizontal className="h-4 w-4" />
-                      {isAiParsing ? "AI 正在解析..." : chatCommandHint ? "触发匹配" : "发送给货记"}
-                    </button>
+                  </form>
+                  {aiParseMessage && <p className="paste-feedback" role="status">{aiParseMessage} {aiParseMessage.includes("货记分不足") && <a className="account-action-link" href="#account/credits">购买货记分</a>}</p>}
+                  <div className="paste-options">
+                    {chatMessages.length > 0 && <details>
+                      <summary>本次录入记录</summary>
+                      <ol className="paste-log">{[...chatMessages].reverse().map(message => <li key={message.id}>
+                        <span>{message.role === "user" ? "提交原文" : "处理结果"}</span><p>{message.text}</p>
+                      </li>)}</ol>
+                    </details>}
+                    <a href={DEEPSEEK_SETTINGS_HASH} className="review-link"><KeyRound size={14} aria-hidden="true" />AI 用量</a>
                   </div>
-                </Panel>
-
-                <div className={`inspector-slot hidden lg:block ${inspectorCollapsed ? "is-collapsed" : ""}`} aria-hidden={inspectorCollapsed}>
-                <aside className="right-inspector grid h-fit gap-3">
-                  <SmartStatusBar
-                    supplyCount={stocks.length}
-                    demandCount={demandCount}
-                    draftCount={draftItems.length}
-                    incompleteCount={draftSummary.incomplete}
-                  />
-                  <Panel title="AI 解析结果" icon={<ClipboardCheck />}>
-                    <div className="mb-3 flex flex-col gap-3 border-b border-neutral-100 pb-3">
-                      <SmartResultSummary
-                        goods={draftSummary.goods}
-                        demands={draftSummary.demands}
-                        incomplete={draftSummary.incomplete}
-                        total={draftItems.length}
-                      />
-                      {draftItems.length > 0 && (
-                        <div className="grid grid-cols-[1fr_auto] gap-2">
-                          <button
-                            type="button"
-                            onClick={() => confirmDrafts()}
-                            disabled={!saveableDraftCount}
-                            className="primary-button inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium disabled:cursor-not-allowed"
-                          >
-                            <Check className="h-4 w-4" />
-                            一键入库
-                          </button>
-                          <button
-                            type="button"
-                            onClick={clearDraftItems}
-                            className="ghost-button inline-flex items-center justify-center gap-1 rounded-md px-2 py-2 text-xs font-medium"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            清空
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {!draftItems.length ? (
-                      <AssistantEmptyState />
-                    ) : (
-                      <div className="space-y-4">
-                        <p className="meta-pill rounded-md px-3 py-2">
-                          可以直接保存；缺字段会以“待确认 / 未知来源”保留，后续再补也不会丢。当前显示第 {draftCurrentPage} 页。
-                        </p>
-                        {pagedDrafts.map((draft, index) => (
-                          <DraftReviewItem
-                            key={draft.id}
-                            draft={draft}
-                            index={(draftCurrentPage - 1) * LIST_PAGE_SIZE + index}
-                            onChange={(patch) => updateDraftItem(draft.id, patch)}
-                            onRemove={() => removeDraftItem(draft.id)}
-                            onConfirm={() => confirmDrafts([draft.id])}
-                          />
-                        ))}
-                        {draftItems.length > LIST_PAGE_SIZE && (
-                          <Pagination
-                            total={draftItems.length}
-                            page={draftCurrentPage}
-                            onPageChange={setDraftPage}
-                          />
-                        )}
+                </section>
+              )}
+              {intakeView === "review" && (
+                <section className="review-workspace" aria-labelledby="review-title">
+                  <div className="review-head">
+                    <h2 className="sr-only" id="review-title" ref={reviewHeading} tabIndex={-1}>核对清单</h2>
+                    {draftItems.length > 0 && <>
+                      <div className="review-views" role="group" aria-label="按字段完整性筛选">
+                        {reviewScopes.map(([key, label]) => <button key={key} type="button" aria-pressed={reviewFilter === key}
+                          title={key === "all" ? undefined : "按来源用户、型号、数量和城市检查"} onClick={() => changeReviewFilter(key)}>
+                          {label}<span>{draftGroups[key].length}</span>
+                        </button>)}
                       </div>
-                    )}
-                  </Panel>
-                </aside>
-                </div>
-              </div>
+                      <select className="review-mobile-scope" aria-label="筛选待入库记录" value={reviewFilter}
+                        onChange={event => changeReviewFilter(event.target.value as typeof reviewFilter)}>
+                        {reviewScopes.map(([key, label]) => <option key={key} value={key}>{label} · {draftGroups[key].length}</option>)}
+                      </select>
+                    </>}
+                    {draftItems.length > 0 && <div className="review-batch">
+                      {reviewFilter === "all" && <button type="button" className="review-link review-subtle" onClick={() => clearDraftDialog.current?.showModal()}>清空清单</button>}
+                      <button type="button" disabled={!reviewDrafts.length} className="review-primary"
+                        onClick={() => confirmDrafts(reviewFilter === "all" ? undefined : reviewDrafts.map(draft => draft.id))}>
+                        <Check size={15} aria-hidden="true" />{reviewFilter === "all" ? "全部入库" : "筛选结果入库"}（{reviewDrafts.length}）
+                      </button>
+                    </div>}
+                  </div>
+                  {draftItems.length ? <>
+                    {reviewDrafts.length > 0 ? <>
+                      <div className="review-ledger">
+                        <div className="review-ledger-labels" aria-hidden="true"><span>产品</span><span>数量与报价</span><span>来源</span><span>操作</span></div>
+                        {pagedDrafts.map(item => <DraftReviewItem key={item.id} draft={item}
+                          onEdit={() => { setNotice(null); setEditingDraftId(item.id); }} onConfirm={() => confirmDrafts([item.id])} />)}
+                      </div>
+                      {reviewDrafts.length > LIST_PAGE_SIZE && <Pagination total={reviewDrafts.length} page={draftCurrentPage} onPageChange={page => {
+                        setDraftPage(page);
+                        requestAnimationFrame(() => reviewHeading.current?.focus());
+                      }} />}
+                    </> : <div className="draft-empty"><h3>{reviewFilter === "missing" ? "这批记录的关键字段都已填齐" : "尚无字段齐全的记录"}</h3>
+                      <button type="button" className="review-link" onClick={() => {setReviewFilter("all"); setDraftPage(1);}}>查看全部 {draftItems.length} 条</button></div>}
+                    <dialog ref={clearDraftDialog} className="confirm-dialog" aria-labelledby="clear-drafts-title">
+                      <h2 id="clear-drafts-title">清空待入库清单？</h2>
+                      <p>将移除当前工作区的 {draftItems.length} 条待入库记录。</p>
+                      <div><button type="button" autoFocus onClick={() => clearDraftDialog.current?.close()}>取消</button>
+                        <button type="button" className="danger-action" onClick={() => { clearDraftDialog.current?.close(); clearDraftItems(); }}>确认清空</button></div>
+                    </dialog>
+                  </> : <div className="draft-empty">
+                    <h3>当前没有待入库的消息</h3>
+                    <p>从微信消息选取记录，或粘贴一段新的报价、求购原文。</p>
+                    <div>{matchCandidates.length > 0 && <button type="button" className="review-primary" onClick={() => navigateTo("match")}>查看匹配机会</button>}
+                      <button type="button" className={matchCandidates.length > 0 ? "review-link" : "review-primary"} onClick={() => setIntakeView("wechat")}>查看微信消息</button>
+                      <button type="button" className="review-link" onClick={() => setIntakeView("paste")}>粘贴原文</button></div>
+                  </div>}
+                  {editingDraft && <DraftEditor draft={editingDraft} error={notice?.tone === "warning" ? notice.text : ""}
+                    onChange={patch => updateDraftItem(editingDraft.id, patch)} onRemove={() => removeDraftItem(editingDraft.id)}
+                    onConfirm={() => confirmDrafts([editingDraft.id])} onClose={() => setEditingDraftId("")} />}
+                </section>
+              )}
             </div>
           )}
 
           {activeTab === "market" && (
             <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>
-              <div className="min-w-0 space-y-3">
-                {listSearchBox}
+              <div ref={tradeListRef} tabIndex={-1} role="region" aria-label="需求结果" className="trade-list-region min-w-0 space-y-3">
                 <FilterPanel
+                  search={listSearchBox}
                   title="筛选需求"
+                  action={pasteEntry}
                   activeCount={activeMarketFilterCount}
-                  resultText={`已显示 ${filteredMarket.length} 条需求，按创建时间最新在前`}
+                  resultText={query.trim() || activeMarketFilterCount ? `找到 ${filteredMarket.length} 条需求` : <><strong>{ledgerDemands.length}</strong> 条{rental ? "求租需求" : "需求"}</>}
                   isOpen={marketFiltersOpen}
                   onToggle={() => setMarketFiltersOpen((open) => !open)}
                   onReset={resetMarketFilters}
@@ -1439,7 +1698,7 @@ export default function App() {
                       }}
                     />
                     <FilterPillGroup
-                      label="日期"
+                      label="记录日期"
                       value={marketDateFilter}
                       options={dateFilterOptions}
                       onChange={(value) => {
@@ -1448,15 +1707,15 @@ export default function App() {
                       }}
                     />
                     <div className={`${marketFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
-                      <FilterPillGroup
+                      {!rental && <FilterPillGroup
                         label="交易"
                         value={marketModeFilter}
-                        options={[{ label: "全部大类", value: "ALL" }, ...tradeModeOptions]}
+                        options={[{ label: "全部", value: "ALL" }, ...saleModeOptions]}
                         onChange={(value) => {
                           setMarketModeFilter(value as TradeMode | "ALL");
                           setMarketPage(1);
                         }}
-                      />
+                      />}
                       <div className="smart-filter-more">
                         <FilterSelect
                           label="来源用户"
@@ -1472,24 +1731,31 @@ export default function App() {
                     </div>
                   </div>
                 </FilterPanel>
-                <MarketDataTable
+                <TradeDataTable kind="market" rental={rental}
                   items={pagedMarket}
-                  selectedId={selectedMarket?.id ?? ""}
-                  onSelect={(post) => setSelectedMarketId(post.id)}
+                  relatedCounts={relatedCounts.market} onShowMatches={item => showRelatedMatches("market", item)}
+                  selectedId={inspectorCollapsed ? "" : selectedMarket?.id ?? ""}
+                  onSelect={post => { setSelectedMarketId(post.id); openInspector(); }}
                 />
-                {!pagedMarket.length && <EmptyState title="暂无符合条件的需求" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
-                {filteredMarket.length > 0 && (
+                {!pagedMarket.length && (query.trim() || activeMarketFilterCount
+                  ? <EmptyState title="没有找到符合条件的需求" actionLabel="清除搜索和筛选" onAction={resetMarketFilters} />
+                  : <EmptyState title={rental ? "还没有求租需求" : "需求库里还没有采购需求"} description={pendingDemands ? `待入库清单里有 ${pendingDemands} 条需求，确认后就会出现在这里。` : rental ? "粘贴求租消息，核对设备数量和租金预算后即可入库。" : "粘贴买方的求购消息，核对型号和采购数量后即可入库。"}
+                      actionLabel={pendingDemands ? "核对待入库需求" : "去录入需求"} onAction={() => enterLedgerIntake(pendingDemands)} />)}
+                {filteredMarket.length > LIST_PAGE_SIZE && (
                   <Pagination
                     total={filteredMarket.length}
                     page={marketCurrentPage}
-                    onPageChange={setMarketPage}
+                    onPageChange={page => changeTradePage(setMarketPage, page)}
                   />
                 )}
               </div>
-              <div className={`inspector-slot hidden lg:block ${inspectorCollapsed ? "is-collapsed" : ""}`} aria-hidden={inspectorCollapsed}>
+              <div id="workspace-inspector" ref={inspectorRef} className={`inspector-slot order-first scroll-mt-20 self-start lg:order-none lg:sticky lg:top-20 ${inspectorCollapsed ? "hidden" : ""}`} aria-hidden={inspectorCollapsed}>
+                <InspectorBack onBack={closeInspector} />
                 <TradeDetailDrawer
                   kind="market"
                   item={selectedMarket}
+                  relatedCount={selectedMarket ? relatedCounts.market.get(selectedMarket.id) ?? 0 : 0}
+                  onShowMatches={showRelatedMatches}
                 />
               </div>
             </div>
@@ -1497,28 +1763,24 @@ export default function App() {
 
           {activeTab === "match" && (
             <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]"}`}>
-              <div className="min-w-0 space-y-3">
-                {listSearchBox}
+              <div ref={tradeListRef} tabIndex={-1} role="region" aria-label="匹配结果" className="trade-list-region min-w-0 space-y-3">
                 <MatchViewSwitch value={matchView} onChange={(value) => {
                   setMatchView(value);
                   setMatchPage(1);
                 }} />
-                <MatchStatusBar
-                  total={matchCandidates.length}
-                  strongCount={strongMatchCount}
-                  demandCount={demandCount}
-                  supplyCount={stocks.length}
-                  lastRunAt={lastMatchRunAt}
-                />
                 <FilterPanel
+                  search={listSearchBox}
                   title="筛选匹配"
+                  action={strongMatchCount > 0 && <button type="button" className="quick-secondary" onClick={() => {
+                    resetMatchFilters(); setMatchView("RECOMMENDED"); setMatchScoreFilter("STRONG"); setInspectorCollapsed(true);
+                  }}>查看强匹配 <b>{strongMatchCount}</b></button>}
                   activeCount={activeMatchFilterCount}
-                  resultText={`已生成 ${matchCandidates.length} 个机会，当前显示 ${filteredMatches.length} 个`}
+                  resultText={query.trim() || activeMatchFilterCount ? `找到 ${filteredMatches.length} 组匹配` : <><strong>{filteredMatches.length}</strong> 个机会</>}
                   isOpen={matchFiltersOpen}
                   onToggle={() => setMatchFiltersOpen((open) => !open)}
                   onReset={resetMatchFilters}
                 >
-                  <div className="smart-filter-layout">
+                  {matchFiltersOpen && <div className="smart-filter-layout">
                     <FilterPillGroup
                       label="品类"
                       value={matchCategoryFilter}
@@ -1537,7 +1799,7 @@ export default function App() {
                         setMatchPage(1);
                       }}
                     />
-                    <div className={`${matchFiltersOpen ? "grid" : "hidden"} smart-filter-advanced`}>
+                    <div className="grid smart-filter-advanced">
                       <FilterPillGroup
                         label="交易"
                         value={matchModeFilter}
@@ -1570,34 +1832,56 @@ export default function App() {
                         />
                       </div>
                     </div>
-                  </div>
+                  </div>}
                 </FilterPanel>
-                <MatchDataTable
+                <MatchList
                   items={pagedMatches}
                   view={matchView}
-                  selectedId={selectedMatch?.id ?? ""}
-                  onSelect={(candidate) => setSelectedMatchId(candidate.id)}
+                  selectedId={inspectorCollapsed ? "" : selectedMatch?.id ?? ""}
+                  onSelect={(candidate) => {
+                    setSelectedMatchId(candidate.id);
+                    openInspector();
+                  }}
                 />
-                {!pagedMatches.length && <EmptyState title="暂无匹配机会" actionLabel="去货记" onAction={() => setActiveTab("input")} />}
-                {filteredMatches.length > 0 && (
+                {!pagedMatches.length && (
+                  query.trim() || activeMatchFilterCount
+                    ? <EmptyState title="没有找到符合条件的匹配" actionLabel="清除搜索和筛选" onAction={resetMatchFilters} />
+                    : matchCandidates.length && matchView === "RECOMMENDED"
+                      ? <EmptyState title="当前没有推荐机会" actionLabel="查看其他匹配" onAction={() => { setMatchView("DEMAND_TO_SUPPLY"); setMatchPage(1); }} />
+                      : <EmptyState title={stocks.length && demandCount ? "暂时没有合适的匹配" : "还缺少可对照的供需资料"}
+                          description={stocks.length && demandCount ? "可以补充新的供需消息，入库后系统会自动重新匹配。" : stocks.length ? "已有货源，再录入买方的需求即可开始匹配。" : demandCount ? "已有采购需求，再录入供方的货源即可开始匹配。" : "把货源和采购需求分别入库，系统会按型号、规格等条件自动匹配。"}
+                          actionLabel="去整理消息" onAction={() => setIntakeView("wechat")} />
+                )}
+                {filteredMatches.length > LIST_PAGE_SIZE && (
                   <Pagination
                     total={filteredMatches.length}
                     page={matchCurrentPage}
-                    onPageChange={setMatchPage}
+                    onPageChange={page => changeTradePage(setMatchPage, page)}
                   />
                 )}
               </div>
-              <div className={`inspector-slot hidden lg:block ${inspectorCollapsed ? "is-collapsed" : ""}`} aria-hidden={inspectorCollapsed}>
-                <MatchDetailDrawer
+              <div id="workspace-inspector" ref={inspectorRef} className={`inspector-slot order-first scroll-mt-20 self-start lg:order-none lg:sticky lg:top-20 ${inspectorCollapsed ? "hidden" : ""}`} aria-hidden={inspectorCollapsed}>
+                <InspectorBack onBack={closeInspector} />
+                {!inspectorCollapsed && <React.Fragment key={selectedMatch?.id}><MatchDetailDrawer
                   candidate={selectedMatch}
                   onStatusChange={updateMatchStatus}
                   onCopy={copyMatchSummary}
-                />
+                  verification={selectedMatch && !inspectorCollapsed && (
+                    <React.Fragment key={matchHistoryPrefix(authSession.user.id, currentWorkspaceId, selectedMatch.demand.id, selectedMatch.stock.id)}>
+                      <MatchSupplyVerification session={authSession} candidate={selectedMatch} />
+                    </React.Fragment>
+                  )}
+                /></React.Fragment>}
               </div>
             </div>
           )}
 
-          {activeTab === "account" && (
+          {relatedTarget && relatedSource && activeTab === relatedTarget.kind && <React.Fragment key={relatedTarget.kind + relatedTarget.id}>
+            <RelatedMatchesDrawer kind={relatedTarget.kind} source={relatedSource} matches={relatedMatches}
+              session={authSession} onClose={() => setRelatedTarget(null)} onStatusChange={updateMatchStatus} onCopy={copyMatchSummary} />
+          </React.Fragment>}
+          {activeTab === "account" && (accountSection==="enterprise" || (currentWorkspace.type==="ENTERPRISE" && !["credits","ledger"].includes(accountSection))) && <EnterpriseHome session={authSession} onSwitch={changeWorkspace}/>}
+          {activeTab === "account" && accountSection!=="enterprise" && (currentWorkspace.type==="PERSONAL" || ["credits","ledger"].includes(accountSection)) && (accountWallet ? (
             <AccountCenter
               session={authSession}
               wallet={accountWallet}
@@ -1607,19 +1891,14 @@ export default function App() {
               onRecharge={handleRechargeCredits}
               onUpgrade={handleUpgradePlan}
             />
+          ) : <section role="status">{walletError || "正在读取钱包…"} {walletError && <button className="account-action-link" onClick={()=>refreshWallet(n=>n+1)}>重新读取</button>}</section>
           )}
           </section>
           <SiteRecordFooter className="px-4 pb-6 md:px-8" />
         </main>
       </div>
 
-      <nav className="mobile-tabbar fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 rounded-md px-1.5 py-1.5 md:hidden">
-        <MobileTab active={activeTab === "input"} icon={<Sparkles />} label="货记" onClick={() => setActiveTab("input")} />
-        <MobileTab active={activeTab === "stock"} icon={<Boxes />} label="供应" onClick={() => setActiveTab("stock")} />
-        <MobileTab active={activeTab === "market"} icon={<Compass />} label="需求" onClick={() => setActiveTab("market")} />
-        <MobileTab active={activeTab === "match"} icon={<GitCompareArrows />} label="匹配" onClick={() => setActiveTab("match")} />
-        <MobileTab active={activeTab === "account"} icon={<WalletCards />} label="我的" onClick={() => setActiveTab("account")} />
-      </nav>
+      <MobileNavigation activeTab={activeTab} onNavigate={navigateTo} messageHref={messageEntry.href} unread={liveCircle.unread} />
     </div>
   );
 }
@@ -1641,202 +1920,176 @@ function AccountCenter({
   onRecharge: (pack: (typeof creditPackages)[number]) => void;
   onUpgrade: (planCode: MembershipPlanCode) => void;
 }) {
-  const currentPlan = membershipPlans.find((plan) => plan.code === wallet.planCode) ?? membershipPlans[0];
-  const sectionItems: Array<{ key: AccountSection; label: string; icon: React.ReactNode }> = [
-    { key: "overview", label: "账户概览", icon: <UserRound /> },
-    { key: "membership", label: "会员中心", icon: <ShieldCheck /> },
-    { key: "credits", label: "货记分", icon: <WalletCards /> },
-    { key: "ledger", label: "订单与流水", icon: <ReceiptText /> },
-  ];
+  const currentPlan = membershipPlans.find(plan => plan.code === wallet.planCode) ?? membershipPlans[0];
+  const transactions = useMemo(() => [...wallet.transactions].sort((a, b) =>
+    compareChronology(tradeChronology(a), tradeChronology(b))), [wallet.transactions]);
+  const expiresAt = wallet.membershipExpiresAt ? Date.parse(wallet.membershipExpiresAt) : NaN;
+  const expired = wallet.planCode !== "FREE" && (wallet.membershipStatus === "EXPIRED" || expiresAt <= Date.now());
+  const workspace = session.workspaces.find(item => item.id === session.currentWorkspaceId);
+  const roleName = workspace && { OWNER: "所有者", ADMIN: "管理员", MEMBER: "成员" }[workspace.role];
+  const enterpriseWallet = workspace?.type === "ENTERPRISE";
+  const rechargeHeading = useRef<HTMLHeadingElement>(null);
+  const allSections = [
+    { key: "overview", label: "账户概览", icon: UserRound },
+    { key: "enterprise", label: "企业工作台", icon: Users },
+    { key: "deepseek", label: "AI 用量", icon: KeyRound },
+    { key: "credits", label: enterpriseWallet ? "货记分充值" : "会员与充值", icon: WalletCards },
+    { key: "ledger", label: "收支明细", icon: ReceiptText },
+  ] as const;
+  const sectionItems = enterpriseWallet ? allSections.filter(s => ["enterprise", "credits", "ledger"].includes(s.key)) : allSections;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-      <aside className="surface-card h-fit rounded-md p-2">
-        <div className="mb-2 rounded-md bg-neutral-950/[0.025] px-3 py-3">
-          <p className="text-sm font-semibold text-neutral-950">{session.user.maskedPhone}</p>
-          <p className="caption-text mt-1">个人版 · 所有者</p>
+    <div className="account-center" data-section={section}>
+      <aside className="account-rail">
+      <section className="account-profile" aria-label="登录账户">
+        <div className="account-avatar"><UserRound size={22} aria-hidden="true" /></div>
+        <div className="min-w-0">
+          <h2 className="account-phone">{session.user.maskedPhone}</h2>
+          <p className="account-caption">{[workspace?.name, roleName].filter(Boolean).join(" · ")}</p>
         </div>
-        <nav className="grid gap-1">
-          {sectionItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => onSectionChange(item.key)}
-              className={`flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition ${
-                section === item.key ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-950/5 hover:text-neutral-950"
-              }`}
-            >
-              {React.cloneElement(item.icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4" })}
-              {item.label}
-            </button>
-          ))}
-        </nav>
+        {!enterpriseWallet && <span className="account-plan-tag" data-expired={expired || undefined}><ShieldCheck size={14} aria-hidden="true" />{wallet.planName}{expired && " · 已到期"}</span>}
+      </section>
+
+      <nav aria-label="个人中心设置" className="account-nav">
+        {sectionItems.map(({ key, label, icon: Icon }) => (
+          <button key={key} type="button" onClick={() => onSectionChange(key)} aria-current={section === key ? "page" : undefined}>
+            <Icon size={16} aria-hidden="true" />{label}
+          </button>
+        ))}
+      </nav>
       </aside>
+      <label className="account-compact-switch">账户设置
+        <select aria-label="账户设置" value={section} onChange={event => onSectionChange(event.target.value as AccountSection)}>
+          {sectionItems.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
+        </select>
+      </label>
+      <div className="account-pages">
 
-      <div className="min-w-0 space-y-4">
-        {section === "overview" && (
-          <>
-            <section className="surface-card rounded-md p-4">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <p className="caption-text">账户</p>
-                  <h3 className="mt-1 text-2xl font-semibold text-neutral-950">{session.user.maskedPhone}</h3>
-                  <p className="mt-1 text-sm text-neutral-500">个人空间已开通，企业空间权限预留中。</p>
-                </div>
-                <Badge tone={wallet.membershipStatus === "ACTIVE" ? "green" : "default"}>{wallet.planName}</Badge>
-              </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <AccountMetric label="货记分余额" value={`${wallet.creditBalance}`} helper="AI 解析和增值功能消耗" tone="green" />
-                <AccountMetric label="本月 AI 解析" value={`${wallet.monthlyAiParseCount}`} helper="解析成功或本地兜底都会计入" tone="blue" />
-                <AccountMetric label="会员有效期" value={wallet.membershipExpiresAt ? formatDate(wallet.membershipExpiresAt) : "免费版"} helper={currentPlan.period} tone="orange" />
-              </div>
-            </section>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel title="会员权益" icon={<ShieldCheck />}>
-                <p className="text-sm text-neutral-600">当前方案：<strong className="text-neutral-950">{wallet.planName}</strong></p>
-                <ul className="mt-3 grid gap-2">
-                  {currentPlan.features.map((feature) => (
-                    <li key={feature} className="flex items-center gap-2 text-sm text-neutral-700">
-                      <Check className="h-4 w-4 text-emerald-600" />
-                      {feature}
-                    </li>
-                  ))}
-                </ul>
-              </Panel>
-              <Panel title="最近流水" icon={<ReceiptText />}>
-                <TransactionList transactions={wallet.transactions.slice(0, 4)} />
-              </Panel>
+      {section === "deepseek" && <TokenUsage token={session.token} />}
+      {section === "overview" && (
+        <>
+          <section className="account-surface account-padding" aria-label="账户用量">
+            <h3 className="account-heading">账户概览</h3>
+            <div className="account-metrics">
+              <AccountMetric label="货记分余额" value={wallet.creditBalance.toLocaleString("zh-CN")} unit="分" action="查看充值套餐" onClick={() => onSectionChange("credits")} />
+              <AccountMetric label="AI 用量归属" value={workspace?.type==="ENTERPRISE"?"企业版":"个人版"} action="查看 Token 用量" onClick={() => onSectionChange("deepseek")} />
+              <AccountMetric label="会员有效期" value={wallet.membershipExpiresAt ? formatDate(wallet.membershipExpiresAt) : currentPlan.period} action="查看会员权益" onClick={() => onSectionChange("credits")} />
             </div>
-          </>
-        )}
-
-        {section === "membership" && (
-          <section className="grid gap-3 lg:grid-cols-3">
-            {membershipPlans.map((plan) => (
-              <div key={plan.code} className={`interactive-card rounded-md p-4 ${wallet.planCode === plan.code ? "ring-2 ring-neutral-950/80" : ""}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <Badge tone={plan.code === "FREE" ? "default" : "blue"}>{plan.badge}</Badge>
-                    <h3 className="mt-3 text-lg font-semibold text-neutral-950">{plan.name}</h3>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xl font-semibold text-neutral-950">{plan.price}</p>
-                    <p className="caption-text">{plan.period}</p>
-                  </div>
-                </div>
-                <ul className="mt-4 grid gap-2">
-                  {plan.features.map((feature) => (
-                    <li key={feature} className="flex gap-2 text-sm text-neutral-700">
-                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                      <span>{feature}</span>
-                    </li>
-                  ))}
-                </ul>
-                {(() => {
-                  const busy = paymentBusyKey === `MEMBERSHIP_PLAN:${plan.code}`;
-                  const current = wallet.planCode === plan.code;
-                  return (
-                <button
-                  type="button"
-                  disabled={current || Boolean(paymentBusyKey)}
-                  onClick={() => onUpgrade(plan.code)}
-                  className={`mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium ${
-                    current ? "ghost-button surface-card-quiet" : "primary-button"
-                  }`}
-                >
-                  <CreditCard className="h-4 w-4" />
-                  {busy ? "正在唤起支付宝..." : current ? "当前方案" : "支付宝支付"}
-                </button>
-                  );
-                })()}
-              </div>
-            ))}
           </section>
-        )}
+          <section className="account-surface account-padding">
+            <div className="account-heading-row">
+              <h3 className="account-heading">最近收支</h3>
+              <button type="button" className="account-action-link" onClick={() => onSectionChange("ledger")}>查看全部<ChevronRight size={15} aria-hidden="true" /></button>
+            </div>
+            <TransactionList transactions={transactions.slice(0, 4)} />
+          </section>
+        </>
+      )}
 
-        {section === "credits" && (
-          <>
-            <section className="surface-card rounded-md p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="caption-text">货记分余额</p>
-                  <p className="mt-1 text-3xl font-semibold text-neutral-950">{wallet.creditBalance}</p>
-                </div>
-                <p className="max-w-xl text-sm text-neutral-500">货记分用于 AI 解析、批量入库、后续导出和广场刷新等增值能力。付款通过支付宝完成，到账以服务端异步通知确认为准。</p>
-              </div>
-            </section>
-            <section className="grid gap-3 md:grid-cols-3">
-              {creditPackages.map((pack) => (
-                <div key={pack.id} className="interactive-card rounded-md p-4">
-                  <Badge tone="green">{pack.label}</Badge>
-                  <h3 className="mt-3 text-lg font-semibold text-neutral-950">{pack.title}</h3>
-                  <p className="mt-1 text-sm text-neutral-500">{pack.credits} 分{pack.bonus ? ` + ${pack.bonus} 赠送` : ""}</p>
-                  <p className="mt-4 text-2xl font-semibold text-neutral-950">{pack.price}</p>
-                  {(() => {
-                    const busy = paymentBusyKey === `CREDIT_PACKAGE:${pack.id}`;
-                    return (
-                  <button
-                    type="button"
-                    disabled={Boolean(paymentBusyKey)}
-                    onClick={() => onRecharge(pack)}
-                    className="primary-button mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium"
-                  >
-                    <Plus className="h-4 w-4" />
-                    {busy ? "正在唤起支付宝..." : "支付宝支付"}
+      {section === "credits" && <>
+        <section className="account-surface account-padding" aria-label={enterpriseWallet ? "企业钱包" : "个人钱包"}>
+          <div className="account-heading-row">
+            <div>
+              <h3 className="account-caption">{enterpriseWallet ? "企业货记分余额" : "个人货记分余额"}</h3>
+              <p className="account-number">{wallet.creditBalance.toLocaleString("zh-CN")}<small>分</small></p>
+            </div>
+            <button type="button" className="account-action-link" onClick={() => onSectionChange("ledger")}>收支明细<ChevronRight size={15} aria-hidden="true" /></button>
+          </div>
+          {wallet.nextGrant && !enterpriseWallet && <p className="account-caption">下次会员发分 · {formatDate(wallet.nextGrant.due)} · {wallet.nextGrant.amount.toLocaleString("zh-CN")} 分</p>}
+          {!wallet.paymentReady && <p className="account-caption">当前服务尚未开通支付宝收款。</p>}
+        </section>
+        {!enterpriseWallet && <section className="account-surface account-padding" aria-labelledby="membership-options">
+          <div className="account-heading-row">
+            <h3 id="membership-options" className="account-heading">会员方案</h3>
+            <button type="button" className="account-action-link" onClick={() => {
+              rechargeHeading.current?.focus({ preventScroll: true });
+              rechargeHeading.current?.scrollIntoView({ block: "start" });
+            }}>只充货记分<ChevronRight size={15} aria-hidden="true" /></button>
+          </div>
+          <div className="account-offers">
+            {membershipPlans.map(plan => {
+              const current = wallet.planCode === plan.code && !expired;
+              const renewal = wallet.planCode === plan.code && expired;
+              const busy = paymentBusyKey === `MEMBERSHIP_PLAN:${plan.code}`;
+              return (
+                <article key={plan.code} className="account-offer" data-current={current || undefined}>
+                  <div className="account-offer-name">
+                    <h4>{plan.name}</h4>
+                    {(current || renewal) && <span data-expired={renewal || undefined}>{renewal ? "已到期" : "使用中"}</span>}
+                  </div>
+                  <p className="account-price">{plan.price}<small> / {plan.period}</small></p>
+                  <ul className="account-features">
+                    {plan.features.map(feature => <li key={feature}><Check size={15} aria-hidden="true" />{feature}</li>)}
+                  </ul>
+                  <button type="button" disabled={!wallet.paymentReady || current || plan.code === "FREE" || Boolean(paymentBusyKey)} onClick={() => onUpgrade(plan.code)}
+                    className={current || plan.code === "FREE" ? "account-secondary" : "primary-button account-pay"}>
+                    {current ? "当前方案" : plan.code === "FREE" ? "基础方案" : <><CreditCard size={16} aria-hidden="true" />{busy ? "正在打开支付宝…" : renewal ? "支付宝续费" : "支付宝支付"}</>}
                   </button>
-                    );
-                  })()}
-                </div>
-              ))}
-            </section>
-          </>
-        )}
+                </article>
+              );
+            })}
+          </div>
+        </section>}
+        <section className="account-surface account-padding" aria-labelledby="recharge-options">
+          <h3 id="recharge-options" ref={rechargeHeading} tabIndex={-1} className="account-heading">{enterpriseWallet ? "企业货记分充值" : "货记分充值"}</h3>
+          <p className="account-caption">1 元兑 {creditsPerYuan} 分，可单独购买。AI 解析按每 1 元模型费用扣 {pointsPerCostYuan} 分。</p>
+          <div className="account-offers">
+            {creditPackages.map(pack => (
+              <article key={pack.id} className="account-offer">
+                <h4>{pack.title}</h4>
+                <p className="account-price">{pack.price}</p>
+                <p className="account-offer-amount">到账 <strong>{pack.credits.toLocaleString("zh-CN")}</strong> 分</p>
+                <button type="button" disabled={!wallet.paymentReady || Boolean(paymentBusyKey)} onClick={() => onRecharge(pack)} className="primary-button account-pay">
+                  <CreditCard size={16} aria-hidden="true" />{paymentBusyKey === `CREDIT_PACKAGE:${pack.id}` ? "正在打开支付宝…" : "支付宝支付"}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+      </>}
 
-        {section === "ledger" && (
-          <Panel title="订单与流水" icon={<ReceiptText />}>
-            <TransactionList transactions={wallet.transactions} />
-          </Panel>
-        )}
+      {section === "ledger" && (
+        <section className="account-surface account-padding">
+          <div className="account-heading-row">
+            <h3 className="account-heading">收支明细</h3>
+            <span className="account-caption">共 {wallet.transactions.length} 笔</span>
+          </div>
+          <TransactionList transactions={transactions} />
+        </section>
+      )}
       </div>
     </div>
   );
 }
 
-function AccountMetric({ label, value, helper, tone }: { label: string; value: string; helper: string; tone: BadgeTone }) {
+function AccountMetric({ label, value, unit, action, onClick }: { label: string; value: string; unit?: string; action: string; onClick: () => void }) {
   return (
-    <div className={`smart-metric smart-metric-${tone} min-h-[86px] items-start p-3`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <span className="text-xs font-medium text-neutral-500">{helper}</span>
+    <div className="account-metric">
+      <p className="account-caption">{label}</p>
+      <p className="account-number">{value}{unit && <small>{unit}</small>}</p>
+      <button type="button" className="account-action-link" onClick={onClick}>{action}<ChevronRight size={14} aria-hidden="true" /></button>
     </div>
   );
 }
 
 function TransactionList({ transactions }: { transactions: CreditTransaction[] }) {
-  if (!transactions.length) {
-    return (
-      <div className="surface-card-quiet rounded-md p-4 text-sm text-neutral-500">
-        暂无流水。充值、会员开通和 AI 消耗会记录在这里。
-      </div>
-    );
-  }
+  if (!transactions.length) return <p className="account-empty">暂无流水，充值和解析扣分后可在这里查看明细。</p>;
   return (
-    <div className="grid gap-2">
-      {transactions.map((transaction) => (
-        <div key={transaction.id} className="grid gap-2 rounded-md border border-neutral-950/[0.06] bg-white/70 px-3 py-2 sm:grid-cols-[1fr_auto] sm:items-center">
+    <ul className="account-transactions">
+      {transactions.map(transaction => (
+        <li key={transaction.id}>
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={transaction.amount >= 0 ? "green" : "orange"}>{creditTransactionTypeText(transaction.type)}</Badge>
-              <p className="truncate text-sm font-semibold text-neutral-950">{transaction.title}</p>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="account-txn-kind">{creditTransactionTypeText(transaction.type)}</span>
+              <strong>{transaction.title}</strong>
             </div>
-            <p className="caption-text mt-1">{formatMinuteTime(transaction.createdAt)} · 余额 {transaction.balanceAfter}{transaction.note ? ` · ${transaction.note}` : ""}</p>
+            <p className="account-caption mt-1"><time dateTime={transaction.createdAt}>{formatMinuteTime(transaction.createdAt)}</time> · 余额 {transaction.balanceAfter} 分</p>
+            {transaction.note && <p className="account-caption mt-0.5">{transaction.note}</p>}
           </div>
-          <p className={`text-sm font-semibold ${transaction.amount >= 0 ? "text-emerald-700" : "text-amber-700"}`}>
-            {transaction.amount >= 0 ? "+" : ""}{transaction.amount}
-          </p>
-        </div>
+          <p className="account-txn-amount" data-credit={transaction.amount >= 0 || undefined}>{transaction.amount >= 0 ? "+" : ""}{transaction.amount.toLocaleString("zh-CN",{maximumFractionDigits:7})} <small>分</small></p>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
@@ -1851,7 +2104,7 @@ function BrandIcon({ size = "md" }: { size?: "sm" | "md" }) {
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
+function LoginScreen({ onLogin, sessionNotice }: { onLogin: (session: AuthSession) => void; sessionNotice?: string }) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [debugCode, setDebugCode] = useState("");
@@ -1972,6 +2225,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
     setMessage("");
     try {
       const result = await requestSmsCode(targetPhone, captchaVerifyParam);
+      if (targetPhone !== phoneRef.current) return;
       setDebugCode(result.debugCode ?? "");
       if (result.debugCode) setCode(result.debugCode);
       setMessage(result.debugCode ? "验证码已生成，可直接登录。" : "验证码已发送。");
@@ -2027,41 +2281,15 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
   }
 
   return (
-    <div className="app-shell flex min-h-screen flex-col px-4 py-8 text-neutral-950">
-      <main className="my-auto grid w-full max-w-5xl gap-4 self-center md:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
-        <section className="surface-card rounded-md p-5 md:p-6">
-          <div className="mb-6 flex items-center gap-2">
-            <BrandIcon />
-            <div>
-              <h1 className="section-title">货记</h1>
-              <p className="caption-text">AI 硬件供需台账</p>
-            </div>
-          </div>
-          <div className="space-y-3">
-            <div className="surface-card-quiet rounded-md p-3">
-              <div className="mb-2 flex items-center gap-2">
-                <UserRound className="h-4 w-4 text-neutral-500" />
-                <span className="text-sm font-semibold text-neutral-900">个人空间</span>
-                <Badge tone="green">当前开放</Badge>
-              </div>
-              <p className="caption-text">手机号登录后自动创建个人空间，供应、需求和待确认结果按空间隔离保存。</p>
-            </div>
-            <div className="surface-card-quiet rounded-md p-3 opacity-80">
-              <div className="mb-2 flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-neutral-500" />
-                <span className="text-sm font-semibold text-neutral-900">企业空间</span>
-                <Badge>架构预留</Badge>
-              </div>
-              <p className="caption-text">企业成员、角色权限、企业货源池和审批流先按 workspace 体系预留，不影响个人版使用。</p>
-            </div>
-          </div>
-        </section>
-
-        <form onSubmit={handleLogin} className="surface-card rounded-md p-5 md:p-6">
-          <div className="mb-5">
-            <h2 className="section-title">手机号登录</h2>
-            <p className="caption-text mt-1">登录后进入你的个人空间。</p>
-          </div>
+    <div className="login-shell">
+      <main className="login-card">
+        <div className="login-brand"><BrandIcon /><div><strong>货记</strong><span>硬件供需工作台</span></div></div>
+        <form onSubmit={handleLogin}>
+          <div className="login-heading"><h1>手机号登录</h1></div>
+          {document.querySelector('meta[name="huoji-edition"][content="cloud"]') && <p className="caption-text mb-4">登录 huoij.com 云端账号，采集资料将同步到你选择的个人或企业空间。</p>}
+          {document.querySelector('meta[name="huoji-edition"][content="local-test"]') &&
+            <p className="caption-text mb-4">本机测试版。获取验证码后，页面会自动填入。账号与采集资料仅保存在这台电脑。</p>}
+          {sessionNotice && <p role="status" className="mb-4 rounded-md bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-800">{sessionNotice}</p>}
           <label className="block">
             <span className="caption-text mb-1 block">手机号</span>
             <div className="field-surface flex items-center gap-2 rounded-md px-3 py-2">
@@ -2069,21 +2297,29 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
               <input
                 value={phone}
                 inputMode="tel"
+                autoComplete="tel-national"
                 placeholder="请输入 11 位手机号"
-                onChange={(event) => setPhone(event.target.value)}
+                onChange={event => {
+                  setPhone(event.target.value);
+                  setDebugCode("");
+                  setCode("");
+                  setMessage("");
+                  setError("");
+                }}
                 className="min-w-0 flex-1 bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
               />
             </div>
           </label>
-          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+          <div className="login-code-row">
             <label className="block">
-              <span className="caption-text mb-1 block">短信验证码 / 临时通用码</span>
+              <span className="caption-text mb-1 block">短信验证码</span>
               <div className="field-surface flex items-center gap-2 rounded-md px-3 py-2">
                 <ShieldCheck className="h-4 w-4 text-neutral-400" />
                 <input
                   value={code}
                   inputMode="numeric"
-                  placeholder="验证码或 11111111"
+                  autoComplete="one-time-code"
+                  placeholder="输入验证码"
                   onChange={(event) => setCode(event.target.value)}
                   className="min-w-0 flex-1 bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
                 />
@@ -2109,16 +2345,16 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
               </p>
             </div>
           )}
-          {debugCode && <p className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">原型验证码：{debugCode}</p>}
-          {message && !debugCode && <p className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">{message}</p>}
-          {error && <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{error}</p>}
+          {debugCode && <p role="status" className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">测试验证码已填入：{debugCode}</p>}
+          {message && !debugCode && <p role="status" className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">{message}</p>}
+          {error && <p role="alert" className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{error}</p>}
           <button
             type="submit"
             disabled={isLoggingIn || !normalizedPhone || !code.trim()}
             className="primary-button mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed"
           >
             <Check className="h-4 w-4" />
-            {isLoggingIn ? "登录中..." : "进入个人空间"}
+            {isLoggingIn ? "正在登录…" : "登录"}
           </button>
         </form>
       </main>
@@ -2142,434 +2378,368 @@ function SiteRecordFooter({ className = "" }: { className?: string }) {
   );
 }
 
-function MatchViewSwitch({ value, onChange }: { value: MatchView; onChange: (value: MatchView) => void }) {
-  const items: Array<{ key: MatchView; label: string; helper: string }> = [
-    { key: "RECOMMENDED", label: "推荐机会", helper: "优先看 75 分以上" },
-    { key: "DEMAND_TO_SUPPLY", label: "需求找供应", helper: "从需求反查库存" },
-    { key: "SUPPLY_TO_DEMAND", label: "供应找需求", helper: "从货源反查买家" },
-  ];
-
-  return (
-    <div className="match-switch surface-card-quiet grid gap-2 rounded-md p-1.5 md:grid-cols-3">
-      {items.map((item) => {
-        const active = value === item.key;
-        return (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => onChange(item.key)}
-            className={`rounded-md px-3 py-2 text-left transition ${active ? "bg-neutral-950 text-white shadow-sm" : "text-neutral-600 hover:bg-white/80 hover:text-neutral-950"}`}
-          >
-            <span className="block text-sm font-semibold">{item.label}</span>
-            <span className={`mt-0.5 block text-xs font-medium ${active ? "text-white/64" : "text-neutral-400"}`}>{item.helper}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function MatchStatusBar({
-  total,
-  strongCount,
-  demandCount,
-  supplyCount,
-  lastRunAt,
-}: {
-  total: number;
-  strongCount: number;
-  demandCount: number;
-  supplyCount: number;
-  lastRunAt: string;
+function RelatedMatchesDrawer({ kind, source, matches, session, onClose, onStatusChange, onCopy }: {
+  kind: "stock" | "market";
+  source: StockItem | MarketPost;
+  matches: MatchCandidate[];
+  session: AuthSession;
+  onClose: () => void;
+  onStatusChange: (id: string, status: MatchStatus) => void;
+  onCopy: (candidate: MatchCandidate, notify: (notice: { tone: NoticeTone; text: string }) => void) => Promise<void>;
 }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const backButton = useRef<HTMLButtonElement>(null);
+  const lastCandidate = useRef<HTMLButtonElement | null>(null);
+  const [selectedId, setSelectedId] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const selected = matches.find(pair => pair.id === selectedId);
+  const isStock = kind === "stock";
+  const title = isStock ? "关联需求" : "关联供应";
+  React.useLayoutEffect(() => {
+    const node = dialog.current;
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    node?.showModal();
+    return () => {
+      node?.close();
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    };
+  }, []);
+  React.useLayoutEffect(() => {
+    if (selectedId) backButton.current?.focus({ preventScroll: true });
+    else lastCandidate.current?.focus({ preventScroll: true });
+  }, [selectedId]);
+  return <dialog className="related-drawer" ref={dialog} aria-labelledby="related-drawer-title"
+    onCancel={event => { event.preventDefault(); onClose(); }}
+    onClick={event => {
+      if (event.target !== event.currentTarget) return;
+      const bounds = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
+    }}>
+    <header className="related-header">
+      <h2 id="related-drawer-title">{title} <span>{matches.length}</span></h2>
+      <button type="button" autoFocus className="related-close" aria-label="关闭关联匹配" onClick={onClose}><X size={21} /></button>
+    </header>
+    <section className="related-list-body" hidden={Boolean(selected)}>
+      <div className="related-anchor">
+        <span className="related-caption">{isStock ? "当前供应" : "当前需求"}</span>
+        <h3>{source.title}</h3>
+        <p>{[source.sourceContact || source.sourceSender, source.sourceChatName].filter(Boolean).join(" · ")}</p>
+        <div className="related-anchor-time"><span>发布时间</span><TradeTime item={source} compact /></div>
+      </div>
+      <div className="related-list-heading"><h3>{isStock ? "匹配的需求" : "匹配的供应"}</h3><span>按发布时间从近到远</span></div>
+      <ul className="related-results">{matches.map(pair => {
+        const other = isStock ? pair.demand : pair.stock;
+        return <li key={pair.id}>
+          <button type="button" className="related-result" onClick={event => {
+            lastCandidate.current = event.currentTarget;
+            setFeedback("");
+            setSelectedId(pair.id);
+          }}>
+            <span className="related-result-top"><span>{matchLevelText(pair.level)} · {pair.scoreTotal} 分</span>
+              {pair.status !== "NEW" && <span>{matchStatusText(pair.status)}</span>}</span>
+            <strong className="related-product">{other.title}</strong>
+            <span className="related-spec">{[quantityText(other.quantity, other.quantityUnit), other.locationCity, other.sourceContact || other.sourceSender].filter(Boolean).join(" · ")}</span>
+            <span className="related-result-bottom"><TradeTime item={other} compact /><span className="related-compare">对照供需 <ChevronRight size={15} /></span></span>
+          </button>
+        </li>;
+      })}</ul>
+      {!matches.length && <p className="related-spec">这条记录暂时没有关联匹配。</p>}
+    </section>
+    {selected && <section className="related-detail-body">
+      <button type="button" className="related-back" ref={backButton} onClick={() => { setSelectedId(""); setFeedback(""); }}>
+        <ArrowLeft size={16} />返回{title}</button>
+      <MatchDetailDrawer candidate={selected}
+        onCopy={pair => void onCopy(pair, notice => setFeedback(notice.text))}
+        onStatusChange={(id, status) => { onStatusChange(id, status); setFeedback(`已标记为${matchStatusText(status)}。`); }}
+        verification={<MatchSupplyVerification session={session} candidate={selected} />} />
+      {feedback && <p role="status" className="related-feedback">{feedback}</p>}
+    </section>}
+  </dialog>;
+}
+
+function InspectorBack({ onBack }: { onBack: () => void }) {
+  return <div className="trade-inspector-bar">
+    <button type="button" onClick={onBack}><ChevronRight size={15} className="rotate-180" aria-hidden="true" />返回列表</button>
+  </div>;
+}
+
+function MatchViewSwitch({ value, onChange }: { value: MatchView; onChange: (value: MatchView) => void }) {
+  const items: Array<{ key: MatchView; label: string }> = [
+    { key: "RECOMMENDED", label: "推荐机会" },
+    { key: "DEMAND_TO_SUPPLY", label: "需求找供应" },
+    { key: "SUPPLY_TO_DEMAND", label: "供应找需求" },
+  ];
   return (
-    <div className="match-run-bar surface-card flex flex-col gap-3 rounded-md p-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={total ? "green" : "default"}>{total ? `${total} 个机会` : "暂无机会"}</Badge>
-          <Badge tone="blue">{`${strongCount} 个强匹配`}</Badge>
-          <span className="caption-text">供应 {supplyCount} · 需求 {demandCount} · 上次 {formatMinuteTime(lastRunAt)}</span>
-        </div>
-        <p className="mt-1 text-sm font-medium text-neutral-700">匹配由智能货记对话触发，结果页负责查看、筛选和跟进。</p>
-      </div>
-      <div className="meta-pill inline-flex shrink-0 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-neutral-600">
-        <GitCompareArrows className="h-4 w-4" />
-        对话触发
-      </div>
+    <div role="group" aria-label="匹配方向" className="trade-match-directions">
+      {items.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          aria-pressed={value === item.key}
+          onClick={() => onChange(item.key)}
+        >
+          {item.label}
+        </button>
+      ))}
     </div>
   );
 }
 
-function MatchDataTable({
-  items,
-  view,
-  selectedId,
-  onSelect,
-}: {
+function MatchList({ items, view, selectedId, onSelect }: {
   items: MatchCandidate[];
   view: MatchView;
   selectedId: string;
   onSelect: (item: MatchCandidate) => void;
 }) {
+  if (!items.length) return null;
   const supplyFirst = view === "SUPPLY_TO_DEMAND";
-  const primaryLabel = supplyFirst ? "供应" : "需求";
-  const secondaryLabel = supplyFirst ? "需求" : "供应";
   return (
-    <div className="surface-card overflow-hidden rounded-md">
-      <div className="grid gap-2 p-2 md:hidden">
-        {items.map((candidate) => {
-          const primary = matchTableSide(candidate, supplyFirst ? "stock" : "demand");
-          const secondary = matchTableSide(candidate, supplyFirst ? "demand" : "stock");
-          return (
-            <button
-              key={candidate.id}
-              type="button"
-              onClick={() => onSelect(candidate)}
-              className={`match-mobile-card rounded-md p-3 text-left ${selectedId === candidate.id ? "is-selected" : ""}`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                    <ScoreBadge candidate={candidate} />
-                    <Badge tone="blue">{productCategoryText(candidate.demand.productCategory)}</Badge>
-                    <Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge>
-                  </div>
-                  <p className="truncate text-sm font-semibold text-neutral-950">{primary.title}</p>
-                  <p className="mt-0.5 truncate text-xs text-neutral-500">{`可匹配${secondaryLabel}：${secondary.title}`}</p>
-                </div>
-                <Badge tone={matchStatusTone(candidate.status)}>{matchStatusText(candidate.status)}</Badge>
-              </div>
-              <p className="mt-2 line-clamp-2 text-xs font-medium text-neutral-500">{candidate.reasons.slice(0, 2).join("，") || "等待补充匹配原因"}</p>
-            </button>
-          );
-        })}
-      </div>
-      <div className="hidden overflow-x-auto md:block">
-        <table className="huoji-table min-w-[1060px]">
-          <thead>
-            <tr>
-              <th className="w-[110px]">匹配度</th>
-              <th>{primaryLabel}</th>
-              <th>{secondaryLabel}</th>
-              <th className="w-[94px]">城市</th>
-              <th className="w-[96px]">数量</th>
-              <th className="w-[96px]">交易</th>
-              <th className="w-[98px]">状态</th>
-              <th className="w-[118px]">更新时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((candidate) => {
-              const primary = matchTableSide(candidate, supplyFirst ? "stock" : "demand");
-              const secondary = matchTableSide(candidate, supplyFirst ? "demand" : "stock");
-              return (
-                <tr
-                  key={candidate.id}
-                  onClick={() => onSelect(candidate)}
-                  className={selectedId === candidate.id ? "is-selected" : ""}
-                >
-                  <td><ScoreBadge candidate={candidate} /></td>
-                  <td>
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold text-neutral-950">{primary.title}</p>
-                      <p className="truncate text-xs text-neutral-500">{primary.sourceContact}</p>
-                    </div>
-                  </td>
-                  <td>
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold text-neutral-950">{secondary.title}</p>
-                      <p className="truncate text-xs text-neutral-500">{secondary.sourceContact}</p>
-                    </div>
-                  </td>
-                  <td>{primary.locationCity || secondary.locationCity || "待确认"}</td>
-                  <td>{quantityText(primary.quantity, primary.quantityUnit)} / {quantityText(secondary.quantity, secondary.quantityUnit)}</td>
-                  <td><Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge></td>
-                  <td><Badge tone={matchStatusTone(candidate.status)}>{matchStatusText(candidate.status)}</Badge></td>
-                  <td>{formatHourTime(candidate.updatedAt)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {items.length > 0 && (
-        <div className="border-t border-neutral-100 px-3 py-2 text-xs font-medium text-neutral-400">
-          点击任意机会查看匹配解释。当前页 {items.length} 条。
-        </div>
-      )}
+    <ul aria-label="匹配机会" className="trade-match-list">
+      {items.map(pair => {
+        const sides = supplyFirst ? [pair.stock, pair.demand] : [pair.demand, pair.stock];
+        const risk = pair.riskNotes[0];
+        return <li key={pair.id}>
+          <button type="button" className="trade-match-card" aria-label={`对照供需：${sides.map(item => item.title).join("，")}`}
+            aria-controls="workspace-inspector" aria-expanded={selectedId === pair.id} onClick={() => onSelect(pair)}>
+            <span className="trade-match-pair">
+              {sides.map(item => {
+                const isStock = "createdAt" in item;
+                return <span key={isStock ? "stock" : "market"} className="trade-pair-side">
+                  <span className="trade-pair-label">{item.tradeMode === "RENTAL" ? (isStock ? "出租" : "求租") : isStock ? "供应" : "需求"}</span>
+                  <strong>{item.title}</strong>
+                  <span className="trade-pair-context">{[quantityText(item.quantity, item.quantityUnit), item.locationCity, item.sourceContact].filter(Boolean).join(" · ")}</span>
+                  <span className="trade-pair-label">发布</span>
+                  <TradeTime item={item} compact />
+                </span>;
+              })}
+            </span>
+            <span className="trade-match-footer">
+              <span className="trade-match-conclusion">
+                <span className="trade-match-rating">{matchLevelText(pair.level)} · {pair.scoreTotal} 分</span>
+                <span className={risk ? "trade-risk" : ""}>{risk || pair.scoreDetail.find(detail => detail.label === "型号")?.note}</span>
+              </span>
+              <span className="trade-match-cta">{pair.status !== "NEW" && <small>{matchStatusText(pair.status)}</small>}对照供需 <ChevronRight size={14} /></span>
+            </span>
+          </button>
+        </li>;
+      })}
+    </ul>
+  );
+}
+
+function MatchSupplyVerification({ candidate, session }: { candidate: MatchCandidate; session: AuthSession }) {
+  const { demand, stock } = candidate;
+  const prefix = matchHistoryPrefix(session.user.id, session.currentWorkspaceId, demand.id, stock.id);
+  const [evidence, setEvidence] = useState<VerificationEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [readError, setReadError] = useState(false);
+  function reload() {
+    try {
+      setEvidence(readMatchHistory(localStorage, prefix));
+      setReadError(false);
+    } catch {
+      setReadError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    function sync(event: StorageEvent) {
+      if (event.key === null || event.key.startsWith(prefix)) reload();
+    }
+    window.addEventListener("storage", sync);
+    reload();
+    return () => window.removeEventListener("storage", sync);
+  }, [prefix]);
+
+  function save(entry: VerificationEntry) {
+    const active = readStoredSession<AuthSession>(localStorage, AUTH_STORAGE_KEY).session;
+    if (active?.user.id !== session.user.id || active?.currentWorkspaceId !== session.currentWorkspaceId) {
+      throw new Error("登录已变更，请回到原账号和工作空间后重试。");
+    }
+    try {
+      appendMatchHistory(localStorage, prefix, entry);
+    } catch {
+      throw new Error("核实记录未保存，请检查浏览器存储空间后重试。");
+    }
+    reload();
+  }
+  if (loading) return <p className="caption-text mt-3">正在读取核实记录…</p>;
+  if (readError) return (
+    <div className="mt-3 rounded-md bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+      这笔匹配的核实记录暂时无法读取。 <button type="button" className="underline" onClick={reload}>重新读取</button>
     </div>
   );
+
+  function description(item: MarketPost | StockItem) {
+    const fields = item.configItems
+      .filter(({ label, value }) => value && ["原文", "品牌", "型号", "容量", "频率", "批次", "颗粒", "料号"].includes(label))
+      .map(({ value }) => value);
+    return [item.title, item.gpuModel, ...fields].join(" ");
+  }
+  return <SupplyVerificationPanel
+    context={{
+      supplyText: description(stock),
+      demandText: description(demand),
+      supplyQuantity: stock.quantity > 0 ? stock.quantity : undefined,
+      demandQuantity: demand.quantity > 0 ? demand.quantity : undefined,
+      unit: stock.quantityUnit,
+      demandUnit: demand.quantityUnit,
+      category: demand.productCategory,
+    }}
+    source={{
+      groupName: stock.sourceChatName,
+      sender: stock.sourceSender,
+      contact: stock.sourceContact,
+      observedAt: stock.sourceObservedAt,
+      publishedTimeText: stock.sourceCaptureId ? wechatTimeLabel(stock.sourceSentAt, stock.sourcePublishedTime, stock.sourceObservedAt) : undefined,
+      excerpt: configValue(stock.configItems, "原文"),
+      sourceRef: stock.sourceMessageId || stock.sourceCaptureId,
+    }}
+    evidence={evidence}
+    onSave={save}
+  />;
 }
 
-function ScoreBadge({ candidate }: { candidate: MatchCandidate }) {
-  return (
-    <span className={`score-badge score-badge-${candidate.level.toLowerCase()}`}>
-      <strong>{candidate.scoreTotal}</strong>
-      <span>{matchLevelText(candidate.level)}</span>
-    </span>
-  );
-}
-
-function MatchDetailDrawer({
-  candidate,
-  onStatusChange,
-  onCopy,
-}: {
+function MatchDetailDrawer({ candidate, onStatusChange, onCopy, verification }: {
   candidate: MatchCandidate | null;
   onStatusChange: (candidateId: string, status: MatchStatus) => void;
   onCopy: (candidate: MatchCandidate) => void;
+  verification: React.ReactNode;
 }) {
-  if (!candidate) {
-    return (
-      <aside className="right-inspector surface-card hidden h-fit rounded-md p-4 lg:block">
-        <p className="text-sm font-semibold text-neutral-700">暂无匹配机会</p>
-        <p className="caption-text mt-1">系统会用本体规则把需求和供应自动归一化，再生成可解释的匹配结果。</p>
-      </aside>
-    );
-  }
-
+  const [view, setView] = useState<"compare" | "verify">("compare");
+  if (!candidate) return null;
+  const { demand, stock } = candidate;
+  const facts = [
+    ["型号", demand.gpuModel, stockSpecText(stock)],
+    ["数量", quantityText(demand.quantity, demand.quantityUnit), quantityText(stock.quantity, stock.quantityUnit)],
+    [demand.tradeMode === "RENTAL" ? "租金" : "金额", demand.priceAmount ? `预算 ${formatMoney(demand.priceAmount)}` : "预算未记录", stock.priceAmount ? `报价 ${formatMoney(stock.priceAmount)}` : "报价未记录"],
+    ["交付地", demand.locationCity, stock.locationCity],
+    ["来源", demand.sourceContact || demand.sourceSender, stock.sourceContact || stock.sourceSender],
+  ];
   return (
-    <aside className="right-inspector surface-card hidden h-fit rounded-md p-4 lg:block">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Badge tone="orange">需求</Badge>
-        <Badge tone="green">供应</Badge>
-        <Badge tone="blue">{productCategoryText(candidate.demand.productCategory)}</Badge>
-        <Badge tone={tradeModeTone(candidate.demand.tradeMode)}>{tradeModeText(candidate.demand.tradeMode)}</Badge>
+    <aside className="right-inspector trade-inspector surface-card" aria-label="匹配详情">
+      <div className="trade-detail-kicker">匹配详情 <span>{matchLevelText(candidate.level)} · {candidate.scoreTotal} 分</span></div>
+      <h3 className="trade-inspector-title">{demand.title}</h3>
+      <div role="group" aria-label="匹配详情内容" className="trade-detail-tabs">
+        <button type="button" aria-pressed={view === "compare"} onClick={() => setView("compare")}>供需对照</button>
+        <button type="button" aria-pressed={view === "verify"} onClick={() => setView("verify")}>货源核实</button>
       </div>
-      <div className="score-hero rounded-md p-3">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <p className="caption-text">综合匹配度</p>
-            <p className="mt-1 text-3xl font-semibold text-neutral-950">{candidate.scoreTotal}</p>
-          </div>
-          <Badge tone={matchLevelTone(candidate.level)}>{matchLevelText(candidate.level)}</Badge>
+      <div hidden={view !== "compare"}>
+        <table className="trade-compare-table" aria-label="需求与供应条件对照">
+          <thead><tr><th scope="col"><span className="sr-only">条件</span></th><th scope="col">需求条件</th><th scope="col">供应条件</th></tr></thead>
+          <tbody><tr className="trade-compare-publication"><th scope="row">发布时间</th>
+            <td><TradeTime item={demand} compact /></td><td><TradeTime item={stock} compact /></td>
+          </tr>{facts.map(([label, need, offer]) => <tr key={label}>
+            <th scope="row">{label}</th><td>{need || "未记录"}</td><td>{offer || "未记录"}</td>
+          </tr>)}</tbody>
+        </table>
+        {candidate.riskNotes.length > 0 && <section className="trade-risk-notes">
+          <h4>成交前待核对</h4>
+          <ul>{candidate.riskNotes.map(note => <li key={note}>{note}</li>)}</ul>
+        </section>}
+        <div className="trade-follow-actions">
+          <button type="button" className="trade-related" onClick={() => setView("verify")}>去核实货源<ChevronRight size={15} /></button>
+          <button type="button" className="trade-copy" onClick={() => onCopy(candidate)}><ClipboardCheck size={15} />复制摘要</button>
         </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-neutral-950/10">
-          <div className="h-full rounded-full bg-neutral-950" style={{ width: `${candidate.scoreTotal}%` }} />
-        </div>
+        <details className="trade-config">
+          <summary>匹配依据 <span>{candidate.scoreTotal} 分</span></summary>
+          <ul className="trade-score-list">{candidate.scoreDetail.map(detail => (
+            <li key={detail.label}><strong>{detail.label}</strong><span>{detail.note}</span><small>{detail.score} / {detail.max}</small></li>
+          ))}</ul>
+        </details>
+        <details className="trade-config">
+          <summary>双方来源与原文</summary>
+          <MatchTradeCard title="需求" item={demand} /><MatchTradeCard title="供应" item={stock} />
+        </details>
       </div>
-
-      <section className="mt-4">
-        <p className="mb-2 text-xs font-semibold text-neutral-500">为什么匹配</p>
-        <div className="grid gap-2">
-          {candidate.reasons.map((reason) => (
-            <div key={reason} className="flex gap-2 rounded-md bg-emerald-50/80 px-3 py-2 text-sm font-medium text-emerald-800">
-              <Check className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{reason}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {candidate.riskNotes.length > 0 && (
-        <section className="mt-4">
-          <p className="mb-2 text-xs font-semibold text-neutral-500">需要确认</p>
-          <div className="grid gap-2">
-            {candidate.riskNotes.map((note) => (
-              <div key={note} className="flex gap-2 rounded-md bg-amber-50/85 px-3 py-2 text-sm font-medium text-amber-800">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{note}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="mt-4 grid gap-2">
-        <MatchTradeCard title="需求" item={candidate.demand} />
-        <MatchTradeCard title="供应" item={candidate.stock} />
-      </section>
-
-      <section className="mt-4 border-t border-neutral-100 pt-3">
-        <p className="mb-2 text-xs font-semibold text-neutral-500">打分明细</p>
-        <div className="grid gap-2">
-          {candidate.scoreDetail.map((detail) => (
-            <div key={detail.label} className="score-detail-row">
-              <div className="flex items-center justify-between gap-2 text-xs font-medium">
-                <span className="text-neutral-600">{detail.label}</span>
-                <span className="text-neutral-400">{detail.score}/{detail.max}</span>
-              </div>
-              <p className="mt-1 text-xs text-neutral-500">{detail.note}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={() => onStatusChange(candidate.id, "CONTACTED")}
-          className="primary-button inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium"
-        >
-          <MessageCircle className="h-4 w-4" />
-          已联系
-        </button>
-        <button
-          type="button"
-          onClick={() => onCopy(candidate)}
-          className="ghost-button surface-card-quiet inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium"
-        >
-          <ClipboardCheck className="h-4 w-4" />
-          复制摘要
-        </button>
-        <button
-          type="button"
-          onClick={() => onStatusChange(candidate.id, "NEW")}
-          className="ghost-button surface-card-quiet inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium"
-        >
-          新机会
-        </button>
-        <button
-          type="button"
-          onClick={() => onStatusChange(candidate.id, "IGNORED")}
-          className="ghost-button surface-card-quiet inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium"
-        >
-          忽略
-        </button>
-      </div>
+      <div hidden={view !== "verify"}>{verification}</div>
+      <label className="trade-follow-status">跟进状态
+        <select value={candidate.status} onChange={event => onStatusChange(candidate.id, event.target.value as MatchStatus)}
+          className="field-surface rounded-md px-2 py-1.5 text-sm">
+          <option value="NEW">新机会</option><option value="CONTACTED">已联系</option><option value="IGNORED">已忽略</option>
+        </select>
+      </label>
     </aside>
   );
 }
 
+function TradeTime({ item, compact = false }: { item: StockItem | MarketPost; compact?: boolean }) {
+  const published = readWechatTime(item.sourceSentAt, item.sourcePublishedTime, item.sourceObservedAt);
+  const fromWechat = Boolean(item.sourceCaptureId || item.sourceCaptureMode || item.sourceMessageId || item.sourceItemKey
+    || item.sourceObservedAt || item.sourcePublishedTime || item.sourceSentAt);
+  const recorded = wechatTimestamp(fromWechat ? item.sourceObservedAt : "createdAt" in item ? item.createdAt : item.publishedAt);
+  return <span className="trade-publication" data-known={Boolean(published)} title={published ? `${published.fullLabel}（北京时间）` : undefined}>
+    <strong className="trade-publication-value">{published
+      ? <><span className="trade-publication-endpoint">{published.value}</span>
+        {published.rangeEnd && <> 至 <span className="trade-publication-endpoint">{published.rangeEnd}</span></>}</>
+      : fromWechat ? "未识别" : "未提供"}</strong>
+    {published && <small className="trade-publication-note">{published.basis}</small>}
+    {(!compact || !published) && recorded !== "未识别" &&
+      <small className="trade-publication-note">{fromWechat ? "采集于" : "录入于"} {recorded}</small>}
+  </span>;
+}
+
 function MatchTradeCard({ title, item }: { title: string; item: StockItem | MarketPost }) {
-  const isStock = "createdAt" in item;
-  return (
-    <div className="rounded-md bg-neutral-950/[0.03] p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-neutral-500">{title}</p>
-        <span className="caption-text">{formatHourTime(isStock ? item.createdAt : item.publishedAt)}</span>
-      </div>
-      <p className="text-sm font-semibold text-neutral-950">{item.title}</p>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        <InfoDatum label="规格" value={isStock ? stockSpecText(item) : (item.gpuModel || "待确认")} />
-        <InfoDatum label="数量" value={quantityText(item.quantity, item.quantityUnit)} />
-        <InfoDatum label="城市" value={item.locationCity || "待确认"} />
-        <InfoDatum label={isStock ? "价格" : "预算"} value={item.priceAmount ? formatMoney(item.priceAmount) : "待确认"} strong={Boolean(item.priceAmount)} />
-        <InfoDatum label="来源用户" value={item.sourceContact || "未知来源"} />
-        {!isStock && <InfoDatum label="联系方式" value={(item as MarketPost).contactMethod || "站内联系"} />}
-      </div>
-    </div>
-  );
+  const excerpt = configValue(item.configItems, "原文");
+  return <section className="trade-evidence">
+    <p className="trade-pair-label">{title}</p>
+    <strong>{item.title}</strong>
+    <p className="trade-evidence-source">{[item.sourceContact || item.sourceSender, item.sourceChatName].filter(Boolean).join(" · ") || "来源待核对"}</p>
+    {item.sourceSender && item.sourceContact && item.sourceContact !== item.sourceSender && <p className="caption-text">发言人 · {item.sourceSender}</p>}
+    <div className="trade-evidence-publication"><span>发布时间</span><TradeTime item={item} compact /></div>
+    {"contactMethod" in item && item.contactMethod && <p className="caption-text">联系方式 · {item.contactMethod}</p>}
+    {excerpt && <blockquote>{excerpt}</blockquote>}
+  </section>;
 }
 
-function StockDataTable({
-  items,
-  selectedId,
-  onSelect,
-}: {
-  items: StockItem[];
+function TradeDataTable<T extends StockItem | MarketPost>({ kind, rental, items, selectedId, onSelect, relatedCounts, onShowMatches }: {
+  rental: boolean;
+  kind: "stock" | "market";
+  items: T[];
   selectedId: string;
-  onSelect: (item: StockItem) => void;
+  onSelect: (item: T) => void;
+  relatedCounts: ReadonlyMap<string, number>;
+  onShowMatches: (item: T) => void;
 }) {
+  if (!items.length) return null;
+  const isStock = kind === "stock";
+  const amountLabel = rental ? (isStock ? "租金" : "租金预算") : isStock ? "报价" : "预算";
   return (
-    <div className="surface-card overflow-hidden rounded-md">
-      <div className="overflow-x-auto">
-        <table className="huoji-table min-w-[980px]">
-          <thead>
-            <tr>
-              <th className="w-[84px]">品类</th>
-              <th>型号 / 规格</th>
-              <th className="w-[96px]">数量</th>
-              <th className="w-[88px]">城市</th>
-              <th className="w-[88px]">交易</th>
-              <th className="w-[118px]">价格</th>
-              <th className="w-[150px]">来源用户</th>
-              <th className="w-[86px]">状态</th>
-              <th className="w-[118px]">录入时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((stock) => (
-              <tr
-                key={stock.id}
-                onClick={() => onSelect(stock)}
-                className={selectedId === stock.id ? "is-selected" : ""}
-              >
-                <td><Badge tone="blue">{productCategoryText(stock.productCategory)}</Badge></td>
-                <td>
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-neutral-950">{stock.title}</p>
-                    <p className="truncate text-xs text-neutral-500">{stockSpecText(stock)}</p>
-                  </div>
-                </td>
-                <td>{quantityText(stock.quantity, stock.quantityUnit)}</td>
-                <td>{stock.locationCity || "待确认"}</td>
-                <td><Badge tone={tradeModeTone(stock.tradeMode)}>{tradeModeText(stock.tradeMode)}</Badge></td>
-                <td className="font-semibold text-neutral-900">{stock.priceAmount ? formatMoney(stock.priceAmount) : "待确认"}</td>
-                <td className="max-w-[150px] truncate" title={stock.sourceContact}>{stock.sourceContact}</td>
-                <td><Badge tone={statusTone(stock.status)}>{statusText(stock.status)}</Badge></td>
-                <td>{formatHourTime(stock.createdAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {items.length > 0 && (
-        <div className="border-t border-neutral-100 px-3 py-2 text-xs font-medium text-neutral-400">
-          点击任意行查看完整配置。当前页 {items.length} 条。
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MarketDataTable({
-  items,
-  selectedId,
-  onSelect,
-}: {
-  items: MarketPost[];
-  selectedId: string;
-  onSelect: (item: MarketPost) => void;
-}) {
-  return (
-    <div className="surface-card overflow-hidden rounded-md">
-      <div className="overflow-x-auto">
-        <table className="huoji-table min-w-[920px]">
-          <thead>
-            <tr>
-              <th className="w-[84px]">品类</th>
-              <th>需求型号 / 规格</th>
-              <th className="w-[96px]">数量</th>
-              <th className="w-[88px]">城市</th>
-              <th className="w-[88px]">交易</th>
-              <th className="w-[118px]">预算</th>
-              <th className="w-[150px]">来源用户</th>
-              <th className="w-[88px]">联系</th>
-              <th className="w-[118px]">创建时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((post) => (
-              <tr
-                key={post.id}
-                onClick={() => onSelect(post)}
-                className={selectedId === post.id ? "is-selected" : ""}
-              >
-                <td><Badge tone="blue">{productCategoryText(post.productCategory)}</Badge></td>
-                <td>
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-neutral-950">{post.title}</p>
-                    <p className="truncate text-xs text-neutral-500">{post.gpuModel || "规格待确认"}</p>
-                  </div>
-                </td>
-                <td>{quantityText(post.quantity, post.quantityUnit)}</td>
-                <td>{post.locationCity || "待确认"}</td>
-                <td><Badge tone={tradeModeTone(post.tradeMode)}>{tradeModeText(post.tradeMode)}</Badge></td>
-                <td className="font-semibold text-neutral-900">{post.priceAmount ? formatMoney(post.priceAmount) : "待确认"}</td>
-                <td className="max-w-[150px] truncate" title={post.sourceContact}>{post.sourceContact}</td>
-                <td className="max-w-[88px] truncate" title={post.contactMethod}>{post.contactMethod || "站内"}</td>
-                <td>{formatHourTime(post.publishedAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {items.length > 0 && (
-        <div className="border-t border-neutral-100 px-3 py-2 text-xs font-medium text-neutral-400">
-          点击任意行查看需求详情。当前页 {items.length} 条。
-        </div>
-      )}
+    <div className="trade-ledger">
+      <table aria-label={isStock ? "供应列表" : "需求列表"}>
+        <thead><tr><th scope="col">产品 / 交付</th><th scope="col" aria-sort="descending" className="trade-published-heading">发布时间<span aria-hidden="true"> ↓</span></th><th scope="col">数量</th><th scope="col">{amountLabel}</th><th scope="col">来源 / 群聊</th><th scope="col">关联匹配</th></tr></thead>
+        <tbody>{items.map(item => {
+          const count = relatedCounts.get(item.id) ?? 0;
+          const spec = item.gpuModel && !item.title.toLowerCase().includes(item.gpuModel.toLowerCase()) ? item.gpuModel : "";
+          const gpuCount = "gpuCount" in item && item.productCategory === "SERVER" && item.gpuCount > 0
+            && !item.title.replaceAll(" ", "").includes(`${item.gpuCount}卡`) ? `${item.gpuCount}卡` : "";
+          return <tr key={item.id} className={selectedId === item.id ? "is-selected" : ""} onClick={event => {
+            event.currentTarget.querySelector("button")?.focus({ preventScroll: true });
+            onSelect(item);
+          }}>
+            <td className="trade-product">
+              <button type="button" data-trade-id={item.id} aria-label={`查看${isStock ? "供应" : "需求"}详情：${item.title}`}
+                aria-controls="workspace-inspector" aria-expanded={selectedId === item.id}>{item.title}</button>
+              <div className="trade-row-meta">{[spec, gpuCount, item.locationCity, tradeModeText(item.tradeMode)].filter(Boolean).join(" · ")}
+                {"status" in item && <span className="trade-status" data-status={item.status}>{statusText(item.status)}</span>}
+              </div>
+            </td>
+            <td className="trade-published-cell"><span className="trade-mobile-label">发布时间</span><TradeTime item={item} compact /></td>
+            <td className="trade-quantity"><span className="trade-mobile-label">数量</span><strong>{quantityText(item.quantity, item.quantityUnit)}</strong></td>
+            <td className="trade-amount"><span className="trade-mobile-label">{amountLabel}</span>
+              {item.priceAmount ? <strong>{formatMoney(item.priceAmount)}</strong> : <span className="trade-unknown">未记录</span>}
+            </td>
+            <td className="trade-source"><div><strong>{item.sourceContact || item.sourceSender || "来源待核对"}</strong>{item.sourceChatName && <span>{item.sourceChatName}</span>}</div></td>
+            <td className="trade-counterpart">
+              {count ? <button type="button" aria-haspopup="dialog" onClick={event => { event.stopPropagation(); onShowMatches(item); }}
+                aria-label={`查看${item.title}的 ${count} 条关联${isStock ? "需求" : "供应"}`}>
+                {count} 条{isStock ? "需求" : "供应"} <ChevronRight size={13} aria-hidden="true" />
+              </button> : <span>暂无匹配</span>}
+            </td>
+          </tr>;
+        })}</tbody>
+      </table>
     </div>
   );
 }
@@ -2577,13 +2747,17 @@ function MarketDataTable({
 function TradeDetailDrawer({
   kind,
   item,
+  relatedCount,
+  onShowMatches,
 }: {
   kind: "stock" | "market";
   item: StockItem | MarketPost | null;
+  relatedCount: number;
+  onShowMatches: (kind: "stock" | "market", item: StockItem | MarketPost) => void;
 }) {
   if (!item) {
     return (
-      <aside className="right-inspector surface-card hidden h-fit rounded-md p-4 lg:block">
+      <aside className="right-inspector surface-card h-fit rounded-md p-4">
         <p className="text-sm font-semibold text-neutral-700">未选择记录</p>
         <p className="caption-text mt-1">点击左侧表格中的任意一行，这里会显示完整配置、来源和联系方式。</p>
       </aside>
@@ -2591,373 +2765,153 @@ function TradeDetailDrawer({
   }
 
   const isStock = kind === "stock";
-  const title = item.title;
-  const category = productCategoryText(item.productCategory);
-  const mode = tradeModeText(item.tradeMode);
-  const sourceContact = item.sourceContact;
-  const time = isStock ? formatHourTime((item as StockItem).createdAt) : formatHourTime((item as MarketPost).publishedAt);
-  const quantity = quantityText(item.quantity, item.quantityUnit);
-  const model = isStock ? stockSpecText(item as StockItem) : ((item as MarketPost).gpuModel || "待确认");
-  const priceLabel = isStock ? "价格" : "预算";
-  const price = item.priceAmount ? formatMoney(item.priceAmount) : "待确认";
-
+  const sourceContact = item.sourceContact || item.sourceSender;
+  const excerpt = configValue(item.configItems, "原文");
+  const originFields = new Set(["来源群聊", "原消息发送人", "原消息时间", "消息采集时间", "来源消息ID", "采集方式"]);
+  const sourceDetails = item.sourceCaptureId ? item.configItems.filter(field => originFields.has(field.label)) : [];
+  const specFields = item.configItems.filter(field => field.label !== "原文" && !sourceDetails.includes(field));
+  const model = isStock ? stockSpecText(item as StockItem) : item.gpuModel;
   return (
-    <aside className="right-inspector surface-card hidden h-fit rounded-md p-4 lg:block">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Badge tone={isStock ? "green" : "orange"}>{isStock ? "供应" : "需求"}</Badge>
-        <Badge tone="blue">{category}</Badge>
-        <Badge tone={tradeModeTone(item.tradeMode)}>{mode}</Badge>
+    <aside className="right-inspector trade-inspector surface-card" aria-label={isStock ? "供应详情" : "需求详情"}>
+      <div className="trade-detail-kicker">{isStock ? "供应详情" : "需求详情"} <span>{"status" in item ? statusText(item.status) : productCategoryText(item.productCategory)}</span></div>
+      <h3 className="trade-inspector-title">{item.title}</h3>
+      <div className="trade-detail-publication"><span>消息发布时间</span><TradeTime item={item} /></div>
+      {(!("status" in item)||!["SOLD_OUT","EXPIRED"].includes(item.status))&&<button type="button" className="quick-secondary"
+        onClick={()=>navigateWorkspace("#circle/publish/"+encodeURIComponent(item.id)+"/"+kind)}><Radio size={15}/>发布到广场</button>}
+      <div className="trade-detail-numbers">
+        <div><span>{item.tradeMode === "RENTAL" ? (isStock ? "可租数量" : "求租数量") : isStock ? "供货数量" : "采购数量"}</span><strong>{quantityText(item.quantity, item.quantityUnit)}</strong></div>
+        <div><span>{item.tradeMode === "RENTAL" ? (isStock ? "租金" : "租金预算") : isStock ? "报价" : "采购预算"}</span><strong>{item.priceAmount ? formatMoney(item.priceAmount) : "未记录"}</strong></div>
       </div>
-      <h3 className="section-title">{title}</h3>
-      <p className="caption-text mt-1 text-neutral-400">{time}</p>
-
-      <div className="mt-4 grid gap-2">
-        <InfoDatum label="规格" value={model} />
-        <InfoDatum label="数量" value={quantity} />
-        <InfoDatum label="城市" value={item.locationCity || "待确认"} />
-        <InfoDatum label={priceLabel} value={price} strong={Boolean(item.priceAmount)} />
-        <InfoDatum label="来源用户" value={sourceContact || "未知来源"} />
-        {!isStock && <InfoDatum label="联系方式" value={(item as MarketPost).contactMethod || "站内联系"} />}
-        {isStock && <InfoDatum label="状态" value={statusText((item as StockItem).status)} />}
-      </div>
-
-      <ConfigSheet items={item.configItems} />
+      <dl className="trade-detail-fields">
+        <dt>型号规格</dt><dd>{model || "待核对"}</dd>
+        <dt>交付方式</dt><dd>{[tradeModeText(item.tradeMode), item.locationCity].filter(Boolean).join(" · ")}</dd>
+        <dt>来源用户</dt><dd>{sourceContact || "待核对"}</dd>
+        {item.sourceSender && item.sourceSender !== sourceContact && <><dt>消息发言人</dt><dd>{item.sourceSender}</dd></>}
+        {item.sourceChatName && <><dt>来源群聊</dt><dd>{item.sourceChatName}</dd></>}
+        {"contactMethod" in item && !!item.contactMethod && <><dt>联系方式</dt><dd>{item.contactMethod}</dd></>}
+      </dl>
+      {relatedCount > 0 && <button type="button" aria-haspopup="dialog" className="trade-related" onClick={() => onShowMatches(kind, item)}
+        aria-label={`查看关联匹配，共 ${relatedCount} 条${isStock ? "需求" : "供应"}`}>
+        查看 {relatedCount} 条匹配{isStock ? "需求" : "供应"} <ChevronRight size={15} />
+      </button>}
+      {excerpt && <section className="trade-evidence" aria-label="消息原文">
+        <h4>消息原文</h4><blockquote>{excerpt}</blockquote>
+      </section>}
+      <ConfigSheet items={specFields} />
+      {sourceDetails.length > 0 && <details className="trade-config">
+        <summary>采集记录</summary>
+        <dl>{sourceDetails.map((field, i) => <div key={i}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl>
+      </details>}
     </aside>
   );
 }
 
-function WorkspaceSwitcher({ currentWorkspace }: { currentWorkspace: WorkspaceSummary }) {
-  return (
-    <div className="mb-5 space-y-1 border-y border-neutral-200/80 py-3">
-      <button type="button" className="surface-card-quiet flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left">
-        <UserRound className="h-4 w-4 shrink-0 text-neutral-500" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold text-neutral-900">{currentWorkspace.name}</span>
-          <span className="block text-xs font-medium text-neutral-400">个人版 · {currentWorkspace.role === "OWNER" ? "所有者" : "成员"}</span>
-        </span>
-      </button>
-      <button
-        type="button"
-        disabled
-        className="flex w-full cursor-not-allowed items-center gap-2 rounded-md px-2.5 py-2 text-left opacity-60"
-      >
-        <Building2 className="h-4 w-4 shrink-0 text-neutral-500" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold text-neutral-700">企业空间</span>
-          <span className="block text-xs font-medium text-neutral-400">企业版 · 待开通</span>
-        </span>
-      </button>
-    </div>
-  );
-}
 
-function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+const DraftReviewItem: React.FC<{ draft: TradeDraft; onEdit: () => void; onConfirm: () => void }> = ({ draft, onEdit, onConfirm }) => {
+  const missing = tradeDraftMissingFields(draft);
+  const title = draft.title || draft.gpuModel || "产品待确认";
+  const modelAddsDetail = draft.gpuModel?.trim().toLowerCase().split(/\s+/).some(part => !title.toLowerCase().includes(part));
+  const specs = [modelAddsDetail && draft.gpuModel, tradeModeText(draft.tradeMode),
+    missing.includes("城市") ? "城市待补" : draft.locationCity, missing.includes("型号") && "型号待补"].filter(Boolean).join(" · ");
+  const supply = draft.postType === "GOODS";
+  const numericPrice = toOptionalNumber(draft.priceAmount);
+  const price = numericPrice ? formatMoney(numericPrice) : draft.priceAmount === "0" ? "" : draft.priceAmount;
   return (
-    <section className="surface-card rounded-md p-3 md:p-4">
-      <div className="mb-3 flex items-center gap-2 text-neutral-800">
-        {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-4 w-4 text-neutral-500" })}
-        <h2 className="section-title text-[15px]">{title}</h2>
+    <article className="review-entry" aria-label={title}>
+      <div className="review-product">
+        <div><span className={supply ? "review-supply" : "review-demand"}>{supply ? "供应" : "需求"}</span><h3>{title}</h3></div>
+        <p>{specs}</p>
       </div>
-      {children}
-    </section>
-  );
-}
-
-function SmartStatusBar({
-  supplyCount,
-  demandCount,
-  draftCount,
-  incompleteCount,
-}: {
-  supplyCount: number;
-  demandCount: number;
-  draftCount: number;
-  incompleteCount: number;
-}) {
-  const statusText = draftCount
-    ? `已拆解 ${draftCount} 条，${incompleteCount ? `${incompleteCount} 条待补` : "可直接入库"}`
-    : "等待聊天记录";
-  return (
-    <div className="smart-status surface-card rounded-md p-3">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <div className="smart-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-md">
-          <Sparkles className="h-5 w-5" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-neutral-950">智能识别已开启</p>
-          <p className="caption-text truncate">{statusText}</p>
-        </div>
+      <div className="review-commercial">
+        <strong className={missing.includes("数量") ? "review-missing" : undefined}>{missing.includes("数量") ? "数量待补" : `${draft.quantity} ${draft.quantityUnit}`}</strong>
+        <span>{price ? `${supply ? "报价" : "预算"} ${price}` : supply ? "未提供报价" : "未提供预算"}</span>
       </div>
-      <div className="smart-metrics">
-        <SmartMetric label="供应" value={supplyCount} tone="green" />
-        <SmartMetric label="需求" value={demandCount} tone="orange" />
-        <SmartMetric label="待入库" value={draftCount} tone="blue" />
+      <div className="review-source">
+        <strong className={missing.includes("来源用户") ? "review-missing" : undefined}>{missing.includes("来源用户") ? "来源用户待补" : draft.sourceContact}</strong>
+        <span>{draft.sourceChatName || (draft.sourceCaptureId ? "微信消息" : "粘贴录入")}</span>
+        <small className="review-time">{tradeTimeCaption(draft, draftChronology(draft).recorded)}</small>
       </div>
-    </div>
-  );
-}
-
-function SmartMetric({ label, value, tone }: { label: string; value: number; tone: BadgeTone }) {
-  return (
-    <div className={`smart-metric smart-metric-${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function SmartChip({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="smart-chip">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </span>
-  );
-}
-
-function SmartResultSummary({
-  goods,
-  demands,
-  incomplete,
-  total,
-}: {
-  goods: number;
-  demands: number;
-  incomplete: number;
-  total: number;
-}) {
-  if (!total) {
-    return (
-      <div className="smart-result-empty rounded-md p-3">
-        <p className="text-sm font-semibold text-neutral-800">等待解析结果</p>
-        <p className="caption-text mt-1">AI 会把多条聊天记录拆成供应和需求。</p>
+      <div className="review-row-actions">
+        <button type="button" className="review-link" onClick={onEdit}>核对</button>
+        <button type="button" className="review-row-confirm" onClick={onConfirm}>入库</button>
       </div>
-    );
-  }
-  return (
-    <div className="smart-result rounded-md p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-neutral-950">AI 已完成拆解</p>
-          <p className="caption-text mt-1">
-            {goods} 条供应，{demands} 条需求{incomplete ? `，${incomplete} 条信息不完整` : "，字段完整"}
-          </p>
-        </div>
-        <Badge tone={incomplete ? "orange" : "green"}>{incomplete ? "可先入库" : "可入库"}</Badge>
-      </div>
-    </div>
-  );
-}
-
-function NavButton({
-  active,
-  icon,
-  label,
-  onClick,
-  compact = false,
-}: {
-  active: boolean;
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  compact?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      onClick={onClick}
-      className={`mb-1 flex w-full items-center rounded-md text-sm font-medium transition ${
-        active ? "bg-neutral-950 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-950/5 hover:text-neutral-950"
-      } ${compact ? "h-10 justify-center px-0" : "gap-2 px-2.5 py-2"}`}
-    >
-      {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: `h-4 w-4 ${active ? "text-white" : "text-neutral-500"}` })}
-      {!compact && label}
-    </button>
-  );
-}
-
-function MobileTab({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex flex-col items-center gap-1 px-2 py-2 text-xs font-medium transition ${
-        active ? "rounded-md bg-neutral-950 text-white" : "text-neutral-500"
-      }`}
-    >
-      {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-5 w-5" })}
-      {label}
-    </button>
-  );
-}
-
-function SideMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs transition hover:bg-neutral-950/5">
-      <span className="font-medium text-neutral-500">{label}</span>
-      <span className="font-semibold text-neutral-800">{value}</span>
-    </div>
-  );
-}
-
-function ToolbarButton({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="ghost-button inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
-    >
-      {React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: "h-3.5 w-3.5" })}
-      {label}
-    </button>
-  );
-}
-
-const ChatBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
-  const isUser = message.role === "user";
-  const toneClass: Record<NoticeTone, string> = {
-    info: "bg-white text-neutral-600",
-    success: "bg-emerald-50 text-emerald-800",
-    warning: "bg-amber-50 text-amber-800",
-  };
-  return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[88%] rounded-md px-3 py-2 text-sm leading-6 shadow-[0_0_0_1px_rgba(15,15,15,0.05)] ${
-          isUser ? "bg-neutral-900 text-white" : toneClass[message.tone ?? "info"]
-        }`}
-      >
-        {message.text}
-      </div>
-    </div>
+    </article>
   );
 };
 
-function AssistantEmptyState() {
-  return (
-    <div className="px-4 py-10 text-center">
-      <div className="meta-pill mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md text-neutral-400">
-        <ClipboardCheck className="h-4 w-4" />
-      </div>
-      <p className="text-sm font-medium text-neutral-600">暂无待确认结果</p>
-      <p className="caption-text mt-1 text-neutral-400">发送一段供需文本后，结果会先出现在这里。</p>
-    </div>
-  );
-}
-
-const DraftReviewItem: React.FC<{
-  draft: TradeDraft;
-  index: number;
+function DraftEditor({ draft, error, onChange, onRemove, onConfirm, onClose }: {
+  draft: TradeDraft; error: string;
   onChange: (patch: Partial<TradeDraft>) => void;
-  onRemove: () => void;
-  onConfirm: () => void;
-}> = ({
-  draft,
-  index,
-  onChange,
-  onRemove,
-  onConfirm,
-}) => {
-  const missingFields = tradeDraftMissingFields(draft);
-  const hasMissingFields = missingFields.length > 0;
-  return (
-    <section className="surface-card-quiet rounded-md p-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={draft.postType === "GOODS" ? "green" : "orange"}>{draft.postType === "GOODS" ? "供应" : "需求"}</Badge>
-            <Badge tone={tradeModeTone(draft.tradeMode)}>{tradeModeText(draft.tradeMode)}</Badge>
-            <Badge tone="blue">{productCategoryText(draft.productCategory)}</Badge>
-            <Badge tone={draft.sourceContact && draft.sourceContact !== "未知来源" ? "default" : "orange"}>
-              来源 {draft.sourceContact && draft.sourceContact !== "未知来源" ? draft.sourceContact : "待确认"}
-            </Badge>
-            <span className="text-xs font-medium text-neutral-400">#{index + 1}</span>
-          </div>
-          <p className="mt-1 truncate text-sm font-semibold text-neutral-900">{draft.title || `${productCategoryText(draft.productCategory)} ${draft.gpuModel}`}</p>
-          <div className="mt-2 grid gap-2 text-xs text-neutral-600 sm:grid-cols-4">
-            <InfoDatum label="规格" value={draft.gpuModel || "待确认"} />
-            <InfoDatum label="数量" value={draft.quantity ? `${draft.quantity}${draft.quantityUnit || ""}` : "待确认"} />
-            <InfoDatum label="城市" value={draft.locationCity || "待确认"} />
-            <InfoDatum label={draft.postType === "GOODS" ? "价格" : "预算"} value={draft.priceAmount || "待确认"} strong={Boolean(draft.priceAmount)} />
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <span className={`text-xs font-medium ${hasMissingFields ? "text-amber-600" : "text-neutral-400"}`}>
-              {hasMissingFields ? "信息不完整，可先保存" : "字段完整，可保存"}
-            </span>
-            {missingFields.map((field) => (
-              <Badge key={field} tone="orange">{`缺${field}`}</Badge>
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={onRemove}
-            className="ghost-button inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            删除
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className="primary-button inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium"
-          >
-            <Check className="h-3.5 w-3.5" />
-            保存
-          </button>
-        </div>
+  onRemove: () => void; onConfirm: () => void; onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [removePending, setRemovePending] = useState(false);
+  const missing = tradeDraftMissingFields(draft);
+  useEffect(() => {
+    const surface = dialog.current;
+    const trigger = document.activeElement;
+    surface?.showModal();
+    return () => {
+      surface?.close();
+      if (!trigger?.isConnected) document.getElementById("review-title")?.focus({ preventScroll: true });
+    };
+  }, []);
+  return <dialog ref={dialog} className="draft-editor" aria-labelledby="draft-editor-title"
+    onCancel={event => { event.preventDefault(); onClose(); }}>
+    <div className="draft-editor-shell">
+      <div className="draft-editor-heading">
+        <div><h2 id="draft-editor-title">核对记录</h2><p>编辑的字段会自动保存到清单。</p></div>
+        <button type="button" className="review-icon-button" aria-label="关闭核对" onClick={onClose}><X size={19} /></button>
       </div>
-
-      <details className="mt-3 border-t border-neutral-100 pt-3">
-        <summary className="caption-text cursor-pointer font-semibold text-neutral-500">展开编辑字段和详细配置</summary>
-        <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          <SelectField
-            label="类型"
-            value={draft.postType}
-            options={[
-              { label: "供应", value: "GOODS" },
-              { label: "需求", value: "DEMAND" },
-            ]}
-            onChange={(value) => onChange({ postType: value as MarketType })}
-          />
-          <SelectField
-            label="交易大类"
-            value={draft.tradeMode}
-            options={tradeModeOptions}
-            onChange={(value) => onChange({ tradeMode: value as TradeMode })}
-          />
-          <SelectField
-            label="品类"
-            value={draft.productCategory}
-            options={productCategoryOptions}
-            onChange={(value) => onChange({ productCategory: value as ProductCategory })}
-          />
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <TextField label="标题" value={draft.title} placeholder="可留空，自动生成标题" onChange={(value) => onChange({ title: value })} />
-          <TextField label="来源用户" value={draft.sourceContact} placeholder="微信群发言人" onChange={(value) => onChange({ sourceContact: value })} />
-          <TextField label="型号 / 规格" value={draft.gpuModel} placeholder="H100 / 64G 5600 / PM9D3A" onChange={(value) => onChange({ gpuModel: value })} />
-          {draft.productCategory !== "MEMORY" && (
-            <TextField label="卡数" value={draft.gpuCount} onChange={(value) => onChange({ gpuCount: value })} />
-          )}
-          <TextField label="数量" value={draft.quantity} onChange={(value) => onChange({ quantity: value })} />
-          <TextField label="单位" value={draft.quantityUnit} onChange={(value) => onChange({ quantityUnit: value })} />
-          <TextField label="城市" value={draft.locationCity} placeholder="深圳 / 香港 / 上海" onChange={(value) => onChange({ locationCity: value })} />
-          <TextField
-            label={draft.postType === "GOODS" ? "对外价格" : "预算上限"}
-            value={draft.priceAmount}
-            onChange={(value) => onChange({ priceAmount: value })}
-          />
-          <TextField label="联系方式" value={draft.contactMethod} onChange={(value) => onChange({ contactMethod: value })} />
-        </div>
-        <ConfigEditor items={draft.configItems} onChange={(configItems) => onChange({ configItems })} />
-      </details>
-    </section>
-  );
-};
+      <div className="draft-editor-content">
+        <section className="draft-original" aria-labelledby="draft-original-label">
+          <h3 id="draft-original-label">消息原文</h3>
+          {draft.sourceCaptureId && <div className="draft-evidence-meta">
+            <strong>{draft.sourceSender || "发言人未识别"}</strong>
+            {draft.sourceChatName && <span>{draft.sourceChatName}</span>}
+            <span>{wechatTimeLabel(draft.sourceSentAt, draft.sourcePublishedTime, draft.sourceObservedAt)}</span>
+            {draft.sourceObservedAt && <span>采集于 {wechatTimestamp(draft.sourceObservedAt)}</span>}
+          </div>}
+          <blockquote>{draft.rawText || "这条记录未保存原文。"}</blockquote>
+        </section>
+        <section className="draft-edit-fields" aria-labelledby="draft-fields-label">
+          <h3 id="draft-fields-label">供需信息</h3>
+          {missing.length > 0 && <p className="draft-edit-missing">待补 · {missing.join("、")}。可先入库。</p>}
+          <div className="draft-fields-grid">
+            <SelectField label="供需类型" value={draft.postType} options={[{ label: "供应", value: "GOODS" }, { label: "需求", value: "DEMAND" }]}
+              onChange={value => onChange({ postType: value as MarketType })} />
+            <TextField label="来源用户" value={draft.sourceContact} placeholder="发言人昵称" onChange={value => onChange({ sourceContact: value })} />
+            <div className="draft-field-wide"><TextField label="产品标题" value={draft.title} onChange={value => onChange({ title: value })} /></div>
+            <TextField label="型号 / 规格" value={draft.gpuModel} onChange={value => onChange({ gpuModel: value })} />
+            <TextField label="城市" value={draft.locationCity} onChange={value => onChange({ locationCity: value })} />
+            <TextField label="数量" value={draft.quantity} onChange={value => onChange({ quantity: value })} />
+            <TextField label="单位" value={draft.quantityUnit} onChange={value => onChange({ quantityUnit: value })} />
+            <TextField label={draft.postType === "GOODS" ? "报价" : "预算"} value={draft.priceAmount} onChange={value => onChange({ priceAmount: value })} />
+            <SelectField label="交易方式" value={draft.tradeMode} options={tradeModeOptions} onChange={value => onChange({ tradeMode: value as TradeMode })} />
+          </div>
+          <details className="draft-more">
+            <summary>详细配置与联系方式</summary>
+            <div className="draft-fields-grid">
+              <SelectField label="产品品类" value={draft.productCategory} options={productCategoryOptions} onChange={value => onChange({ productCategory: value as ProductCategory })} />
+              {draft.productCategory !== "MEMORY" && <TextField label="卡数" value={draft.gpuCount} onChange={value => onChange({ gpuCount: value })} />}
+              <TextField label="联系方式" value={draft.contactMethod} onChange={value => onChange({ contactMethod: value })} />
+            </div>
+            <ConfigEditor items={draft.configItems} onChange={configItems => onChange({ configItems })} />
+          </details>
+        </section>
+      </div>
+      {error && <p role="alert" className="draft-edit-error">{error}</p>}
+      <div className="draft-editor-footer">
+        {removePending ? <><span>从待入库清单移除这条记录？</span><div>
+          <button type="button" className="review-link" onClick={() => setRemovePending(false)}>取消</button>
+          <button type="button" className="review-remove" onClick={onRemove}>确认移除</button>
+        </div></> : <><button type="button" className="review-link review-subtle" onClick={() => setRemovePending(true)}>移除记录</button>
+          <div><button type="button" className="review-link" onClick={onClose}>返回清单</button>
+            <button type="button" className="review-primary" onClick={onConfirm}>确认入库</button></div></>}
+      </div>
+    </div>
+  </dialog>;
+}
 
 function InlineNotice({ tone, text, onDismiss }: { tone: NoticeTone; text: string; onDismiss: () => void }) {
   const toneClass: Record<NoticeTone, string> = {
@@ -2966,7 +2920,7 @@ function InlineNotice({ tone, text, onDismiss }: { tone: NoticeTone; text: strin
     warning: "border border-amber-200/70 bg-amber-50/90 text-amber-800",
   };
   return (
-    <div className={`flex items-start gap-2 rounded-md px-3 py-2 text-sm font-medium ${toneClass[tone]}`}>
+    <div role={tone === "warning" ? "alert" : "status"} className={`flex items-start gap-2 rounded-md px-3 py-2 text-sm font-medium ${toneClass[tone]}`}>
       {tone === "success" ? <Check className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
       <span className="min-w-0 flex-1">{text}</span>
       <button
@@ -3050,7 +3004,7 @@ function FilterSelect({
 }) {
   return (
     <label className="block">
-      <span className={compact ? "sr-only" : "caption-text mb-1 block"}>{label}</span>
+      <span className={compact ? "trade-filter-label" : "caption-text mb-1 block"}>{label}</span>
       <select
         aria-label={label}
         value={value}
@@ -3080,7 +3034,8 @@ function FilterPillGroup({
 }) {
   return (
     <div className="smart-filter-group">
-      <div className="smart-filter-pills" role="listbox" aria-label={label}>
+      <span className="trade-filter-label">{label}</span>
+      <div className="smart-filter-pills" role="group" aria-label={label}>
         {options.map((option) => {
           const active = value === option.value;
           return (
@@ -3089,7 +3044,7 @@ function FilterPillGroup({
               type="button"
               onClick={() => onChange(option.value)}
               className={`smart-filter-pill ${active ? "is-active" : ""}`}
-              aria-selected={active}
+              aria-pressed={active}
             >
               {option.label}
             </button>
@@ -3101,6 +3056,8 @@ function FilterPillGroup({
 }
 
 function FilterPanel({
+  search,
+  action,
   title,
   activeCount,
   resultText,
@@ -3109,46 +3066,32 @@ function FilterPanel({
   onReset,
   children,
 }: {
+  search: React.ReactNode;
+  action?: React.ReactNode;
   title: string;
   activeCount: number;
-  resultText: string;
+  resultText: React.ReactNode;
   isOpen: boolean;
   onToggle: () => void;
   onReset: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <div className="filter-panel surface-card rounded-md p-2.5 sm:p-3">
-      <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="ghost-button inline-flex min-h-9 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-neutral-800"
-          aria-expanded={isOpen}
-        >
-          <SlidersHorizontal className="h-4 w-4 text-neutral-500" />
-          <span>{title}</span>
-          {activeCount > 0 && (
-            <span className="rounded-md bg-neutral-900 px-1.5 py-0.5 text-[11px] font-semibold text-white">{activeCount}</span>
-          )}
-        </button>
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="hidden truncate text-xs font-medium text-neutral-500 sm:block">{resultText}</span>
-          <button
-            type="button"
-            onClick={onReset}
-            disabled={activeCount === 0}
-            className="ghost-button inline-flex h-9 items-center gap-1 rounded-md px-2 text-xs font-medium disabled:opacity-40"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">清空</span>
-          </button>
-        </div>
-      </div>
-      <div className="mt-2 block truncate px-2 text-xs font-medium text-neutral-500 sm:hidden">{resultText}</div>
-      <div className="filter-panel-body mt-3">
+    <div className="trade-tools">
+      {search}
+      <button type="button" onClick={onToggle} className="trade-filter-toggle" aria-expanded={isOpen}>
+        <SlidersHorizontal size={16} aria-hidden="true" />
+        <span>{title}</span>
+        {activeCount > 0 && <span className="trade-filter-count">{activeCount}</span>}
+      </button>
+      {action && <div className="trade-tools-action">{action}</div>}
+      {isOpen && <div className="trade-filter-body">
         {children}
-      </div>
+      </div>}
+      {resultText && <div className="trade-tools-summary">
+        <span role="status">{resultText}</span>
+        {activeCount > 0 && <button type="button" onClick={onReset}>清除搜索和筛选</button>}
+      </div>}
     </div>
   );
 }
@@ -3220,22 +3163,13 @@ function Pagination({
   );
 }
 
-function EmptyState({ title, actionLabel, onAction }: { title: string; actionLabel: string; onAction: () => void }) {
+function EmptyState({ title, description, actionLabel, onAction }: { title: string; description?: string; actionLabel: string; onAction: () => void }) {
   return (
-    <div className="surface-card rounded-md px-4 py-10 text-center">
-      <div className="meta-pill mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-md text-neutral-400">
-        <Search className="h-4 w-4" />
-      </div>
-      <p className="text-sm font-medium text-neutral-600">{title}</p>
-      <button
-        type="button"
-        onClick={onAction}
-        className="ghost-button mt-3 inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium"
-      >
-        <Plus className="h-4 w-4" />
-        {actionLabel}
-      </button>
-    </div>
+    <section className="trade-empty">
+      <h3>{title}</h3>
+      {description && <p>{description}</p>}
+      <button type="button" onClick={onAction}>{actionLabel}<ChevronRight size={15} /></button>
+    </section>
   );
 }
 
@@ -3285,7 +3219,7 @@ function ConfigEditor({
       </div>
       <div className="grid gap-2">
         {items.map((item, index) => (
-          <div key={`${item.label}-${index}`} className="grid gap-2 sm:grid-cols-[minmax(104px,0.42fr)_minmax(0,1fr)_32px]">
+          <div key={index} className="grid gap-2 sm:grid-cols-[minmax(104px,0.42fr)_minmax(0,1fr)_32px]">
             <input
               aria-label={`配置项 ${index + 1}`}
               value={item.label}
@@ -3321,19 +3255,16 @@ function ConfigSheet({ items }: { items: ConfigItem[] }) {
   if (!visibleItems.length) return null;
 
   return (
-    <div className="mt-4 border-t border-neutral-100 pt-3">
-      <p className="mb-2 text-xs font-semibold text-neutral-500">详细配置单</p>
-      <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+    <details className="trade-config">
+      <summary>详细配置单 <span>{visibleItems.length} 项</span></summary>
+      <dl>
         {visibleItems.map((item, index) => (
-          <div key={`${item.label}-${index}`} className="grid grid-cols-[72px_1fr] gap-2 rounded-md bg-neutral-950/[0.025] px-2 py-2 text-sm">
-            <dt className="font-medium text-neutral-400">{item.label}</dt>
-            <dd className="break-words text-neutral-800" title={item.value.length > 96 ? item.value : undefined}>
-              {compactConfigValue(item.value)}
-            </dd>
+          <div key={`${item.label}-${index}`}>
+            <dt>{item.label}</dt><dd>{item.value}</dd>
           </div>
         ))}
       </dl>
-    </div>
+    </details>
   );
 }
 
@@ -3348,16 +3279,17 @@ const Badge: React.FC<{ children: React.ReactNode; tone?: BadgeTone }> = ({ chil
   return <span className={`rounded-[5px] px-1.5 py-0.5 text-xs font-medium ${toneClass[tone]}`}>{children}</span>;
 };
 
-async function parseWithAiGateway(text: string): Promise<{
+async function parseWithAiGateway(text: string, token: string, requestId:string): Promise<{
   items: ParsedTradeItem[];
   isMock: boolean;
   provider: string;
   model?: string;
+  fallbackError?: string;
 }> {
   const response = await fetch("/api/structure", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ text, requestId }),
   });
   const payload = (await response.json()) as AiStructureResponse;
   if (!response.ok) throw new Error(payload.error || "AI 解析接口不可用");
@@ -3373,11 +3305,20 @@ async function parseWithAiGateway(text: string): Promise<{
     isMock: Boolean(payload.isMock),
     provider: payload.provider ?? "unknown",
     model: payload.model,
+    fallbackError: payload.isMock && payload.provider === "local-fallback" ? payload.error : undefined,
   };
+}
+
+function draftChronology(draft: TradeDraft) {
+  if (draft.createdAt || draft.sourceCaptureId) return tradeChronology(draft);
+  // Previous paste drafts recorded their creation timestamp only in this ID.
+  const legacyMillis = /^draft-(\d{13})-\d+$/.exec(draft.id)?.[1];
+  return tradeChronology(legacyMillis ? { ...draft, createdAt: new Date(Number(legacyMillis)).toISOString() } : draft);
 }
 
 function createDraftsFromParsedItems(items: ParsedTradeItem[], source: TradeDraft["source"], overrides: EntryOverrides = {}): TradeDraft[] {
   const now = Date.now();
+  const createdAt = new Date(now).toISOString();
   return items
     .map((item, index) => {
       const rawText = item.rawText || "";
@@ -3397,6 +3338,7 @@ function createDraftsFromParsedItems(items: ParsedTradeItem[], source: TradeDraf
       });
       const draft: TradeDraft = {
         id: `draft-${now}-${index}`,
+        createdAt,
         postType,
         productCategory: category,
         tradeMode,
@@ -3416,6 +3358,72 @@ function createDraftsFromParsedItems(items: ParsedTradeItem[], source: TradeDraf
       return applyDraftPatch(draft, overrides);
     })
     .filter((item) => item.title || item.gpuModel || item.rawText);
+}
+
+function createRpaBatchDrafts(messages: WechatRpaMessage[], importedItemKeys: ReadonlySet<string>): TradeDraft[] {
+  const seen = new Set(importedItemKeys);
+  const drafts: TradeDraft[] = [];
+  for (const message of messages) {
+    if (!rpaMessageCanBulkImport(message, seen)) continue;
+    const next = createRpaMessageDrafts(message, seen);
+    for (const draft of next) {
+      if (draft.sourceItemKey) seen.add(draft.sourceItemKey);
+      drafts.push(draft);
+    }
+  }
+  return drafts;
+}
+
+function buildRpaImportSnapshot(current: WorkspaceSnapshot, messages: WechatRpaMessage[], bulkOnly = true): { snapshot: WorkspaceSnapshot; addedCount: number } {
+  const seen = new Set([...current.confirmedRpaItemKeys, ...[...current.drafts, ...current.stocks, ...current.market]
+    .map((item) => item.sourceItemKey).filter((key): key is string => Boolean(key))]);
+  const next: TradeDraft[] = [];
+  if (bulkOnly) {
+    next.push(...createRpaBatchDrafts(messages, seen));
+  } else {
+    for (const message of messages) {
+      for (const draft of createRpaMessageDrafts(message, seen)) {
+        if (draft.sourceItemKey) seen.add(draft.sourceItemKey);
+        next.push(draft);
+      }
+    }
+  }
+  return { snapshot: { ...current, drafts: [...next, ...current.drafts] }, addedCount: next.length };
+}
+
+function createRpaMessageDrafts(message: WechatRpaMessage, importedItemKeys: ReadonlySet<string>): TradeDraft[] {
+  const result = rpaMessageResult(message);
+  if (message.status !== "READY" || !result?.items?.length) throw new Error("这条消息尚未解析完成，请稍后重试。");
+  const seen = new Set(importedItemKeys);
+  return result.items.flatMap((item, index) => {
+    if (rpaItemIsImported(message, index, seen)) return [];
+    const source = rpaItemSource(message, index);
+    const draft = createDraftsFromParsedItems([{
+      ...item,
+      sourceContact: cleanSourceContact(source.sender) || "未知来源",
+      rawText: item.rawText || message.text,
+    }], "AI")[0];
+    if (!draft) return [];
+    const provenance: RpaProvenance = {
+      sourceCaptureId: source.captureId,
+      sourceItemKey: source.key,
+      sourceMessageId: source.messageId,
+      sourceChatName: message.chatName,
+      sourceSender: source.captureMode === "OCR_SNAPSHOT" ? "未识别（截图识别）" : source.sender,
+      sourceSentAt: source.sentAt,
+      sourcePublishedTime: source.publishedTime,
+      sourceCanLookupPublishedTime: source.canLookupPublishedTime,
+      sourceObservedAt: source.observedAt,
+      sourceCaptureMode: source.captureMode,
+    };
+    seen.add(source.key);
+    return [{
+      ...draft,
+      ...provenance,
+      id: `draft-rpa-${source.captureId}-${source.sourceItemIndex}`,
+      configItems: configWithRpaProvenance(draft.configItems, provenance),
+    }];
+  });
 }
 
 function applyDraftPatch(item: TradeDraft, patch: Partial<TradeDraft>): TradeDraft {
@@ -3445,9 +3453,19 @@ function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockIte
   items.forEach((item, index) => {
     const title = item.title || buildDraftTitle(item.postType, item.productCategory, item.gpuModel, item.gpuCount, item.locationCity);
     const sourceContact = normalizeSourceContact(item.sourceContact, item.configItems, item.rawText);
+    const provenance = rpaProvenance(item);
+    const sourceTime = item.sourceSentAt || item.sourceObservedAt;
+    const recordTime = sourceTime && Number.isFinite(Date.parse(sourceTime)) ? sourceTime : new Date(now + index).toISOString();
+    const configItems = configWithRpaProvenance(normalizeConfigItems(item.configItems, item.productCategory, {
+      gpuModel: item.gpuModel,
+      gpuCount: item.gpuCount,
+      sourceContact,
+      rawText: item.rawText,
+    }), provenance);
     if (item.postType === "DEMAND") {
       marketItems.push({
-        id: `market-confirm-${now}-${index}`,
+        ...provenance,
+        id: `confirmed:${item.id}`,
         productCategory: item.productCategory,
         tradeMode: item.tradeMode,
         postType: "DEMAND",
@@ -3459,19 +3477,15 @@ function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockIte
         priceAmount: toOptionalNumber(item.priceAmount),
         contactMethod: item.contactMethod || "站内联系",
         sourceContact,
-        configItems: normalizeConfigItems(item.configItems, item.productCategory, {
-          gpuModel: item.gpuModel,
-          gpuCount: item.gpuCount,
-          sourceContact,
-          rawText: item.rawText,
-        }),
-        publishedAt: new Date(now + index).toISOString(),
+        configItems,
+        publishedAt: recordTime,
       });
       return;
     }
 
     stockItems.push({
-      id: `stock-confirm-${now}-${index}`,
+      ...provenance,
+      id: `confirmed:${item.id}`,
       productCategory: item.productCategory,
       title,
       gpuModel: item.gpuModel || "待确认",
@@ -3484,19 +3498,51 @@ function materializeConfirmedDrafts(items: TradeDraft[]): { stockItems: StockIte
       availabilityType: tradeModeText(item.tradeMode),
       tradeMode: item.tradeMode,
       sourceContact,
-      configItems: normalizeConfigItems(item.configItems, item.productCategory, {
-        gpuModel: item.gpuModel,
-        gpuCount: item.gpuCount,
-        sourceContact,
-        rawText: item.rawText,
-      }),
+      configItems,
       status: "UNVERIFIED",
       source: item.source,
-      createdAt: new Date(now + index).toISOString(),
+      createdAt: recordTime,
     });
   });
 
   return { stockItems, marketItems };
+}
+
+function rpaProvenance(item: RpaProvenance): RpaProvenance {
+  if (!item.sourceCaptureId) return {};
+  return {
+    sourceCaptureId: item.sourceCaptureId,
+    sourceItemKey: item.sourceItemKey,
+    sourceMessageId: item.sourceMessageId,
+    sourceChatName: item.sourceChatName,
+    sourceSender: item.sourceSender,
+    sourceSentAt: item.sourceSentAt,
+    sourcePublishedTime: item.sourcePublishedTime,
+    sourceCanLookupPublishedTime: item.sourceCanLookupPublishedTime,
+    sourceObservedAt: item.sourceObservedAt,
+    sourceCaptureMode: item.sourceCaptureMode,
+  };
+}
+
+function configWithRpaProvenance(items: ConfigItem[], provenance: RpaProvenance): ConfigItem[] {
+  if (!provenance.sourceCaptureId) return items;
+  const sourceItems = [
+    { label: "来源群聊", value: provenance.sourceChatName || "未识别" },
+    { label: "原消息发送人", value: provenance.sourceSender || "未识别" },
+    { label: "原消息时间", value: wechatTimeLabel(provenance.sourceSentAt, provenance.sourcePublishedTime, provenance.sourceObservedAt) },
+    { label: "消息采集时间", value: wechatTimestamp(provenance.sourceObservedAt) },
+    { label: "来源消息ID", value: provenance.sourceMessageId || provenance.sourceCaptureId },
+    {
+      label: "采集方式",
+      value: provenance.sourceCaptureMode === "OCR_SNAPSHOT"
+        ? "整屏截图识别，发送人未知，数量/价格待核对"
+        : provenance.sourceCaptureMode === "OCR_MESSAGE"
+          ? "逐条截图识别，群昵称与消息配对待核对，昵称不代表已核实身份"
+          : "微信消息读取",
+    },
+  ];
+  const sourceLabels = new Set(sourceItems.map((item) => item.label));
+  return [...items.filter((item) => !sourceLabels.has(item.label)), ...sourceItems];
 }
 
 function buildDraftTitle(postType: MarketType, category: ProductCategory, model: string, gpuCount: string, city: string): string {
@@ -3519,10 +3565,10 @@ function countDrafts(items: TradeDraft[]): { goods: number; demands: number; inc
 
 function tradeDraftMissingFields(draft: TradeDraft): string[] {
   const fields: string[] = [];
-  if (!draft.sourceContact.trim() || draft.sourceContact === "未知来源") fields.push("来源用户");
-  if (!draft.gpuModel.trim()) fields.push("型号");
+  if (/^(?:未知来源|未知|未识别|发送人未识别|待确认)?$/.test(asDisplayText(draft.sourceContact).trim())) fields.push("来源用户");
+  if (/^(?:未知|未识别|待确认)?$/.test(asDisplayText(draft.gpuModel).trim())) fields.push("型号");
   if (!toNumber(draft.quantity, 0)) fields.push("数量");
-  if (!draft.locationCity.trim() || draft.locationCity === "待确认") fields.push("城市");
+  if (/^(?:未知|未识别|待确认)?$/.test(asDisplayText(draft.locationCity).trim())) fields.push("城市");
   return fields;
 }
 
@@ -3622,6 +3668,7 @@ const tradeModeOptions: Array<{ label: string; value: TradeMode }> = [
   { label: "期货", value: "FUTURES" },
   { label: "租赁", value: "RENTAL" },
 ];
+const saleModeOptions = tradeModeOptions.filter(option => option.value !== "RENTAL");
 
 const productCategoryOptions: Array<{ label: string; value: ProductCategory }> = [
   { label: "服务器", value: "SERVER" },
@@ -3753,6 +3800,7 @@ function scoreSupplyDemandMatch(
   statuses: Record<string, MatchStatus>,
 ): MatchCandidate | null {
   if (demand.productCategory !== stock.productCategory) return null;
+  if ((demand.tradeMode === "RENTAL") !== (stock.tradeMode === "RENTAL")) return null;
   if (isSameKnownSourceContact(demand.sourceContact, stock.sourceContact)) return null;
   const scoreDetail: MatchScoreDetail[] = [];
   const reasons: string[] = [];
@@ -3793,12 +3841,14 @@ function scoreSupplyDemandMatch(
   if (quantityScore.score >= 8) reasons.push(quantityScore.reason);
   if (quantityScore.risk) riskNotes.push(quantityScore.risk);
 
-  const priceScore = priceMatchScore(demand.priceAmount, stock.priceAmount);
+  const priceScore = demand.tradeMode === "RENTAL"
+    ? { score: 0, note: "请核对租金单位和计费周期", reason: "", risk: "租金计费口径待核对" }
+    : priceMatchScore(demand.priceAmount, stock.priceAmount);
   add("价格", priceScore.score, 5, priceScore.note);
   if (priceScore.score >= 5) reasons.push(priceScore.reason);
   if (priceScore.risk) riskNotes.push(priceScore.risk);
 
-  const sourceTimeScore = sourceTimeMatchScore(demand.publishedAt, stock.createdAt);
+  const sourceTimeScore = sourceTimeMatchScore(matchSourceMessageTime(demand), matchSourceMessageTime(stock));
   add("时间", sourceTimeScore.score, 5, sourceTimeScore.note);
   if (sourceTimeScore.score >= 4) reasons.push(sourceTimeScore.reason);
   if (sourceTimeScore.risk) riskNotes.push(sourceTimeScore.risk);
@@ -3822,7 +3872,13 @@ function scoreSupplyDemandMatch(
 
 function buildOntologyProfile(item: StockItem | MarketPost): OntologyProfile {
   const category = item.productCategory;
-  const text = [
+  const text = category === "MEMORY" ? [
+    item.title,
+    item.gpuModel,
+    ...item.configItems
+      .filter(({ label }) => !isSourceContactLabel(label) && !/^(来源群聊|原消息发送人|原消息时间|消息采集时间|来源消息ID|采集方式)$/.test(label))
+      .map(({ value }) => value),
+  ].join(" ") : [
     item.title,
     item.gpuModel,
     item.locationCity,
@@ -3867,13 +3923,13 @@ function hardwareTokens(value: string): string[] {
 }
 
 function resolveModelKey(text: string, specs: Record<string, string>, category: ProductCategory): string {
+  if (category === "MEMORY") {
+    return specs.capacity && specs.frequency ? `${specs.capacity}-${specs.frequency}` : "";
+  }
   for (const group of modelAliasGroups) {
     if (group.aliases.some((alias) => text.includes(normalizeHardwareText(alias).replace(/\s+/g, "")) || text.includes(normalizeHardwareText(alias)))) {
       return group.key;
     }
-  }
-  if (category === "MEMORY") {
-    return [specs.capacity, specs.frequency].filter(Boolean).join("-");
   }
   if (category === "STORAGE") {
     return specs.model || [specs.capacity, specs.interface].filter(Boolean).join("-");
@@ -3886,16 +3942,18 @@ function resolveModelKey(text: string, specs: Record<string, string>, category: 
 function extractOntologySpecs(rawText: string, category: ProductCategory): Record<string, string> {
   const text = normalizeHardwareText(rawText);
   const specs: Record<string, string> = {};
-  const brand = captureBrand(rawText);
+  const memoryBrandUnclear = category === "MEMORY" && /白牌|颗粒/.test(rawText);
+  const brand = memoryBrandUnclear ? "" : captureBrand(rawText) || (category === "MEMORY" && /(?<![A-Z])SK(?![A-Z])/i.test(rawText) ? "SK" : "");
   if (brand) specs.brand = normalizeHardwareText(brand).replace(/\s+/g, "");
-  const capacity = text.match(/\b\d+(?:\.\d+)?\s*(?:TB|T|GB|G)\b/)?.[0]?.replace(/\s+/g, "");
-  const frequency = text.match(/\b(?:DDR[45]\s*)?(\d{4,5})\s*(?:MHZ|MT\/S|M)?\b/)?.[1];
+  const compactMemory = category === "MEMORY" ? readCompactMemorySpec(text) : null;
+  const capacity = compactMemory?.capacity ?? text.match(/\b\d+(?:\.\d+)?\s*(?:TB|T|GB|G)\b/)?.[0]?.replace(/\s+/g, "");
+  const frequency = category === "MEMORY" ? readMemoryFrequency(text) : "";
   const gpuCount = text.match(/\b(\d+)\s*卡\b/)?.[1] ?? text.match(/\b(\d+)\s*GPU\b/)?.[1];
   const storageModel = text.match(/(?:PM9D3A|PM9A3|PM893|PM983A?|PM1743|P5510|P5500|P5520|P5600|P5620|PS1010|S4520|J5300|H5100|R6100|ES3500P|ST\d{8,}[A-Z]*|WUH[A-Z0-9]+|WUS[A-Z0-9]+|MG\d+[A-Z0-9]+)/i)?.[0]?.toUpperCase();
   const cpuModel = text.match(/(?:XEON\s*)?(?:\d{4,5}[A-Z+]?|E-\d{4,5}|E5-\d{4}|W[579]-\d{4,5}X?|EPYC\s*\d{4,5}[A-Z]?)/i)?.[0]?.replace(/\s+/g, "").toUpperCase();
 
-  if (capacity) specs.capacity = capacity;
-  if (frequency && !capacity?.startsWith(frequency)) specs.frequency = frequency;
+  if (capacity) specs.capacity = category === "MEMORY" ? capacity.replace(/B$/, "") : capacity;
+  if (frequency) specs.frequency = frequency;
   if (gpuCount) specs.gpuCount = gpuCount;
   if (/FAN/.test(text)) specs.variant = "FAN";
   if (/TURBO/.test(text)) specs.variant = "TURBO";
@@ -3923,6 +3981,9 @@ function modelMatchScore(
   stockProfile: OntologyProfile,
 ): { score: number; note: string; reason: string } {
   if (demandProfile.modelKey && stockProfile.modelKey && demandProfile.modelKey === stockProfile.modelKey) {
+    if (demandProfile.category === "MEMORY") {
+      return { score: 30, note: `容量和频率一致：${demandProfile.modelKey}`, reason: `内存容量和频率一致：${demandProfile.modelKey}` };
+    }
     return { score: 30, note: `本体型号一致：${demandProfile.modelKey}`, reason: `型号一致：${demandProfile.modelKey}` };
   }
   const overlap = tokenOverlap(demandProfile.tokens, stockProfile.tokens);
@@ -3997,7 +4058,7 @@ function specMatchScore(
       matched.push(`${item.label}${demandValue}`);
       return;
     }
-    if (item.key === "brand" && /SAMSUNG|SK/.test(`${demandValue}${stockValue}`)) {
+    if (item.key === "brand" && category !== "MEMORY" && /SAMSUNG|SK/.test(`${demandValue}${stockValue}`)) {
       score += Math.floor(item.weight / 2);
       missing.push(`品牌可替代`);
     } else {
@@ -4144,6 +4205,11 @@ function sourceTimeMatchScore(
   };
 }
 
+function matchSourceMessageTime(item: StockItem | MarketPost): string {
+  if (item.sourceCaptureId) return item.sourceSentAt || "";
+  return "createdAt" in item ? item.createdAt : item.publishedAt;
+}
+
 function tokenOverlap(left: string[], right: string[]): { count: number; tokens: string[] } {
   const rightSet = new Set(right);
   const tokens = left.filter((token) => rightSet.has(token));
@@ -4198,8 +4264,15 @@ function topMatchesByGroup(
   );
 }
 
-function sortMatchesForView(candidates: MatchCandidate[]): MatchCandidate[] {
-  return [...candidates].sort((left, right) => compareMatchCandidate(right, left));
+function sortMatchesForView(candidates: MatchCandidate[], view: MatchView): MatchCandidate[] {
+  const dated = candidates.map(candidate => {
+    const stock = tradeChronology(candidate.stock), demand = tradeChronology(candidate.demand);
+    const chronology = view === "SUPPLY_TO_DEMAND" ? demand : view === "DEMAND_TO_SUPPLY" ? stock
+      : compareChronology(stock, demand) <= 0 ? stock : demand;
+    return { candidate, chronology };
+  });
+  return dated.sort((a, b) => compareChronology(a.chronology, b.chronology) || b.candidate.scoreTotal - a.candidate.scoreTotal)
+    .map(entry => entry.candidate);
 }
 
 function compareMatchCandidate(left: MatchCandidate, right: MatchCandidate): number {
@@ -4221,23 +4294,6 @@ function matchCandidateId(demand: MarketPost, stock: StockItem): string {
   return `match:${marketIdentity(demand)}:${stockIdentity(stock)}`;
 }
 
-function matchTableSide(candidate: MatchCandidate, side: "demand" | "stock"): {
-  title: string;
-  sourceContact: string;
-  locationCity: string;
-  quantity: number;
-  quantityUnit: string;
-} {
-  const item = side === "demand" ? candidate.demand : candidate.stock;
-  return {
-    title: item.title,
-    sourceContact: item.sourceContact,
-    locationCity: item.locationCity,
-    quantity: item.quantity,
-    quantityUnit: item.quantityUnit,
-  };
-}
-
 function matchLevel(score: number): MatchScoreLevel {
   if (score >= 90) return "STRONG";
   if (score >= 75) return "GOOD";
@@ -4253,14 +4309,6 @@ function matchLevelText(level: MatchScoreLevel): string {
   return map[level];
 }
 
-function matchLevelTone(level: MatchScoreLevel): BadgeTone {
-  const map: Record<MatchScoreLevel, BadgeTone> = {
-    STRONG: "green",
-    GOOD: "blue",
-    WEAK: "orange",
-  };
-  return map[level];
-}
 
 function matchStatusText(status: MatchStatus): string {
   const map: Record<MatchStatus, string> = {
@@ -4271,14 +4319,6 @@ function matchStatusText(status: MatchStatus): string {
   return map[status];
 }
 
-function matchStatusTone(status: MatchStatus): BadgeTone {
-  const map: Record<MatchStatus, BadgeTone> = {
-    NEW: "blue",
-    CONTACTED: "green",
-    IGNORED: "default",
-  };
-  return map[status];
-}
 
 function buildMatchSummary(candidate: MatchCandidate): string {
   return [
@@ -4318,7 +4358,7 @@ function normalizeSourceContactForMatch(value: string): string {
 }
 
 function matchStatusStorageKey(session: AuthSession | null): string {
-  return `${MATCH_STATUS_STORAGE_PREFIX}:${session?.currentWorkspaceId ?? "guest"}`;
+  return `${MATCH_STATUS_STORAGE_PREFIX}:${workspaceCacheId(session) || "guest"}`;
 }
 
 function loadMatchStatuses(session: AuthSession | null): Record<string, MatchStatus> {
@@ -4377,7 +4417,7 @@ function extractConfigItems(
   if (category === "MEMORY") {
     values["容量"] = captureAfter(text, ["容量"]) || captureFirst(text, /\d+\s*(?:GB|G|TB|T)/i);
     values["类型"] = captureAfter(text, ["类型"]) || captureFirst(text, /DDR[45]\s*(?:RDIMM|LRDIMM|DIMM|ECC|REG)?/i);
-    values["频率"] = captureAfter(text, ["频率"]) || captureFirst(text, /\b\d{4,5}\s*(?:MHz|MT\/s|M)?\b/i);
+    values["频率"] = readMemoryFrequency(text);
     values["ECC"] = /ECC|RDIMM|LRDIMM|REG/i.test(text) ? "ECC/REG" : "";
     values["成色"] = condition === "待确认" ? "" : condition;
   }
@@ -4475,11 +4515,14 @@ function parseProductCategory(text: string): ProductCategory {
   if (/硬盘|固态|SSD|HDD|NVMe|SATA|U\.?2|E1\.?S|M\.?2|SAS|PM9|PM8|P55|P56|ST\d|WD|WUH|WUS|希捷|西数|东芝|思得|SOLIDIGM|SOLINIGM|大普微|忆联|小海豚|\d+(?:\.\d+)?\s*T/i.test(text)) return "STORAGE";
   if (/内存|DDR\d?|RDIMM|LRDIMM|DIMM|ECC|REG/i.test(text)) return "MEMORY";
   if (/显卡|GPU卡|PCIe卡|PCIE卡|RTX\s?\d{4}|4090|5090|L40S/i.test(text)) return "GPU_CARD";
+  if (!/整机|工作站|服务器/.test(text) && readCompactMemorySpec(text)) return "MEMORY";
   return "SERVER";
 }
 
 function parseModelText(text: string, category: ProductCategory): string {
   if (category === "MEMORY") {
+    const compact = readCompactMemorySpec(text);
+    if (compact) return `${compact.capacity} ${compact.frequency}`;
     return (
       text.match(/(DDR[45]\s*(?:\d+G|GB)?\s*(?:RDIMM|LRDIMM|DIMM|ECC|REG)?)/i)?.[1]?.trim() ??
       text.match(/(\d+\s*(?:G|GB)\s*(?:RDIMM|LRDIMM|DIMM|ECC|REG)?)/i)?.[1]?.trim() ??
@@ -4512,7 +4555,7 @@ function buildParsedTitle(category: ProductCategory, model: string, gpuCount: st
 }
 
 function parseTradeMode(text: string): TradeMode {
-  if (/租赁|出租|租用|月租|年租/.test(text)) return "RENTAL";
+  if (/租赁|出租|求租|承租|租用|租金|日租|月租|年租/.test(text)) return "RENTAL";
   if (/期货|预订|预售|交期|排产/.test(text)) return "FUTURES";
   return "SPOT";
 }
@@ -4524,7 +4567,7 @@ function normalizeTradeModeValue(value: unknown): TradeMode {
 
 function normalizeMarketType(value: unknown): MarketType {
   const text = asDisplayText(value).toUpperCase();
-  if (text === "DEMAND" || /收|求购|找/.test(text)) return "DEMAND";
+  if (text === "DEMAND" || /收|求购|求租|承租|找/.test(text)) return "DEMAND";
   return "GOODS";
 }
 
@@ -4626,7 +4669,12 @@ function upsertStockItems(incoming: StockItem[], existing: StockItem[]): { items
     const key = stockIdentity(item);
     const matched = existingByKey.get(key);
     if (matched) {
-      refreshedById.set(matched.id, { ...matched, createdAt: item.createdAt });
+      refreshedById.set(matched.id, {
+        ...matched,
+        ...rpaProvenance(item),
+        configItems: configWithRpaProvenance(matched.configItems, item),
+        createdAt: item.createdAt,
+      });
       return;
     }
     if (createdKeys.has(key)) return;
@@ -4651,7 +4699,12 @@ function upsertMarketPosts(incoming: MarketPost[], existing: MarketPost[]): { it
     const key = marketIdentity(item);
     const matched = existingByKey.get(key);
     if (matched) {
-      refreshedById.set(matched.id, { ...matched, publishedAt: item.publishedAt });
+      refreshedById.set(matched.id, {
+        ...matched,
+        ...rpaProvenance(item),
+        configItems: configWithRpaProvenance(matched.configItems, item),
+        publishedAt: item.publishedAt,
+      });
       return;
     }
     if (createdKeys.has(key)) return;
@@ -4667,6 +4720,7 @@ function upsertMarketPosts(incoming: MarketPost[], existing: MarketPost[]): { it
 }
 
 function stockIdentity(item: StockItem): string {
+  if (item.sourceCaptureId) return `rpa:${item.sourceCaptureId}:${item.sourceItemKey || item.id}`;
   return normalizeIdentity(
     [
       item.productCategory,
@@ -4683,6 +4737,7 @@ function stockIdentity(item: StockItem): string {
 }
 
 function marketIdentity(item: MarketPost): string {
+  if (item.sourceCaptureId) return `rpa:${item.sourceCaptureId}:${item.sourceItemKey || item.id}`;
   return normalizeIdentity(
     [
       item.postType,
@@ -4778,59 +4833,13 @@ function asDisplayText(value: unknown): string {
   return String(value).trim();
 }
 
-function loadAuthSession(): AuthSession | null {
-  const session = load<AuthSession | null>(AUTH_STORAGE_KEY, null);
-  if (!session?.token || !session.currentWorkspaceId || !Array.isArray(session.workspaces)) return null;
-  return session;
+function loadAuthSession(): { session: AuthSession | null; expired: boolean } {
+  try { return readStoredSession<AuthSession>(localStorage, AUTH_STORAGE_KEY); }
+  catch { return { session: null, expired: false }; }
 }
 
 function persistAuthSession(session: AuthSession): void {
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
-}
-
-function loadAccountWallet(session: AuthSession | null): AccountWallet {
-  const key = accountWalletStorageKey(session);
-  const wallet = load<AccountWallet | null>(key, null);
-  if (wallet && typeof wallet.creditBalance === "number" && Array.isArray(wallet.transactions)) {
-    return {
-      ...createDefaultAccountWallet(),
-      ...wallet,
-      transactions: wallet.transactions,
-    };
-  }
-  const defaultWallet = createDefaultAccountWallet();
-  if (session) saveAccountWalletForSession(session, defaultWallet);
-  return defaultWallet;
-}
-
-function createDefaultAccountWallet(): AccountWallet {
-  return {
-    planCode: "FREE",
-    planName: "免费版",
-    membershipStatus: "FREE",
-    creditBalance: 128,
-    monthlyAiParseCount: 0,
-    transactions: [
-      {
-        id: "txn_welcome",
-        type: "GRANT",
-        title: "新账号初始化赠送",
-        amount: 128,
-        balanceAfter: 128,
-        createdAt: new Date().toISOString(),
-        note: "用于体验 AI 解析",
-      },
-    ],
-  };
-}
-
-function saveAccountWalletForSession(session: AuthSession | null, wallet: AccountWallet): void {
-  if (!session) return;
-  localStorage.setItem(accountWalletStorageKey(session), JSON.stringify(wallet));
-}
-
-function accountWalletStorageKey(session: AuthSession | null): string {
-  return `${ACCOUNT_STORAGE_PREFIX}:${session?.user.id ?? "guest"}`;
 }
 
 function pendingPaymentStorageKey(session: AuthSession | null): string {
@@ -4908,7 +4917,7 @@ async function createAlipayPaymentOrder(
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.token}`,
     },
-    body: JSON.stringify({ productType, productId, channel }),
+    body: JSON.stringify({ productType, productId, channel, pricingVersion }),
   });
   const payload = (await response.json()) as PaymentOrderResponse;
   if (!response.ok) throw new Error(payload.error || "支付宝订单创建失败。");
@@ -4933,27 +4942,91 @@ function normalizePhoneInput(value: string): string {
   return /^1[3-9]\d{9}$/.test(digits) ? digits : "";
 }
 
+function workspaceCacheId(session: AuthSession | null): string {
+  const id = session?.currentWorkspaceId ?? "";
+  return id.startsWith("ent_") && session ? id + ":" + session.user.id : id;
+}
 function workspaceStorageKey(workspaceId: string, collection: WorkspaceCollection): string {
   return `huoji_web_${workspaceId}_${collection}`;
+}
+
+function tradeDraftStorageKey(workspaceId: string): string {
+  return `huoji_web_${workspaceId}_drafts`;
+}
+
+function loadTradeDrafts(session: AuthSession | null): TradeDraft[] {
+  if (!session?.currentWorkspaceId) return [];
+  const snapshot = loadWorkspaceSnapshot(workspaceCacheId(session));
+  if (snapshot) return snapshot.drafts;
+  const drafts = load<TradeDraft[]>(tradeDraftStorageKey(workspaceCacheId(session)), []);
+  return Array.isArray(drafts) ? drafts : [];
+}
+
+function rpaConfirmedItemsStorageKey(workspaceId: string): string {
+  return `huoji_web_${workspaceId}_rpa_confirmed_item_keys`;
+}
+
+function loadRpaConfirmedItemKeys(session: AuthSession | null): string[] {
+  if (!session?.currentWorkspaceId) return [];
+  const snapshot = loadWorkspaceSnapshot(workspaceCacheId(session));
+  if (snapshot) return snapshot.confirmedRpaItemKeys;
+  const ids = load<string[]>(rpaConfirmedItemsStorageKey(workspaceCacheId(session)), []);
+  return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+}
+
+function workspaceSnapshotStorageKey(workspaceId: string): string {
+  return `huoji_web_${workspaceId}_snapshot_v1`;
+}
+
+function loadWorkspaceSnapshot(workspaceId: string): WorkspaceSnapshot | null {
+  const snapshot = load<WorkspaceSnapshot | null>(workspaceSnapshotStorageKey(workspaceId), null);
+  if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.stocks) || !Array.isArray(snapshot.market)
+      || !Array.isArray(snapshot.drafts) || !Array.isArray(snapshot.confirmedRpaItemKeys)) return null;
+  return snapshot;
+}
+
+function persistWorkspaceSnapshot(workspaceId: string, snapshot: WorkspaceSnapshot): void {
+  if (!workspaceId) throw new Error("工作空间未就绪。");
+  localStorage.setItem(workspaceSnapshotStorageKey(workspaceId), JSON.stringify(snapshot));
+}
+
+function buildConfirmedWorkspaceSnapshot(current: WorkspaceSnapshot, selected: TradeDraft[]): { snapshot: WorkspaceSnapshot; result: SaveParsedResult } {
+  const materialized = materializeConfirmedDrafts(selected);
+  const stockResult = upsertStockItems(materialized.stockItems, current.stocks);
+  const marketResult = upsertMarketPosts(materialized.marketItems, current.market);
+  const confirmedKeys = selected.map((item) => item.sourceItemKey).filter((key): key is string => Boolean(key));
+  const selectedIds = new Set(selected.map((item) => item.id));
+  return {
+    snapshot: {
+      version: 1,
+      stocks: stockResult.items,
+      market: marketResult.items,
+      drafts: current.drafts.filter((item) => !selectedIds.has(item.id)),
+      confirmedRpaItemKeys: [...new Set([...current.confirmedRpaItemKeys, ...confirmedKeys])],
+    },
+    result: {
+      stockCount: stockResult.createdCount,
+      marketCount: marketResult.createdCount,
+      refreshedStockCount: stockResult.refreshedCount,
+      refreshedMarketCount: marketResult.refreshedCount,
+      refreshedCount: stockResult.refreshedCount + marketResult.refreshedCount,
+    },
+  };
 }
 
 function loadWorkspaceCollection<T>(
   session: AuthSession | null,
   collection: WorkspaceCollection,
-  legacyKey: string,
   fallback: T,
 ): T {
-  const workspaceId = session?.currentWorkspaceId;
+  const workspaceId = workspaceCacheId(session);
   if (!workspaceId) return fallback;
+  const snapshot = loadWorkspaceSnapshot(workspaceId);
+  if (snapshot) return snapshot[collection] as T;
   const scopedKey = workspaceStorageKey(workspaceId, collection);
   try {
     const scopedValue = localStorage.getItem(scopedKey);
     if (scopedValue) return JSON.parse(scopedValue) as T;
-    const legacyValue = localStorage.getItem(legacyKey);
-    if (legacyValue) {
-      localStorage.setItem(scopedKey, legacyValue);
-      return JSON.parse(legacyValue) as T;
-    }
   } catch {
     return fallback;
   }
@@ -5022,7 +5095,7 @@ function normalizeStocks(items: StockItem[]): StockItem[] {
     return {
       ...item,
       productCategory,
-      tradeMode: item.tradeMode ?? parseTradeMode(`${item.title} ${item.availabilityType ?? ""}`),
+      tradeMode: normalizeTradeModeValue(item.tradeMode || `${item.title} ${item.availabilityType ?? ""}`),
       quantityUnit: item.quantityUnit ?? quantityUnitForCategory(productCategory),
       sourceContact,
       configItems: normalizeConfigItems(item.configItems, productCategory, {
@@ -5042,7 +5115,7 @@ function normalizeMarketPosts(items: MarketPost[]): MarketPost[] {
     return {
       ...item,
       productCategory,
-      tradeMode: item.tradeMode ?? parseTradeMode(item.title),
+      tradeMode: normalizeTradeModeValue(item.tradeMode || item.title),
       quantityUnit: item.quantityUnit ?? quantityUnitForCategory(productCategory),
       sourceContact,
       configItems: normalizeConfigItems(item.configItems, productCategory, {
@@ -5086,7 +5159,7 @@ function statusTone(status: StockItem["status"]): BadgeTone {
 }
 
 function formatMoney(amount: number): string {
-  return amount >= 10000 ? `${Math.round(amount / 10000)}万` : `${amount}`;
+  return amount.toLocaleString("zh-CN", { maximumFractionDigits: 8 });
 }
 
 function formatHourTime(value: string): string {
@@ -5121,14 +5194,6 @@ function addDaysFromIso(value: string, days: number): string {
   if (Number.isFinite(parsed.getTime())) date.setTime(parsed.getTime());
   date.setDate(date.getDate() + days);
   return date.toISOString();
-}
-
-function aiParseCreditCost(text: string): number {
-  const lineCount = Math.max(1, text.split(/\r?\n/).filter((line) => line.trim()).length);
-  if (lineCount > 200) return 10;
-  if (lineCount > 80) return 5;
-  if (lineCount > 20) return 3;
-  return 1;
 }
 
 function creditTransactionTypeText(type: CreditTransactionType): string {
