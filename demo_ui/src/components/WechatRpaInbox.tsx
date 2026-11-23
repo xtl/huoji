@@ -359,7 +359,15 @@ export default function WechatRpaInbox({ destination, token, userId, workspaceId
     setPage(1);
     setStatus("ALL");
     setBusyId("");
+    function openRequestedHistory() {
+      if (window.location.hash !== "#input/wechat/history" ||
+          !document.querySelector('meta[name="huoji-edition"][content="cloud"]')) return;
+      setToolPanel("history");
+    }
+    openRequestedHistory();
+    window.addEventListener("hashchange", openRequestedHistory);
     return () => {
+      window.removeEventListener("hashchange", openRequestedHistory);
       bulkController.current?.abort();
       bulkController.current = null;
       bulkLocked.current = false;
@@ -527,7 +535,10 @@ export default function WechatRpaInbox({ destination, token, userId, workspaceId
         </div>
         <div className="capture-tools">
           <React.Fragment key={scope}><WechatHistoryBackfill token={token} userId={userId} workspaceId={workspaceId}
-            destination={destination} tool={toolPanel} onTool={setToolPanel} disabled={Boolean(bulkBusy)} managedGroups={config?.managedGroups} configError={configError}
+            destination={destination} tool={toolPanel} onTool={next => {
+              if (window.location.hash === "#input/wechat/history") window.history.replaceState(window.history.state, "", "#input/wechat");
+              setToolPanel(next);
+            }} disabled={Boolean(bulkBusy)} managedGroups={config?.managedGroups} configError={configError}
             onGroupChange={result => {
               setConfig(previous => previous ? { ...previous, managedGroups: result.managedGroups, allowedGroups: result.allowedGroups } : previous);
               setRefreshVersion(value => value + 1);

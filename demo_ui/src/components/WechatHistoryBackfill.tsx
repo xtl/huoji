@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { History, RefreshCw, Settings2 } from "lucide-react";
 import CaptureDialog from "./CaptureDialog";
+import CloudAssistantEntry from "./CloudAssistantEntry";
 import LocalGroupPicker from "./LocalGroupPicker";
 import WechatCollectionGroups, { type ManagedGroup, type ManagedGroupList } from "./WechatCollectionGroups";
 
@@ -259,9 +260,7 @@ export default function WechatHistoryBackfill({ token, userId, workspaceId, tool
   }
 
   const currentGroup = job?.groups.find((group) => group.chatName === job.chatName);
-  const disabledReason = !local
-    ? "历史补采仅支持在运行采集器的电脑上控制，请在该电脑通过本机地址打开货记。"
-    : !state?.enabled || !state?.available
+  const disabledReason = !state?.enabled || !state?.available
       ? state?.reason || (loading ? "正在检查本机采集器连接…" : "本机采集器未连接，连接当前账号后才能开始补采。")
       : groups.length === 0 ? "当前采集器尚未配置可补采的群聊。" : "";
 
@@ -303,7 +302,8 @@ export default function WechatHistoryBackfill({ token, userId, workspaceId, tool
       {local && (error || (!state?.calibrationAvailable && state?.reason)) && <p className="caption-text mt-1">{error || state?.reason}</p>}
       </div>
       {tool === "connection" && <>{linkAction}{local && state && !linkAction && <p className="caption-text">{state.reason || "此电脑已连接到"+destination+"。"}</p>}
-        {local ? <details><summary>高级 · 下载连接配置</summary>{connection}</details> : connection}
+        {!local && <CloudAssistantEntry />}
+        <details><summary>高级 · 下载连接配置</summary>{connection}</details>
         {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
       </>}
     </CaptureDialog>
@@ -320,7 +320,9 @@ export default function WechatHistoryBackfill({ token, userId, workspaceId, tool
       {error && <p role="alert">{error}</p>}
     </CaptureDialog>}
     {tool === "history" && <CaptureDialog title="补采历史消息" onDismiss={() => onTool(null)}>
-      {disabledReason && !linkAction && !error && <p className="mt-2 text-xs leading-6 text-neutral-500">{disabledReason}</p>}
+      {!local && <CloudAssistantEntry />}
+      {local && disabledReason && !linkAction && !error && <p className="mt-2 text-xs leading-6 text-neutral-500">{disabledReason}</p>}
+      {local && canPick && !groups.length && <button className="capture-action" type="button" onClick={() => onTool("picker")}>选择采集群</button>}
       {linkAction}
       {showOptions && <fieldset disabled={Boolean(busy) || changingGroups} className="mt-2 min-w-0 space-y-3 disabled:opacity-60">
         <legend className="mb-1.5 text-sm font-medium text-[color:var(--ink)]">选择补采群聊</legend>

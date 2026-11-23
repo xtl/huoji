@@ -15,6 +15,7 @@ services:
       - "3000"
     volumes:
       - huoji_web_data:/app/.data
+      - ./downloads:/app/downloads:ro
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

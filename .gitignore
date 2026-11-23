@@ -13,3 +13,5 @@ Thumbs.db
 .claude/
 demo_ui/.data/
 out/releases/
+/downloads/
+/demo_ui/downloads/

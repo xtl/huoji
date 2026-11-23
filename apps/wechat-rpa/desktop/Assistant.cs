@@ -21,7 +21,7 @@ internal sealed class Assistant : ApplicationContext {
     private const string EventName = @"Local\HuojiCaptureTest.Open.v1";
 #endif
 
-    private Assistant(EventWaitHandle openRequest, bool verify) {
+    private Assistant(EventWaitHandle openRequest, bool verify, bool openHistory) {
         var handle = dispatcher.Handle;
         var menu = new ContextMenuStrip();
         menu.Items.Add("打开微信采集", null, (s,e) => Open());
@@ -37,7 +37,7 @@ internal sealed class Assistant : ApplicationContext {
         info.EnvironmentVariables.Remove("NODE_PATH");
         service = new Process { StartInfo = info, EnableRaisingEvents = true };
         service.OutputDataReceived += (s,e) => {
-            if (e.Data == "HUOJI_READY") dispatcher.BeginInvoke((Action)(() => { ready = true; if (verify) Stop(); else Open(); }));
+            if (e.Data == "HUOJI_READY") dispatcher.BeginInvoke((Action)(() => { ready = true; if (verify) Stop(); else OpenPage(openHistory ? Site + "/history" : Site); }));
         };
         service.Exited += (s,e) => dispatcher.BeginInvoke((Action)(() => {
             if (!ready || !stopping) {
@@ -52,9 +52,12 @@ internal sealed class Assistant : ApplicationContext {
         reopen = ThreadPool.RegisterWaitForSingleObject(openRequest, (s,t) => dispatcher.BeginInvoke((Action)Open), null, -1, false);
     }
     private void Open() {
+        OpenPage(Site);
+    }
+    private void OpenPage(string page) {
         if (!ready || stopping) return;
-        try { Process.Start(new ProcessStartInfo(Site) { UseShellExecute = true }); }
-        catch { MessageBox.Show("请在浏览器打开 " + Site, "货记采集助手"); }
+        try { Process.Start(new ProcessStartInfo(page) { UseShellExecute = true }); }
+        catch { MessageBox.Show("请在浏览器打开 " + page, "货记采集助手"); }
     }
     private void Stop() {
         if (stopping) return;
@@ -72,7 +75,7 @@ internal sealed class Assistant : ApplicationContext {
         using (var openRequest = new EventWaitHandle(false, EventResetMode.AutoReset, EventName, out first)) {
             if (!first) { if (verify) Environment.ExitCode = 2; else openRequest.Set(); return; }
             Application.EnableVisualStyles();
-            try { Application.Run(new Assistant(openRequest, verify)); }
+            try { Application.Run(new Assistant(openRequest, verify, args.Length == 1 && args[0] == "--history")); }
             catch { Environment.ExitCode = 1; if (!verify) MessageBox.Show("启动失败，请重新安装货记采集助手。", "货记采集助手"); }
         }
     }

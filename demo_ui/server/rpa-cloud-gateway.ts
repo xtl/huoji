@@ -105,10 +105,29 @@ export function createCloudGateway(opts: {
   timer.unref();
   const site = express();
   site.use((req, res, next) => {
-    if (
-      req.headers.host !== new URL(opts.origin).host ||
-      (req.headers.origin && req.headers.origin !== opts.origin)
-    ) {
+    if (req.headers.host !== new URL(opts.origin).host) {
+      res.sendStatus(403);
+      return;
+    }
+    if (req.path === "/api/assistant/presence" && req.headers.origin === service.origin) {
+      res.vary("Origin");
+      res.set("Cache-Control", "no-store");
+      if (req.method === "OPTIONS" && req.get("Access-Control-Request-Method") === "GET") {
+        res.set({
+          "Access-Control-Allow-Origin": service.origin,
+          "Access-Control-Allow-Methods": "GET",
+          "Access-Control-Allow-Private-Network": "true",
+        }).sendStatus(204);
+        return;
+      }
+      if (req.method === "GET") {
+        res.set("Access-Control-Allow-Origin", service.origin).json({ assistant: "huoji-cloud", protocol: 1 });
+        return;
+      }
+      res.sendStatus(405);
+      return;
+    }
+    if (req.headers.origin && req.headers.origin !== opts.origin) {
       res.sendStatus(403);
       return;
     }

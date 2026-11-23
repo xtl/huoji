@@ -16,7 +16,12 @@ AppId=HuojiCaptureCloud
 AppId=HuojiCaptureLocalTest
 #endif
 AppName={#Edition}
+#ifdef Cloud
+AppVersion=0.2.0
+ChangesAssociations=yes
+#else
 AppVersion=0.1.0
+#endif
 DefaultDirName={localappdata}\Programs\{#AppKey}
 DefaultGroupName={#Edition}
 PrivilegesRequired=lowest
@@ -37,6 +42,13 @@ WizardStyle=modern
 
 [Files]
 Source: "{#Stage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
+
+#ifdef Cloud
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\huoji-capture"; ValueType: string; ValueData: "URL:货记采集助手"; Flags: uninsdeletekey; Check: not SmokeTest
+Root: HKCU; Subkey: "Software\Classes\huoji-capture"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Check: not SmokeTest
+Root: HKCU; Subkey: "Software\Classes\huoji-capture\shell\open\command"; ValueType: string; ValueData: """{app}\HuojiCapture.exe"" --history"; Check: not SmokeTest
+#endif
 
 [Icons]
 Name: "{group}\货记采集助手"; Filename: "{app}\HuojiCapture.exe"; Check: not SmokeTest

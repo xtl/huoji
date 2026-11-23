@@ -77,6 +77,19 @@ test("desktop binds to the central account, syncs selected group messages and sh
     await centralStop();
     rmSync(dir, { force: true, recursive: true });
   });
+  const presenceUrl = origin + "/api/assistant/presence";
+  const presence = await fetch(presenceUrl, { headers: { Origin: service } });
+  assert.equal(presence.headers.get("Access-Control-Allow-Origin"), service);
+  assert.equal(presence.headers.get("Access-Control-Allow-Credentials"), null);
+  assert.deepEqual(await presence.json(), { assistant: "huoji-cloud", protocol: 1 });
+  const preflight = await fetch(presenceUrl, { method: "OPTIONS", headers: {
+    Origin: service, "Access-Control-Request-Method": "GET", "Access-Control-Request-Private-Network": "true",
+  } });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("Access-Control-Allow-Private-Network"), "true");
+  assert.equal((await fetch(presenceUrl, { headers: { Origin: "https://example.invalid" } })).status, 403);
+  assert.equal((await fetch(origin + "/api/rpa/local/connection", { headers: { Origin: service } })).status, 403);
+  assert.equal((await fetch(presenceUrl, { method: "POST", headers: { Origin: service } })).status, 405);
   async function api(base: string, route: string, token = "", body?: unknown, expected = 200) {
     const res = await fetch(base + "/api/" + route, {
       method: body === undefined ? "GET" : "POST",

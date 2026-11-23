@@ -56,6 +56,14 @@ app.get("/api/health", (_, res) => {
   });
 });
 
+app.get("/downloads/Huoji-Capture-Cloud-x64-Setup.exe", (_req, res) => {
+  const name = "Huoji-Capture-Cloud-x64-Setup.exe";
+  res.set({ "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" });
+  res.download(path.resolve("downloads", name), name, error => {
+    if (error && !res.headersSent) res.status(503).type("text").send("安装包暂时无法下载，请稍后重试。");
+  });
+});
+
 app.get("/api/auth/captcha/config", (_, res) => {
   res.json(getCaptchaPublicConfig());
 });
