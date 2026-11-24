@@ -498,10 +498,9 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
           <div className="view-bar circle-market-nav">
             <nav className="circle-tabs" aria-label="广场范围">
               {[
-                ["圈内供需", "#circle"],
+                ["圈内供需", demo ? "#circle/demo" : "#circle"],
                 ["租赁", "#circle/rental"],
                 ["我的发布", "#circle/mine"],
-                ["演示广场", "#circle/demo"],
               ].map(([label, path]) => (
                 <a
                   href={path}
