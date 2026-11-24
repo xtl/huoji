@@ -132,6 +132,11 @@
   .search-dialog { margin-top: 8vh; }
   .search-prompt { padding: 9px 12px; }
 }
+@media (max-width: 360px) {
+  .masthead-inner, .masthead-tools { gap: 8px; }
+  .global-search-trigger { width: 34px; flex: 0 0 34px; justify-content: center; padding: 0; }
+  .global-search-trigger span { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
