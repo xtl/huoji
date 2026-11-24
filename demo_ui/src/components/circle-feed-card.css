@@ -1,0 +1,153 @@
+/* 广场列表卡片：型号/数量/价格同排一眼读完，发布人降为一行元信息 */
+.circle-feed {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--c-line);
+  border-radius: 12px;
+  background: white;
+  overflow: clip;
+}
+.circle-feed-post { --kind: #2f6fde; position: relative; }
+.circle-feed-post[data-kind="buy"] { --kind: #c2791a; }
+.circle-feed-post + .circle-feed-post { border-top: 1px solid var(--c-line); }
+.circle-feed-post::before {
+  content: "";
+  position: absolute;
+  inset-block: 12px;
+  inset-inline-start: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--kind);
+}
+.circle-feed-post:hover { background: #fafbfd; }
+.circle-feed-post[data-closed] { opacity: 0.55; }
+.circle-feed-post[data-closed]::before { background: var(--c-line); }
+.circle-feed-post article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 13px 16px 12px 19px;
+}
+.circle-feed-body { display: grid; gap: 4px; min-width: 0; }
+.circle-feed-title { display: flex; gap: 8px; align-items: baseline; margin: 0; min-width: 0; }
+.circle-feed-kind { flex: none; color: var(--kind); font-size: 13px; font-weight: 700; }
+.circle-feed-open {
+  min-width: 0;
+  text-align: start;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--c-ink);
+}
+.circle-feed-open::after { content: ""; position: absolute; inset: 0; } /* 整张卡片可点进详情 */
+.circle-feed-open:hover { color: var(--c-accent); }
+.circle-feed-specs, .circle-feed-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.circle-feed-specs > * + *::before, .circle-feed-meta > :is(span, time):not(.circle-feed-avatar) + :is(span, time)::before {
+  content: "·";
+  padding-inline: 6px;
+  color: #b8bfca;
+}
+.circle-feed-specs { color: var(--c-ink); }
+.circle-feed-specs strong { font-weight: 650; font-variant-numeric: tabular-nums; }
+.circle-feed-closed { color: var(--c-muted); font-weight: 600; }
+.circle-feed-terms {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  margin: 0;
+  color: var(--c-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.circle-feed-meta { margin-top: 3px; color: var(--c-muted); font-size: 12px; }
+.circle-feed-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-inline-end: 6px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--c-wash);
+  color: var(--c-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+.circle-feed-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.circle-feed-author { color: var(--c-ink); font-weight: 600; }
+.circle-feed-meta .circle-company { font-size: 12px; margin-inline-start: 6px; }
+.circle-feed-meta time { font-variant-numeric: tabular-nums; }
+.circle-feed-discuss, .circle-feed-action { position: relative; z-index: 1; } /* 浮在整卡点击层之上 */
+.circle-feed-discuss {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  margin-inline-start: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--c-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.circle-feed-discuss:hover { background: var(--c-wash); color: var(--c-accent); }
+.circle-feed-aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 7.5rem;
+  text-align: end;
+}
+.circle-feed-price { display: grid; gap: 1px; margin: 0; }
+.circle-feed-price small { color: var(--c-muted); font-size: 11px; }
+.circle-feed-price strong {
+  color: var(--c-muted);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+.circle-feed-price[data-quoted] strong { color: var(--c-ink); font-size: 17px; font-weight: 750; }
+.circle-feed-action {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  min-height: 30px;
+  padding: 3px 6px 3px 11px;
+  border: 1px solid var(--c-line);
+  border-radius: 6px;
+  background: white;
+  color: var(--c-ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0.7;
+  transition: opacity 0.12s, background-color 0.12s, color 0.12s;
+}
+.circle-feed-post:hover .circle-feed-action, .circle-feed-action:focus-visible { opacity: 1; }
+.circle-feed-action:hover { border-color: var(--c-accent); background: var(--c-accent); color: white; }
+.circle-feed-action[data-own] { color: var(--c-muted); }
+@media (hover: none) { .circle-feed-action { opacity: 1; } }
+@media (max-width: 767px) {
+  .circle-feed { border-radius: 10px; }
+  .circle-feed-post article { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 11px 11px 10px 14px; }
+  .circle-feed-post::before { inset-block: 10px; }
+  .circle-feed-open { font-size: 15px; }
+  .circle-feed-terms { display: none; }
+  .circle-feed-aside { min-width: 5.5rem; }
+  .circle-feed-price[data-quoted] strong { font-size: 15px; }
+  .circle-feed-action { min-height: 34px; padding-inline: 9px 4px; }
+  .circle-feed-meta :is(.circle-company, .circle-feed-role) { display: none; }
+  .circle-feed-discuss { margin-inline-start: 6px; }
+}

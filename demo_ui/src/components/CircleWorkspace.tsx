@@ -18,6 +18,7 @@ import { CircleDrawer, CircleMembershipNotice, PublishForm } from "./CircleForms
 import { CircleChat } from "./CircleChat";
 import { localDate, postCircle, useCircleData } from "./circle-client";
 import "./circle.css";
+import "./circle-feed-card.css";
 
 type Detail = {
   post: CirclePost;
@@ -76,39 +77,45 @@ function FeedPost({
   const supply = post.kind === "供应";
   const rental = post.mode === "租赁";
   const quoteLabel = rental ? (supply ? "租金" : "租金预算") : (supply ? "报价" : "预算");
+  const initial = /^\d{3}\*{4}\d{4}$/.test(post.author) ? "" : Array.from(post.author.trim())[0];
   return (
-    <li className="circle-feed-post">
+    <li className="circle-feed-post" data-kind={supply ? "supply" : "buy"} data-closed={!post.active || undefined}>
       <article>
-        <header className="circle-feed-post-head">
-          <CircleIdentity post={post} avatar={avatar} showTime />
-        </header>
-        <div className="circle-feed-content">
+        <div className="circle-feed-body">
           <h3 className="circle-feed-title">
-            <Kind kind={post.kind} mode={post.mode} />
-            <button type="button" onClick={onOpen}>{post.title}</button>
+            <span className="circle-feed-kind">{listingKindLabel(post.kind, post.mode)}</span>
+            <button type="button" className="circle-feed-open" onClick={onOpen}>{post.title}</button>
           </h3>
-          <p className="circle-feed-facts">
-            <span>数量 <strong>{post.quantity}</strong></span>
+          <p className="circle-feed-specs">
+            <strong>{post.quantity}</strong>
             <span>{post.city}</span>
             <span>{post.mode}</span>
             {!post.active && <span className="circle-feed-closed">已结束</span>}
           </p>
           {post.terms && <p className="circle-feed-terms">{post.terms}</p>}
+          <p className="circle-feed-meta">
+            <span className="circle-feed-avatar" aria-hidden="true">
+              {avatar ? <img src={avatar} alt="" loading="lazy" /> : initial || <UserRound size={12} />}
+            </span>
+            <span className="circle-feed-author">{post.author}</span>
+            {post.companyName && <span className="circle-company" title="已认证企业"><BadgeCheck size={13} aria-hidden="true" />{post.companyName}</span>}
+            <span className="circle-feed-role">{post.businessRole || sourceRoleLabel(post.role, post.mode)}</span>
+            <time dateTime={post.publishedAt}>{localDate(post.publishedAt)}</time>
+            <button type="button" className="circle-feed-discuss" onClick={onDiscuss} aria-label={"规格讨论" + (post.questionCount ? "，" + post.questionCount + " 条" : "")}>
+              <MessagesSquare size={13} aria-hidden="true" />{post.questionCount || "讨论"}
+            </button>
+          </p>
         </div>
-        <dl className="circle-feed-quote" data-quoted={Boolean(post.price) || undefined}>
-          <dt>{quoteLabel}</dt>
-          <dd>{post.price || (supply ? "面议" : "接受报价")}</dd>
-        </dl>
-        <footer className="circle-feed-actions">
-          <button type="button" className="circle-discuss" onClick={onDiscuss}>
-            <MessagesSquare size={16} aria-hidden="true" />规格讨论
-            {!!post.questionCount && <span className="circle-discuss-count">{post.questionCount}</span>}
-          </button>
+        <div className="circle-feed-aside">
+          <p className="circle-feed-price" data-quoted={Boolean(post.price) || undefined}>
+            <small>{quoteLabel}</small>
+            <strong>{post.price || (supply ? "面议" : "接受报价")}</strong>
+          </p>
           <button type="button" className="circle-feed-action" data-own={own || undefined} onClick={own ? onOpen : onChat}>
-            {own ? "管理发布" : supply ? "询价" : "我能供货"}
-            <ChevronRight size={16} aria-hidden="true" />
+            {own ? "管理" : supply ? (rental ? "询租" : "询价") : "我能供货"}
+            <ChevronRight size={15} aria-hidden="true" />
           </button>
-        </footer>
+        </div>
       </article>
     </li>
   );
@@ -553,7 +560,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
               </div>
               {list.data?.items.length ? (
                 <ul className="circle-feed" aria-label="广场发布">
-                  {list.data.items.map(post => (
+                  {[...list.data.items].sort((a, b) => Number(b.active) - Number(a.active)).map(post => (
                     <React.Fragment key={post.id}>
                       <FeedPost
                         post={post}
