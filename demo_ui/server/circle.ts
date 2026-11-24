@@ -34,7 +34,7 @@ function key(value: unknown) {
 const now = () => new Date().toISOString();
 const notFound = () => new Problem(404, "这条记录不存在或无权访问。");
 const maxPage = 30;
-const idFor = (a: Actor) =>
+const idFor = (a: Pick<Actor, "userId" | "currentWorkspaceId">) =>
   "hj_" +
   createHash("sha256")
     .update(JSON.stringify([a.userId, a.currentWorkspaceId]))
@@ -45,6 +45,7 @@ export function createCircleRouter(
   file: string,
   authenticate: (bearer: unknown, res: import("express").Response) => Actor | null,
   cloud = tencentDelivery(),
+  companiesForAccount: (userId: string) => Array<{ id: string; name: string }> = () => [],
 ) {
   const router = Router();
   let database: DatabaseSync | undefined;
@@ -78,9 +79,11 @@ export function createCircleRouter(
     `);
     d.exec("BEGIN IMMEDIATE");
     try {
-      if (!d.prepare("PRAGMA table_info(posts)").all().some(column => column.name === "businessRole")) {
+      const columns = d.prepare("PRAGMA table_info(posts)").all().map(column => column.name);
+      if (!columns.includes("businessRole")) {
         d.exec("ALTER TABLE posts ADD COLUMN businessRole TEXT NOT NULL DEFAULT ''");
       }
+      if (!columns.includes("companyName")) d.exec("ALTER TABLE posts ADD COLUMN companyName TEXT");
       d.exec("COMMIT");
     } catch (error) {
       d.exec("ROLLBACK");
@@ -159,15 +162,26 @@ export function createCircleRouter(
     const id = idFor(actor);
     run("INSERT OR IGNORE INTO actors(id,name,account) VALUES(?,?,?)", id, actor.displayName, actor.userId);
     res.locals.me = id;
+    res.locals.actor = actor;
     res.set("Cache-Control", "private, no-store");
     next();
   });
   const postsSql =
-    "SELECT p.id,p.owner,u.name author,p.kind,p.title,p.quantity,p.city,p.mode,p.role,p.businessRole,p.price,p.terms,p.publishedAt,p.expiresAt,p.confirmedAt,p.closed FROM posts p JOIN actors u ON u.id=p.owner";
+    "SELECT p.id,p.owner,u.name author,u.account publisherAccount,p.companyName,p.kind,p.title,p.quantity,p.city,p.mode,p.role,p.businessRole,p.price,p.terms,p.publishedAt,p.expiresAt,p.confirmedAt,p.closed FROM posts p JOIN actors u ON u.id=p.owner";
+  function publicPost(row: Record<string, any>, legacyNames = new Map<string, string>()) {
+    const { publisherAccount, companyName, ...p } = row;
+    if (companyName === null && !legacyNames.has(p.owner)) {
+      const company = companiesForAccount(publisherAccount).find(space =>
+        idFor({ userId: publisherAccount, currentWorkspaceId: space.id }) === p.owner,
+      );
+      legacyNames.set(p.owner, company?.name ?? "");
+    }
+    return { ...p, companyName: companyName ?? legacyNames.get(p.owner) ?? "", active: !p.closed && p.expiresAt > now() } as Record<string, any>;
+  }
   function getPost(id: string) {
     const p = one(postsSql + " WHERE p.id=?", id);
     if (!p) throw notFound();
-    return { ...p, active: !p.closed && p.expiresAt > now() } as Record<string, any>;
+    return publicPost(p);
   }
   function own(id: string, me: string) {
     const p = getPost(id);
@@ -256,8 +270,9 @@ export function createCircleRouter(
       maxPage + 1,
       Math.floor(offset),
     );
+    const legacyNames = new Map<string, string>();
     res.json({
-      items: rows.slice(0, maxPage).map((p) => ({ ...p, active: !p.closed && p.expiresAt > now() })),
+      items: rows.slice(0, maxPage).map((p) => publicPost(p, legacyNames)),
       more: rows.length > maxPage,
     });
   });
@@ -277,10 +292,12 @@ export function createCircleRouter(
     const id = randomUUID(),
       at = now(),
       until = new Date(Date.now() + days * 86400000).toISOString();
+    const actor = res.locals.actor as Actor;
+    const companyName = companiesForAccount(actor.userId).find(space => space.id === actor.currentWorkspaceId)?.name ?? "";
     tx(() => {
       if (b.displayName) run("UPDATE actors SET name=? WHERE id=?", field(b.displayName, 32), me);
       run(
-        "INSERT INTO posts(id,owner,nonce,kind,title,quantity,city,mode,role,businessRole,price,terms,publishedAt,expiresAt,confirmedAt) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO posts(id,owner,nonce,kind,title,quantity,city,mode,role,businessRole,price,terms,publishedAt,expiresAt,confirmedAt,companyName) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         id,
         me,
         nonce,
@@ -296,6 +313,7 @@ export function createCircleRouter(
         at,
         until,
         at,
+        companyName,
       );
       bump("feed");
     });

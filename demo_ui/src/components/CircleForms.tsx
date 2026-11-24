@@ -87,6 +87,7 @@ export function PublishForm({
   initial,
   rental = false,
   name,
+  companyName,
   onClose,
   onDone,
 }: {
@@ -95,6 +96,7 @@ export function PublishForm({
   initial?: CircleSource;
   rental?: boolean;
   name: string;
+  companyName?: string;
   onClose: () => void;
   onDone: (id: string) => void;
 }) {
@@ -164,6 +166,7 @@ export function PublishForm({
               />
             </label>
             <dl className="circle-facts">
+              {companyName && <><dt>发布企业</dt><dd>{companyName}</dd></>}
               {d.businessRole && <><dt>业务角色</dt><dd>{d.businessRole}</dd></>}
               <dt>信息来源</dt>
               <dd>{sourceRoleLabel(d.role, d.mode)}</dd>

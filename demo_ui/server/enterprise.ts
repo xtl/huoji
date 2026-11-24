@@ -71,14 +71,14 @@ export class EnterpriseStore {
       }
     });
   }
-  spaces(userId: string) {
+  spaces(userId: string, includeInactive = false) {
     return this.use(
       (db) =>
         db
           .prepare(
-            "SELECT c.id,c.name,m.role,m.active FROM company_members m JOIN companies c ON c.id=m.company WHERE m.userId=? AND m.active=1 AND c.status='APPROVED'",
+            "SELECT c.id,c.name,m.role,m.active FROM company_members m JOIN companies c ON c.id=m.company WHERE m.userId=? AND (m.active=1 OR ?) AND c.status='APPROVED'",
           )
-          .all(userId) as unknown as Space[],
+          .all(userId, Number(includeInactive)) as unknown as Space[],
     );
   }
   member(company: string, userId: string) {

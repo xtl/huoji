@@ -5,6 +5,7 @@ import os from "node:os";
 import { mkdtempSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { CreditWallet } from "./credit-wallet";
 import { EnterpriseStore } from "./enterprise";
 import { setTimeout as pause } from "node:timers/promises";
@@ -173,9 +174,32 @@ test("verified enterprises isolate collection, posts, membership and metered key
       mode: "现货",
       role: "自有货源",
       days: 3,
+      companyName: "伪造企业",
     },
     201,
   );
+  assert.equal(post.companyName, "隔离测试公司");
+  assert.equal(post.publisherAccount, undefined);
+  const personalPost = await api("/circle/posts", employee.token, "POST", {
+    nonce: randomUUID(), title: "个人发布", kind: "供应", quantity: "1 台", city: "深圳",
+    mode: "现货", role: "自有货源", days: 3, companyName: "伪造企业",
+  }, 201);
+  assert.equal(personalPost.companyName, "");
+  const circleDb = new DatabaseSync(path.join(dir, "circle.sqlite"));
+  try {
+    circleDb.prepare("UPDATE posts SET companyName=NULL WHERE id IN (?,?)").run(post.id, personalPost.id);
+  } finally {
+    circleDb.close();
+  }
+  const feed = (await api("/circle/posts", other.token)).items;
+  assert.equal(feed.find((item: { id: string }) => item.id === post.id).companyName, "隔离测试公司");
+  assert.equal(feed.find((item: { id: string }) => item.id === personalPost.id).companyName, "");
+  assert.equal((await api("/circle/posts/" + post.id, other.token)).post.companyName, "隔离测试公司");
+  const inquiry = await api("/circle/send", other.token, "POST", {
+    nonce: randomUUID(), postId: post.id, kind: "text", text: "请问可以报价吗？",
+  });
+  assert.equal((await api("/circle/threads/" + inquiry.id, worker)).items[0].text, "请问可以报价吗？");
+  await api("/circle/threads/" + inquiry.id, boss, "GET", undefined, 404);
   assert.equal((await api(staff + "/circle/posts?mine=1", boss)).items[0].id, post.id);
   await api(staff + "/circle/posts/" + post.id, boss, "PATCH", { action: "close" });
   assert.equal((await api("/circle/posts?mine=1", worker)).items[0].active, false);

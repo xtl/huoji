@@ -1440,7 +1440,7 @@ export default function App() {
           </div>}
           {activeTab === "input" && messageEntry.landing && <p className="message-opening" role="status">正在打开消息…</p>}
           {(activeTab==="circle" || (activeTab==="input" && intakeView==="talk"))&&<React.Fragment key={messageScope}><CircleWorkspace token={authSession.token}
-            actor={liveCircle.actor} name={liveCircle.name||authSession.user.maskedPhone} version={liveCircle.version} hash={hash} sources={circleSources} refresh={liveCircle.refresh}/></React.Fragment>}
+            actor={liveCircle.actor} name={liveCircle.name||authSession.user.maskedPhone} companyName={currentWorkspace.type === "ENTERPRISE" ? currentWorkspace.name : undefined} version={liveCircle.version} hash={hash} sources={circleSources} refresh={liveCircle.refresh}/></React.Fragment>}
 
           {activeTab === "stock" && (
             <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>

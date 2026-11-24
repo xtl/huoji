@@ -25,6 +25,7 @@ type Props = {
   token: string;
   actor: string;
   name: string;
+  companyName?: string;
   version: string;
   hash: string;
   sources: CircleSource[];
@@ -56,7 +57,7 @@ function PostRow({
         <span className="circle-publisher">
           <time dateTime={post.publishedAt}>{localDate(post.publishedAt)}</time>
           <small>
-            {post.author} · {post.active ? post.businessRole || sourceRoleLabel(post.role, post.mode) : "已结束"}
+            {[post.companyName, post.author, post.active ? post.businessRole || sourceRoleLabel(post.role, post.mode) : "已结束"].filter(Boolean).join(" · ")}
           </small>
         </span>
       </button>
@@ -153,7 +154,8 @@ function PostDetail({
       <div className="circle-author">
         <UserRound size={18} />
         <span>
-          <strong>{p.author}</strong>
+          <strong>{p.companyName || p.author}</strong>
+          {p.companyName && <small>企业认证 · 发布人 {p.author}</small>}
           <small>{[p.businessRole, sourceRoleLabel(p.role, p.mode)].filter(Boolean).join(" · ")}</small>
         </span>
         {!mine && (
@@ -338,7 +340,7 @@ function PostDetail({
     </div>
   );
 }
-export default function CircleWorkspace({ token, actor, name, version, hash, sources, refresh }: Props) {
+export default function CircleWorkspace({ token, actor, name, companyName, version, hash, sources, refresh }: Props) {
   const parts = hash.replace(/^#/, "").split("/"),
     talk = parts[0] === "input" && parts[1] === "talk",
     mine = !talk && parts[1] === "mine",
@@ -490,7 +492,7 @@ export default function CircleWorkspace({ token, actor, name, version, hash, sou
               <div className="circle-board-head">
                 <span>产品与交付</span>
                 <span>{rental ? "租金 / 预算" : "报价 / 预算"}</span>
-                <span>发布时间 ↓ / 发布人</span>
+                <span>发布时间 ↓ / 发布方</span>
                 <span />
               </div>
               <ul className="circle-posts">
@@ -539,6 +541,7 @@ export default function CircleWorkspace({ token, actor, name, version, hash, sou
         <PublishForm
           token={token}
           name={name}
+          companyName={companyName}
           initial={seed}
           rental={rental}
           sources={sources}
