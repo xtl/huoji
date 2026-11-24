@@ -416,6 +416,55 @@ app.get("/api/auth/me", (req, res) => {
   return res.json(buildAuthPayload(session));
 });
 
+const avatarPrefix = "data:image/jpeg;base64,";
+function readAccountProfile(user: DemoUser) {
+  const profile = enterprise.use(db => db.prepare("SELECT displayName,avatar FROM account_profiles WHERE userId=?").get(user.id));
+  return { displayName: profile?.displayName ?? maskPhone(user.phone), avatar: profile?.avatar ?? null };
+}
+
+app.get("/api/auth/profile", (req, res) => {
+  const session = readSession(req.headers.authorization);
+  if (!session) return res.status(401).json({ error: "登录已失效，请重新登录。" });
+  return res.set("Cache-Control", "no-store").json(readAccountProfile(usersById.get(session.userId)!));
+});
+
+app.patch("/api/auth/profile", (req, res) => {
+  const session = readSession(req.headers.authorization);
+  if (!session) return res.status(401).json({ error: "登录已失效，请重新登录。" });
+  const user = usersById.get(session.userId)!;
+  const { displayName, avatar } = req.body ?? {};
+  if (displayName !== undefined && (typeof displayName !== "string" || displayName.trim().length > 24 ||
+      /[\u0000-\u001f\u007f]/.test(displayName))) {
+    return res.status(400).json({ error: "昵称最多 24 个字符，请输入单行文字。" });
+  }
+  if (avatar !== undefined && avatar !== null) {
+    if (typeof avatar !== "string" || avatar.length > avatarPrefix.length + 128 * 1024 || !avatar.startsWith(avatarPrefix)) {
+      return res.status(400).json({ error: "头像格式无效或图片过大。" });
+    }
+    const data = avatar.slice(avatarPrefix.length);
+    const image = Buffer.from(data, "base64");
+    if (image.length < 10 || data !== image.toString("base64") || image[0] !== 255 || image[1] !== 216 ||
+        image.at(-2) !== 255 || image.at(-1) !== 217) {
+      return res.status(400).json({ error: "无法读取头像图片，请重新选择。" });
+    }
+  }
+  try {
+    const updated = enterprise.transaction(db => {
+      const row = db.prepare("SELECT displayName,avatar FROM account_profiles WHERE userId=?").get(user.id);
+      const profile = {
+        displayName: displayName === undefined ? row?.displayName ?? maskPhone(user.phone) : displayName.trim() || maskPhone(user.phone),
+        avatar: avatar === undefined ? row?.avatar ?? null : avatar,
+      };
+      db.prepare("INSERT INTO account_profiles(userId,displayName,avatar) VALUES(?,?,?) ON CONFLICT(userId) DO UPDATE SET displayName=excluded.displayName,avatar=excluded.avatar")
+        .run(user.id, profile.displayName, profile.avatar);
+      return profile;
+    });
+    return res.set("Cache-Control", "no-store").json(updated);
+  } catch {
+    return res.status(503).json({ error: "个人资料保存失败，请稍后重试。" });
+  }
+});
+
 app.post("/api/auth/logout", (req, res) => {
   const token = parseBearerToken(req.headers.authorization);
   const before = identitySnapshot();
@@ -1050,7 +1099,9 @@ function buildAuthPayload(session: DemoSession) {
       id: user.id,
       phone: user.phone,
       maskedPhone: maskPhone(user.phone),
-      displayName: user.displayName,
+      displayName: enterprise.use(db =>
+        db.prepare("SELECT displayName FROM account_profiles WHERE userId=?").get(user.id)?.displayName
+      ) ?? maskPhone(user.phone),
       status: user.status,
     },
     workspaces,

@@ -85,6 +85,21 @@
 .account-padding { padding: clamp(1rem, 2vw, 1.5rem); }
 .account-heading-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
 .account-heading { font-size: 1.04rem; font-weight: 650; line-height: 1.4; }
+.account-personal-profile { display: grid; gap: 14px; }
+.account-personal-summary, .account-profile-photo, .account-profile-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
+}
+.account-personal-summary strong { font-weight: 650; min-width: 0; }
+.account-personal-summary button { margin-inline-start: auto; }
+.account-personal-profile .account-avatar { width: 3.25rem; height: 3.25rem; border-radius: 50%; overflow: hidden; }
+.account-personal-profile .account-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.account-profile-editor { display: grid; gap: 14px; }
+.account-profile-name { display: grid; gap: 5px; width: min(100%, 24rem); font-size: .9rem; }
+.account-profile-name input {
+  min-width: 0; min-height: 40px; padding: 7px 10px; border: 1px solid var(--control-border); border-radius: 6px;
+}
+.account-profile-actions .primary-button { min-height: 38px; border-radius: 6px; padding: 6px 14px; }
+.account-profile-error { color: #a03c25; font-size: .85rem; }
 .account-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 1.2rem; }
 .account-metric { min-width: 0; padding-inline: clamp(.65rem, 2vw, 1.6rem); border-inline-start: 1px solid var(--account-line); }
 .account-metric:first-child { padding-inline-start: 0; border: 0; }

@@ -42,6 +42,7 @@ export class EnterpriseStore {
           CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY, workspace TEXT NOT NULL, employee TEXT NOT NULL, kind TEXT NOT NULL, model TEXT NOT NULL,created TEXT NOT NULL,input INTEGER,output INTEGER,hit INTEGER,total INTEGER,status TEXT NOT NULL);
           CREATE INDEX IF NOT EXISTS usage_period ON usage(workspace,created,employee);
           CREATE TABLE IF NOT EXISTS ai_limits(dimension TEXT NOT NULL,subject TEXT NOT NULL,ceiling INTEGER,PRIMARY KEY(dimension,subject));
+          CREATE TABLE IF NOT EXISTS account_profiles(userId TEXT PRIMARY KEY, displayName TEXT NOT NULL, avatar TEXT);
           CREATE TABLE IF NOT EXISTS platform_ai_audit(id INTEGER PRIMARY KEY,created TEXT NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,subject TEXT NOT NULL);`);
         if (!db.prepare("PRAGMA table_info(usage)").all().some(column => column.name === "payer")) {
           db.exec("ALTER TABLE usage ADD COLUMN payer TEXT NOT NULL DEFAULT 'LEGACY'");

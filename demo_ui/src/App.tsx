@@ -1,6 +1,7 @@
 import { creditPackages, monthlyCredits, monthlyPrice, annualPrice, annualMonthlyCredits, annualBonusCredits, pointsPerCostYuan, creditsPerYuan, pricingVersion } from "./credit-pricing";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { WorkbenchHeader, MobileNavigation } from "./components/WorkspaceChrome";
+import AccountProfile from "./components/AccountProfile";
 import TradeSearch from "./components/TradeSearch";
 import CircleWorkspace from "./components/CircleWorkspace";
 import { useCircleLive } from "./components/circle-client";
@@ -1886,6 +1887,14 @@ export default function App() {
               session={authSession}
               wallet={accountWallet}
               section={accountSection}
+              onProfileSaved={displayName => {
+                if (currentAuthToken.current !== authSession.token) return;
+                const updated = { ...authSession, user: { ...authSession.user, displayName } };
+                setAuthSession(updated);
+                try {
+                  if (readStoredSession<AuthSession>(localStorage, AUTH_STORAGE_KEY).session?.token === updated.token) persistAuthSession(updated);
+                } catch { /* The server already saved the profile. */ }
+              }}
               paymentBusyKey={paymentBusyKey}
               onSectionChange={setAccountSection}
               onRecharge={handleRechargeCredits}
@@ -1909,6 +1918,7 @@ function AccountCenter({
   section,
   paymentBusyKey,
   onSectionChange,
+  onProfileSaved,
   onRecharge,
   onUpgrade,
 }: {
@@ -1917,6 +1927,7 @@ function AccountCenter({
   section: AccountSection;
   paymentBusyKey: string;
   onSectionChange: (section: AccountSection) => void;
+  onProfileSaved: (displayName: string) => void;
   onRecharge: (pack: (typeof creditPackages)[number]) => void;
   onUpgrade: (planCode: MembershipPlanCode) => void;
 }) {
@@ -1944,7 +1955,7 @@ function AccountCenter({
       <section className="account-profile" aria-label="登录账户">
         <div className="account-avatar"><UserRound size={22} aria-hidden="true" /></div>
         <div className="min-w-0">
-          <h2 className="account-phone">{session.user.maskedPhone}</h2>
+          <h2 className="account-phone">{session.user.displayName || session.user.maskedPhone}</h2>
           <p className="account-caption">{[workspace?.name, roleName].filter(Boolean).join(" · ")}</p>
         </div>
         {!enterpriseWallet && <span className="account-plan-tag" data-expired={expired || undefined}><ShieldCheck size={14} aria-hidden="true" />{wallet.planName}{expired && " · 已到期"}</span>}
@@ -1968,6 +1979,9 @@ function AccountCenter({
       {section === "deepseek" && <TokenUsage token={session.token} />}
       {section === "overview" && (
         <>
+          <React.Fragment key={session.token}>
+            <AccountProfile token={session.token} maskedPhone={session.user.maskedPhone} onSaved={onProfileSaved} />
+          </React.Fragment>
           <section className="account-surface account-padding" aria-label="账户用量">
             <h3 className="account-heading">账户概览</h3>
             <div className="account-metrics">
