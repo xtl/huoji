@@ -8,7 +8,7 @@ type Scope = { userId: string; currentWorkspaceId: string };
 type User = { phone: string; displayName: string };
 type Role = "OWNER" | "ADMIN" | "MEMBER";
 type Member = { userId: string; role: Role; active: number; accessVersion: number };
-type Space = { id: string; name: string; role: Role; active: number };
+type Space = { id: string; name: string; role: Role; active: number; showNameInCircle: 0 | 1 };
 class Problem extends Error {
   constructor(
     readonly status: number,
@@ -36,6 +36,7 @@ export class EnterpriseStore {
         db.exec(`PRAGMA journal_mode=WAL;
           CREATE TABLE IF NOT EXISTS companies(id TEXT PRIMARY KEY,name TEXT NOT NULL,credit TEXT NOT NULL,domain TEXT NOT NULL DEFAULT '',applicant TEXT NOT NULL,status TEXT NOT NULL,reason TEXT NOT NULL DEFAULT '',evidence BLOB NOT NULL,mime TEXT NOT NULL,created TEXT NOT NULL,reviewer TEXT,reviewed TEXT);
           CREATE UNIQUE INDEX IF NOT EXISTS company_credit ON companies(credit) WHERE status IN ('PENDING','APPROVED');
+          CREATE TABLE IF NOT EXISTS company_circle_settings(company TEXT PRIMARY KEY, showName INTEGER NOT NULL CHECK(showName IN (0,1)));
           CREATE TABLE IF NOT EXISTS company_members(company TEXT NOT NULL,userId TEXT NOT NULL,role TEXT NOT NULL,active INTEGER NOT NULL,accessVersion INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(company,userId));
           CREATE TABLE IF NOT EXISTS invites(id TEXT PRIMARY KEY, company TEXT NOT NULL,channel TEXT NOT NULL,target TEXT NOT NULL,role TEXT NOT NULL,secret TEXT NOT NULL,expires INTEGER NOT NULL,state TEXT NOT NULL);
           CREATE UNIQUE INDEX IF NOT EXISTS pending_target ON invites(company,channel,target) WHERE state IN ('PENDING','SENDING');
@@ -77,7 +78,7 @@ export class EnterpriseStore {
       (db) =>
         db
           .prepare(
-            "SELECT c.id,c.name,m.role,m.active FROM company_members m JOIN companies c ON c.id=m.company WHERE m.userId=? AND (m.active=1 OR ?) AND c.status='APPROVED'",
+            "SELECT c.id,c.name,m.role,m.active,COALESCE(s.showName,1) AS showNameInCircle FROM company_members m JOIN companies c ON c.id=m.company LEFT JOIN company_circle_settings s ON s.company=c.id WHERE m.userId=? AND (m.active=1 OR ?) AND c.status='APPROVED'",
           )
           .all(userId, Number(includeInactive)) as unknown as Space[],
     );
@@ -178,6 +179,7 @@ export function enterpriseRouter(
     user: (id: string) => User | undefined;
     switchSpace: (scope: Scope, workspace: string) => unknown;
     personal: (id: string) => string;
+    onCircleVisibilityChanged?: () => void;
   },
 ) {
   const r = express.Router();
@@ -226,7 +228,7 @@ export function enterpriseRouter(
       return store.use((db) => ({
         companies: db
           .prepare(
-            "SELECT c.id,c.name,m.role FROM company_members m JOIN companies c ON c.id=m.company WHERE m.userId=? AND m.active=1 AND c.status='APPROVED' ORDER BY c.name",
+            "SELECT c.id,c.name,m.role,COALESCE(s.showName,1) AS showNameInCircle FROM company_members m JOIN companies c ON c.id=m.company LEFT JOIN company_circle_settings s ON s.company=c.id WHERE m.userId=? AND m.active=1 AND c.status='APPROVED' ORDER BY c.name",
           )
           .all(s.userId),
         applications: db
@@ -268,6 +270,18 @@ export function enterpriseRouter(
       }));
     }),
   );
+  r.patch("/circle-settings", run((req, scope) => {
+    manage(scope);
+    const showName = req.body?.showName;
+    requireThat(typeof showName === "boolean", 400, "请选择是否在广场展示企业名称。");
+    const changed = store.use(db => db.prepare(
+      `INSERT INTO company_circle_settings(company, showName) VALUES (?, ?)
+       ON CONFLICT(company) DO UPDATE SET showName=excluded.showName
+       WHERE company_circle_settings.showName<>excluded.showName`,
+    ).run(scope.currentWorkspaceId, Number(showName)).changes);
+    if (changed) deps.onCircleVisibilityChanged?.();
+    return { showName };
+  }));
   r.post(
     "/applications",
     run((req, s) => {

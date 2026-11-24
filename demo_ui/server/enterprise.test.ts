@@ -181,6 +181,12 @@ test("verified enterprises isolate collection, posts, membership and metered key
   );
   assert.equal(post.companyName, "隔离测试公司");
   assert.equal(post.publisherAccount, undefined);
+  const getCircleSettings = async (token: string) =>
+    (await api(ent, token)).companies.find((space: { id: string }) => space.id === id).showNameInCircle;
+  assert.equal(await getCircleSettings(boss), 1);
+  await api(ent + "/circle-settings", worker, "PATCH", { showName: false }, 403);
+  await api(ent + "/circle-settings", owner.token, "PATCH", { showName: false }, 403);
+  await api(ent + "/circle-settings", boss, "PATCH", { showName: "false" }, 400);
   const personalDraft = {
     nonce: randomUUID(), title: "个人发布", kind: "供应", quantity: "1 台", city: "深圳",
     mode: "现货", role: "自有货源", days: 3, companyName: "伪造企业",
@@ -209,11 +215,26 @@ test("verified enterprises isolate collection, posts, membership and metered key
   assert.equal(feed.find((item: { id: string }) => item.id === post.id).companyName, "隔离测试公司");
   assert.equal(feed.find((item: { id: string }) => item.id === personalPost.id).companyName, "");
   assert.equal((await api("/circle/posts/" + post.id, other.token)).post.companyName, "隔离测试公司");
+  const observer = await api("/circle/sync", other.token);
+  await api(ent + "/circle-settings", boss, "PATCH", { showName: false });
+  assert.notEqual((await api("/circle/sync?after=" + observer.revision, other.token)).revision, observer.revision);
+  assert.equal(await getCircleSettings(boss), 0);
+  assert.equal((await api("/circle/sync", worker)).companyName, "");
+  assert.equal((await api("/circle/posts/" + post.id, other.token)).post.companyName, "");
+  assert.equal((await api("/circle/posts", other.token)).items.find((item: { id: string }) => item.id === post.id).companyName, "");
+  const hiddenPost = await api("/circle/posts", worker, "POST", {
+    ...personalDraft, nonce: randomUUID(), title: "隐藏企业名称时发布",
+  }, 201);
+  assert.equal(hiddenPost.companyName, "");
+  assert.equal(hiddenPost.owner, post.owner);
   grantMembership(other, "PRO_YEARLY");
   const inquiry = await api("/circle/send", other.token, "POST", {
     nonce: randomUUID(), postId: post.id, kind: "text", text: "请问可以报价吗？",
   });
   assert.equal((await api("/circle/threads/" + inquiry.id, worker)).items[0].text, "请问可以报价吗？");
+  await api(ent + "/circle-settings", company.token, "PATCH", { showName: true });
+  assert.equal((await api("/circle/posts/" + post.id, other.token)).post.companyName, "隔离测试公司");
+  assert.equal((await api("/circle/posts/" + hiddenPost.id, other.token)).post.companyName, "隔离测试公司");
   enterpriseStore.use(db => db.prepare("UPDATE wallet_plans SET end=? WHERE workspace=?")
     .run(new Date().toISOString(), other.currentWorkspaceId));
   assert.equal((await api("/circle/threads/" + inquiry.id, other.token)).items.length, 1);
@@ -227,9 +248,9 @@ test("verified enterprises isolate collection, posts, membership and metered key
     nonce: randomUUID(), threadId: inquiry.id, kind: "text", text: "企业员工正常回复",
   });
   await api("/circle/threads/" + inquiry.id, boss, "GET", undefined, 404);
-  assert.equal((await api(staff + "/circle/posts?mine=1", boss)).items[0].id, post.id);
+  assert.ok((await api(staff + "/circle/posts?mine=1", boss)).items.some((item: { id: string }) => item.id === post.id));
   await api(staff + "/circle/posts/" + post.id, boss, "PATCH", { action: "close" });
-  assert.equal((await api("/circle/posts?mine=1", worker)).items[0].active, false);
+  assert.equal((await api("/circle/posts?mine=1", worker)).items.find((item: { id: string }) => item.id === post.id).active, false);
   await api(staff + "/circle/threads", boss, "GET", undefined, 404);
   await api(
     "/rpa/messages",

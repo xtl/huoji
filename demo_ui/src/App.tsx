@@ -1448,7 +1448,7 @@ export default function App() {
           </div>}
           {activeTab === "input" && messageEntry.landing && <p className="message-opening" role="status">正在打开消息…</p>}
           {(activeTab==="circle" || (activeTab==="input" && intakeView==="talk"))&&<React.Fragment key={messageScope}><CircleWorkspace token={authSession.token}
-            actor={liveCircle.actor} name={liveCircle.name||authSession.user.maskedPhone} companyName={currentWorkspace.type === "ENTERPRISE" ? currentWorkspace.name : undefined}
+            actor={liveCircle.actor} name={liveCircle.name||authSession.user.maskedPhone} companyName={liveCircle.companyName}
             participation={circleParticipation}
             onCheckMembership={() => refreshWallet(n => n + 1)}
             version={liveCircle.version} hash={hash} sources={circleSources} refresh={liveCircle.refresh}/></React.Fragment>}

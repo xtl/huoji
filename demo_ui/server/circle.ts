@@ -8,6 +8,7 @@ import { tencentDelivery } from "./circle-tencent";
 import { businessRoles, type QuoteTerms } from "../src/circle-types";
 
 type Actor = { userId: string; currentWorkspaceId: string; displayName: string };
+type PublishingCompany = { id: string; name: string; showNameInCircle?: 0 | 1 };
 class Problem extends Error {
   constructor(
     public status: number,
@@ -45,12 +46,13 @@ export function createCircleRouter(
   file: string,
   authenticate: (bearer: unknown, res: import("express").Response) => Actor | null,
   cloud = tencentDelivery(),
-  companiesForAccount: (userId: string) => Array<{ id: string; name: string }> = () => [],
+  companiesForAccount: (userId: string) => PublishingCompany[] = () => [],
   canParticipate: (workspaceId: string) => boolean = () => true,
 ) {
   const router = Router();
   let database: DatabaseSync | undefined;
   const events = new EventEmitter();
+  let visibilityRevision = randomUUID();
   events.setMaxListeners(0);
   function db() {
     if (database) return database;
@@ -169,15 +171,21 @@ export function createCircleRouter(
   });
   const postsSql =
     "SELECT p.id,p.owner,u.name author,u.account publisherAccount,p.companyName,p.kind,p.title,p.quantity,p.city,p.mode,p.role,p.businessRole,p.price,p.terms,p.publishedAt,p.expiresAt,p.confirmedAt,p.closed FROM posts p JOIN actors u ON u.id=p.owner";
-  function publicPost(row: Record<string, any>, legacyNames = new Map<string, string>()) {
+  function publicPost(row: Record<string, any>, companiesByAccount = new Map<string, PublishingCompany[]>()) {
     const { publisherAccount, companyName, ...p } = row;
-    if (companyName === null && !legacyNames.has(p.owner)) {
-      const company = companiesForAccount(publisherAccount).find(space =>
+    let visibleCompany = "";
+    if (companyName !== "") {
+      let companies = companiesByAccount.get(publisherAccount);
+      if (!companies) {
+        companies = companiesForAccount(publisherAccount);
+        companiesByAccount.set(publisherAccount, companies);
+      }
+      const company = companies.find(space =>
         idFor({ userId: publisherAccount, currentWorkspaceId: space.id }) === p.owner,
       );
-      legacyNames.set(p.owner, company?.name ?? "");
+      if (company && company.showNameInCircle !== 0) visibleCompany = companyName ?? company.name;
     }
-    return { ...p, companyName: companyName ?? legacyNames.get(p.owner) ?? "", active: !p.closed && p.expiresAt > now() } as Record<string, any>;
+    return { ...p, companyName: visibleCompany, active: !p.closed && p.expiresAt > now() } as Record<string, any>;
   }
   function getPost(id: string) {
     const p = one(postsSql + " WHERE p.id=?", id);
@@ -194,7 +202,7 @@ export function createCircleRouter(
     if (!t) throw notFound();
     return t;
   }
-  function signal(me: string) {
+  function signal(me: string, actor: Actor) {
     const rev = (id: string) => one("SELECT n FROM revision WHERE id=?", id)?.n ?? 0;
     const unread = one(
       "SELECT COUNT(*) n FROM threads t JOIN messages m ON m.thread=t.id WHERE (t.a=? OR t.b=?) AND m.sender<>? AND m.id>CASE WHEN t.a=? THEN t.readA ELSE t.readB END",
@@ -205,16 +213,18 @@ export function createCircleRouter(
     )!.n;
     const expiry =
       one("SELECT max(expiresAt) at FROM posts WHERE closed=0 AND expiresAt<=?", now())?.at ?? "";
+    const company = companiesForAccount(actor.userId).find(space => space.id === actor.currentWorkspaceId);
     return {
       actor: me,
       name: one("SELECT name FROM actors WHERE id=?", me)!.name,
-      revision: [rev("feed"), rev(me), expiry].join("."),
+      companyName: company?.showNameInCircle === 0 ? "" : company?.name ?? "",
+      revision: [rev("feed"), rev(me), expiry, visibilityRevision].join("."),
       unread,
     };
   }
   router.get("/sync", (req, res) => {
     const me = res.locals.me,
-      state = signal(me);
+      state = signal(me, res.locals.actor);
     if (req.query.after !== state.revision) {
       res.json(state);
       return;
@@ -227,7 +237,7 @@ export function createCircleRouter(
         res.status(401).json({ error: "登录已过期。" });
         return;
       }
-      res.json(signal(me));
+      res.json(signal(me, session));
     };
     const timeout = setTimeout(finish, 22000);
     const cleanup = () => {
@@ -277,9 +287,9 @@ export function createCircleRouter(
       maxPage + 1,
       Math.floor(offset),
     );
-    const legacyNames = new Map<string, string>();
+    const companiesByAccount = new Map<string, PublishingCompany[]>();
     res.json({
-      items: rows.slice(0, maxPage).map((p) => publicPost(p, legacyNames)),
+      items: rows.slice(0, maxPage).map((p) => publicPost(p, companiesByAccount)),
       more: rows.length > maxPage,
     });
   });
@@ -546,5 +556,10 @@ export function createCircleRouter(
       .status(error instanceof Problem ? error.status : 500)
       .json({ error: error instanceof Problem ? error.message : "暂时无法保存或加载，请重试。" });
   });
-  return router;
+  return Object.assign(router, {
+    invalidateCompanyVisibility() {
+      visibilityRevision = randomUUID();
+      wake("feed");
+    },
+  });
 }

@@ -122,6 +122,9 @@
   color: #18263c;
   font-size: 0.85rem;
 }
+.ent-circle-visibility { display: flex; align-items: center; gap: 10px; min-height: 36px; cursor: pointer; }
+.ent-circle-visibility input { width: 18px; height: 18px; accent-color: var(--accent); }
+.ent-circle-visibility strong { font-weight: 650; }
 .ent-form,
 .ent-review {
   display: grid;

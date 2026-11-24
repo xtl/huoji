@@ -300,6 +300,7 @@ app.use("/api/enterprise/staff/:id",(req,res,next)=>{
 },staffRouter);
 app.use("/api/enterprise", enterpriseRouter(enterprise,{
   session:readSession, user:id=>usersById.get(id), personal:personalWorkspaceId,
+  onCircleVisibilityChanged: () => circleRouter.invalidateCompanyVisibility(),
   switchSpace(scope,workspace){
     const current=scope as DemoSession;
     if(current.currentWorkspaceId===workspace) return buildAuthPayload(current);

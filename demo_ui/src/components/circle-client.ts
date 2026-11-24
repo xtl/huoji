@@ -16,7 +16,7 @@ export async function circleApi<T>(token: string, path: string, init: RequestIni
 }
 export const postCircle = <T>(token: string, path: string, body: object, method = "POST") =>
   circleApi<T>(token, path, { method, body: JSON.stringify(body) });
-type Signal = { actor: string; name: string; revision: string; unread: number };
+type Signal = { actor: string; name: string; revision: string; unread: number; companyName?: string };
 const empty: Signal = { actor: "", name: "", revision: "", unread: 0 };
 export function useCircleLive(token?: string, scope?: string) {
   const [loaded, setLoaded] = useState<{ token: string; scope: string; state: Signal } | null>(null);

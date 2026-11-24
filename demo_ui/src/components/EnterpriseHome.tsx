@@ -16,7 +16,7 @@ type Application = {
   reason: string;
 };
 type Overview = {
-  companies: { id: string; name: string; role: Role }[];
+  companies: { id: string; name: string; role: Role; showNameInCircle?: 0 | 1 }[];
   applications: Application[];
   reviewQueue: Application[];
   offers: { id: string; name: string; role: Role }[];
@@ -516,7 +516,7 @@ export default function EnterpriseHome({
           {current && (
             <>
               <nav className="ent-tabs" aria-label="企业管理">
-                {(manager ? ["成员", "员工资料", "AI 用量"] : ["AI 用量"]).map((t) => (
+                {(manager ? ["成员", "员工资料", "广场设置", "AI 用量"] : ["AI 用量"]).map((t) => (
                   <button
                     key={t}
                     aria-current={(manager ? tab : "AI 用量") === t ? "page" : undefined}
@@ -634,6 +634,28 @@ export default function EnterpriseHome({
               )}
               {manager && tab === "员工资料" && (
                 <StaffRecords token={token} members={data.members.filter((m) => owner || m.role === "MEMBER")} />
+              )}
+              {manager && tab === "广场设置" && (
+                <section className="ent-card">
+                  <label className="ent-circle-visibility">
+                    <input type="checkbox" role="switch" checked={current.showNameInCircle !== 0} disabled={busy}
+                      aria-describedby="ent-circle-visibility-help"
+                      onChange={event => {
+                        const showName = event.currentTarget.checked;
+                        void act(async () => {
+                          await request("/circle-settings", { showName }, "PATCH");
+                          setData(previous => previous && {
+                            ...previous,
+                            companies: previous.companies.map(company => company.id === id
+                              ? { ...company, showNameInCircle: showName ? 1 : 0 }
+                              : company),
+                          });
+                        }, "广场展示设置已保存。");
+                      }} />
+                    <strong>在广场展示企业名称</strong>
+                  </label>
+                  <p id="ent-circle-visibility-help">关闭后，本企业现有和今后发布的内容只显示发布人。询价和私信仍由发布人接收。</p>
+                </section>
               )}
               {(!manager || tab === "AI 用量") && (
                 <>
