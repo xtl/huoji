@@ -1,4 +1,4 @@
-import { creditPackages, monthlyCredits, monthlyPrice, annualPrice, annualMonthlyCredits, annualBonusCredits, pointsPerCostYuan, creditsPerYuan, pricingVersion } from "./credit-pricing";
+import { creditPackagesFor, monthlyCredits, monthlyPrice, annualPrice, annualMonthlyCredits, annualBonusCredits, pointsPerCostYuan, creditsPerYuan, pricingVersion, rechargePricingVersion } from "./credit-pricing";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { WorkbenchHeader, MobileNavigation } from "./components/WorkspaceChrome";
 import AccountProfile from "./components/AccountProfile";
@@ -1046,8 +1046,8 @@ export default function App() {
     }
   }
 
-  function handleRechargeCredits(pack: (typeof creditPackages)[number]) {
-    void startAlipayPayment("CREDIT_PACKAGE", pack.id);
+  function handleRechargeCredits(productId: string) {
+    void startAlipayPayment("CREDIT_PACKAGE", productId);
   }
 
   function handleUpgradePlan(planCode: MembershipPlanCode) {
@@ -1928,7 +1928,7 @@ function AccountCenter({
   paymentBusyKey: string;
   onSectionChange: (section: AccountSection) => void;
   onProfileSaved: (displayName: string) => void;
-  onRecharge: (pack: (typeof creditPackages)[number]) => void;
+  onRecharge: (productId: string) => void;
   onUpgrade: (planCode: MembershipPlanCode) => void;
 }) {
   const currentPlan = membershipPlans.find(plan => plan.code === wallet.planCode) ?? membershipPlans[0];
@@ -2048,12 +2048,12 @@ function AccountCenter({
           <h3 id="recharge-options" ref={rechargeHeading} tabIndex={-1} className="account-heading">{enterpriseWallet ? "企业货记分充值" : "货记分充值"}</h3>
           <p className="account-caption">1 元兑 {creditsPerYuan} 分，可单独购买。AI 解析按每 1 元模型费用扣 {pointsPerCostYuan} 分。</p>
           <div className="account-offers">
-            {creditPackages.map(pack => (
+            {creditPackagesFor(enterpriseWallet).map(pack => (
               <article key={pack.id} className="account-offer">
                 <h4>{pack.title}</h4>
                 <p className="account-price">{pack.price}</p>
                 <p className="account-offer-amount">到账 <strong>{pack.credits.toLocaleString("zh-CN")}</strong> 分</p>
-                <button type="button" disabled={!wallet.paymentReady || Boolean(paymentBusyKey)} onClick={() => onRecharge(pack)} className="primary-button account-pay">
+                <button type="button" disabled={!wallet.paymentReady || Boolean(paymentBusyKey)} onClick={() => onRecharge(pack.id)} className="primary-button account-pay">
                   <CreditCard size={16} aria-hidden="true" />{paymentBusyKey === `CREDIT_PACKAGE:${pack.id}` ? "正在打开支付宝…" : "支付宝支付"}
                 </button>
               </article>
@@ -4931,7 +4931,7 @@ async function createAlipayPaymentOrder(
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.token}`,
     },
-    body: JSON.stringify({ productType, productId, channel, pricingVersion }),
+    body: JSON.stringify({ productType, productId, channel, pricingVersion: productType === "CREDIT_PACKAGE" ? rechargePricingVersion : pricingVersion }),
   });
   const payload = (await response.json()) as PaymentOrderResponse;
   if (!response.ok) throw new Error(payload.error || "支付宝订单创建失败。");

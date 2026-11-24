@@ -2,14 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { CreditWallet, addBillingMonths, pointScale } from "./credit-wallet";
 import { EnterpriseStore } from "./enterprise";
 import { actualCharge, modelPrices } from "./model-credit-prices";
-import { pointsPerCostYuan, pricingVersion } from "../src/credit-pricing";
+import { pointsPerCostYuan, pricingVersion, rechargePricingVersion } from "../src/credit-pricing";
 
 test("annual billing credits 12 anniversaries, preserves the old entitlement and reserves concurrent spending", (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "huoji-annual-"));
@@ -71,6 +71,13 @@ test("signed Alipay top-up and membership orders use their stored entitlement an
     RPA_MESSAGES_FILE: path.join(dir, "rpa.json"),
     PAYMENT_ORDERS_FILE: path.join(dir, "orders.json"),
   });
+  const legacyOrder = {
+    id: "HJlegacy-test", userId: "legacy-user", workspaceId: "legacy-space",
+    productType: "CREDIT_PACKAGE", productId: "credits_cny_10", title: "货记分轻量包",
+    amountYuan: "10.00", status: "WAITING", channel: "page",
+    createdAt: new Date().toISOString(), entitlement: { creditAmount: 2000 },
+  };
+  writeFileSync(path.join(dir, "orders.json"), JSON.stringify([legacyOrder]));
   const { app } = await import("../server");
   const site = app.listen(0, "127.0.0.1");
   await once(site, "listening");
@@ -88,11 +95,12 @@ test("signed Alipay top-up and membership orders use their stored entitlement an
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
       body: body ? JSON.stringify(body) : undefined,
     });
-  token = (await (await api("/auth/sms/login", { phone: "13900008876", code: "fixture" })).json()).token;
+  const personal = await (await api("/auth/sms/login", { phone: "13900008876", code: "fixture" })).json();
+  token = personal.token;
   const balance = async () => (await (await api("/wallet")).json()).creditBalance;
   assert.equal(await balance(), 128);
   const create = async (productType: string, productId: string) =>
-    (await (await api("/payments/alipay/orders", { productType, productId, pricingVersion })).json()).order;
+    (await (await api("/payments/alipay/orders", { productType, productId, pricingVersion: productType === "CREDIT_PACKAGE" ? rechargePricingVersion : pricingVersion })).json()).order;
   const settle = async (id: string, amount: string, valid = true) => {
     const fields = {
       app_id: "test-app",
@@ -108,11 +116,13 @@ test("signed Alipay top-up and membership orders use their stored entitlement an
     const sign = valid ? createSign("RSA-SHA256").update(content).sign(privateKey, "base64") : "invalid";
     return (await api("/payments/alipay/notify", { ...fields, sign_type: "RSA2", sign })).text();
   };
-  for (const [price, points] of [
-    [10, 2000],
-    [50, 10000],
-    [100, 20000],
-  ]) {
+  const store = new EnterpriseStore(path.join(dir, "enterprise.sqlite"));
+  assert.equal(await settle(legacyOrder.id, "10.00"), "success");
+  const legacyWallet = new CreditWallet(store).snapshot({
+    userId: legacyOrder.userId, currentWorkspaceId: legacyOrder.workspaceId,
+  }, false);
+  assert.equal(legacyWallet.transactions[0]?.amount, 2000);
+  async function checkTopUp(price: number, points: number) {
     const order = await create("CREDIT_PACKAGE", "credits_cny_" + price);
     assert.equal(order.amountYuan, price.toFixed(2));
     assert.equal(order.entitlement.creditAmount, points);
@@ -124,6 +134,17 @@ test("signed Alipay top-up and membership orders use their stored entitlement an
     assert.equal(await settle(order.id, order.amountYuan), "success");
     assert.equal(await balance(), before + points);
   }
+  async function orderStatus(price: number, version = rechargePricingVersion) {
+    return (await api("/payments/alipay/orders", {
+      productType: "CREDIT_PACKAGE", productId: "credits_cny_" + price, pricingVersion: version,
+    })).status;
+  }
+  assert.equal(await orderStatus(10), 400);
+  assert.equal(await orderStatus(100, pricingVersion), 409);
+  assert.equal(await orderStatus(1000), 400);
+  await checkTopUp(100, 20000);
+  await checkTopUp(300, 60000);
+  await checkTopUp(500, 100000);
   const annual = await create("MEMBERSHIP_PLAN", "PRO_YEARLY"),
     monthly = await create("MEMBERSHIP_PLAN", "PRO_MONTHLY");
   assert.equal(monthly.amountYuan, "28.00");
@@ -133,4 +154,21 @@ test("signed Alipay top-up and membership orders use their stored entitlement an
   assert.equal(await settle(annual.id, "336.00"), "success");
   assert.equal(await balance(), before + 7000);
   assert.equal((await (await api("/wallet")).json()).nextGrant.amount, 7000);
+  const companyId = "ent_credit_fixture";
+  store.transaction(db => {
+    db.prepare("INSERT INTO companies(id,name,credit,applicant,status,evidence,mime,created) VALUES(?,?,?,?,'APPROVED',?,?,?)")
+      .run(companyId, "充值测试企业", "test-credit", personal.user.id, Buffer.from("test"), "image/png", new Date().toISOString());
+    db.prepare("INSERT INTO company_members(company,userId,role,active) VALUES(?,?,'OWNER',1)")
+      .run(companyId, personal.user.id);
+  });
+  const personalBalance = await balance();
+  const company = await (await api("/enterprise/switch", { workspaceId: companyId })).json();
+  assert.equal(company.currentWorkspaceId, companyId);
+  token = company.token;
+  assert.equal(await orderStatus(500), 400);
+  await checkTopUp(1000, 200000);
+  await checkTopUp(3000, 600000);
+  await checkTopUp(10000, 2000000);
+  token = personal.token;
+  assert.equal(await balance(), personalBalance);
 });

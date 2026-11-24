@@ -18,7 +18,7 @@ import { unknownSourceWarning } from "./src/rpa-capture-warnings";
 import { createCircleRouter } from "./server/circle";
 import { CreditWallet, InsufficientCredits } from "./server/credit-wallet";
 import { actualCharge, modelPrices } from "./server/model-credit-prices";
-import { creditPackages, monthlyPrice, monthlyCredits, annualPrice, annualMonthlyCredits, pointsPerCostYuan, pricingVersion } from "./src/credit-pricing";
+import { creditPackagesFor, monthlyPrice, monthlyCredits, annualPrice, annualMonthlyCredits, pointsPerCostYuan, pricingVersion, rechargePricingVersion } from "./src/credit-pricing";
 import { EnterpriseStore, enterpriseRouter, isCompany } from "./server/enterprise";
 import { createWorkspaceLedgerRouter } from "./server/workspace-ledger";
 
@@ -217,11 +217,7 @@ const memberships: DemoMembership[] = [];
 const sessions = new Map<string, DemoSession>();
 const paymentOrders = new Map<string, PaymentOrder>();
 
-const paymentProducts: PaymentProduct[] = [
-  ...creditPackages.map(pack => ({
-    productType: "CREDIT_PACKAGE" as const, productId: pack.id, title: "货记分"+pack.title,
-    amountYuan: pack.yuan.toFixed(2), entitlement: {creditAmount: pack.credits}
-  })),
+const membershipProducts: PaymentProduct[] = [
   {productType:"MEMBERSHIP_PLAN",productId:"PRO_MONTHLY",title:"个人 Pro 月卡",amountYuan:monthlyPrice.toFixed(2),
     entitlement:{creditAmount:monthlyCredits,planCode:"PRO_MONTHLY",planName:"个人 Pro 月卡",months:1}},
   {productType:"MEMBERSHIP_PLAN",productId:"PRO_YEARLY",title:"个人 Pro 年卡",amountYuan:annualPrice.toFixed(2),
@@ -488,10 +484,12 @@ app.post("/api/payments/alipay/orders", (req, res) => {
 
   const productType = asText(req.body?.productType) as PaymentProductType;
   const productId = asText(req.body?.productId);
-  if (isCompany(session.currentWorkspaceId) && productType==="MEMBERSHIP_PLAN") return res.status(400).json({error:"个人会员请在个人空间购买。"});
-  if (req.body?.pricingVersion !== pricingVersion) return res.status(409).json({error:"货记分价格已更新，请刷新页面或更新采集助手后再购买。"});
+  const enterprise = isCompany(session.currentWorkspaceId);
+  if (enterprise && productType==="MEMBERSHIP_PLAN") return res.status(400).json({error:"个人会员请在个人空间购买。"});
+  const currentPricing = productType === "CREDIT_PACKAGE" ? rechargePricingVersion : pricingVersion;
+  if (req.body?.pricingVersion !== currentPricing) return res.status(409).json({error:"货记分价格已更新，请刷新页面或更新采集助手后再购买。"});
   const channel: PaymentChannel = asText(req.body?.channel) === "wap" ? "wap" : "page";
-  const product = findPaymentProduct(productType, productId);
+  const product = findPaymentProduct(productType, productId, enterprise);
   if (!product) return res.status(400).json({ error: "支付商品不存在，请刷新页面后重试。" });
 
   const config = getAlipayConfig(appBaseUrl(req));
@@ -1114,8 +1112,14 @@ function buildAuthPayload(session: DemoSession) {
   };
 }
 
-function findPaymentProduct(productType: PaymentProductType, productId: string): PaymentProduct | undefined {
-  return paymentProducts.find((product) => product.productType === productType && product.productId === productId);
+function findPaymentProduct(productType: PaymentProductType, productId: string, enterprise: boolean): PaymentProduct | undefined {
+  if (productType === "MEMBERSHIP_PLAN") return membershipProducts.find(product => product.productId === productId);
+  if (productType !== "CREDIT_PACKAGE") return undefined;
+  const pack = creditPackagesFor(enterprise).find(item => item.id === productId);
+  if (pack) return {
+    productType, productId, title: "货记分" + pack.title,
+    amountYuan: pack.yuan.toFixed(2), entitlement: { creditAmount: pack.credits },
+  };
 }
 
 function createOutTradeNo(): string {
