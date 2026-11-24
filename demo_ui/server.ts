@@ -240,7 +240,8 @@ const circleRouter=createCircleRouter(path.join(path.dirname(identityFilePath())
   const session = businessSession(authorization,res);
   if (!session) return null;
   return { userId: session.userId, currentWorkspaceId: session.currentWorkspaceId, displayName: usersById.get(session.userId)!.displayName };
-}, undefined, (userId) => enterprise.spaces(userId, true));
+}, undefined, (userId) => enterprise.spaces(userId, true),
+  workspaceId => isCompany(workspaceId) || creditWallet.hasActiveMembership(workspaceId));
 app.use("/api/circle",circleRouter);
 
 const rpaInbox = new RpaInbox({

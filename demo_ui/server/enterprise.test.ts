@@ -129,7 +129,8 @@ test("verified enterprises isolate collection, posts, membership and metered key
   assert.ok(!JSON.stringify(savedKey).includes(companyKey));
   await api("/structure",worker,"POST",{text:"企业余额不足拦截"},402);
   assert.equal(calls.length,0);
-  const wallet=new CreditWallet(new EnterpriseStore(path.join(dir,"enterprise.sqlite")));
+  const enterpriseStore = new EnterpriseStore(path.join(dir, "enterprise.sqlite"));
+  const wallet = new CreditWallet(enterpriseStore);
   wallet.applyPaid({id:"fixture-company-credit",status:"PAID",paidAt:new Date().toISOString(),userId:owner.user.id,workspaceId:id,title:"测试充值",entitlement:{creditAmount:2000}});
   await api("/structure", worker, "POST", { text: "出 H200" });
   await api("/structure", employee.token, "POST", { text: "出 H200" });
@@ -180,10 +181,23 @@ test("verified enterprises isolate collection, posts, membership and metered key
   );
   assert.equal(post.companyName, "隔离测试公司");
   assert.equal(post.publisherAccount, undefined);
-  const personalPost = await api("/circle/posts", employee.token, "POST", {
+  const personalDraft = {
     nonce: randomUUID(), title: "个人发布", kind: "供应", quantity: "1 台", city: "深圳",
     mode: "现货", role: "自有货源", days: 3, companyName: "伪造企业",
-  }, 201);
+  };
+  await api("/circle/posts", employee.token, "POST", personalDraft, 403);
+  await api("/circle/posts/" + post.id + "/questions", employee.token, "POST", {
+    nonce: randomUUID(), body: "请问有现货吗？",
+  }, 403);
+  await api("/circle/send", employee.token, "POST", {
+    nonce: randomUUID(), postId: post.id, kind: "text", text: "请报价",
+  }, 403);
+  const grantMembership = (account: { currentWorkspaceId: string }, code: string) => {
+    enterpriseStore.use(db => db.prepare("INSERT INTO wallet_plans(id,workspace,code,start,end) VALUES(?,?,?,?,?)")
+      .run(account.currentWorkspaceId, account.currentWorkspaceId, code, "2000-01-01T00:00:00.000Z", "2099-01-01T00:00:00.000Z"));
+  };
+  grantMembership(employee, "PRO_MONTHLY");
+  const personalPost = await api("/circle/posts", employee.token, "POST", personalDraft, 201);
   assert.equal(personalPost.companyName, "");
   const circleDb = new DatabaseSync(path.join(dir, "circle.sqlite"));
   try {
@@ -195,10 +209,23 @@ test("verified enterprises isolate collection, posts, membership and metered key
   assert.equal(feed.find((item: { id: string }) => item.id === post.id).companyName, "隔离测试公司");
   assert.equal(feed.find((item: { id: string }) => item.id === personalPost.id).companyName, "");
   assert.equal((await api("/circle/posts/" + post.id, other.token)).post.companyName, "隔离测试公司");
+  grantMembership(other, "PRO_YEARLY");
   const inquiry = await api("/circle/send", other.token, "POST", {
     nonce: randomUUID(), postId: post.id, kind: "text", text: "请问可以报价吗？",
   });
   assert.equal((await api("/circle/threads/" + inquiry.id, worker)).items[0].text, "请问可以报价吗？");
+  enterpriseStore.use(db => db.prepare("UPDATE wallet_plans SET end=? WHERE workspace=?")
+    .run(new Date().toISOString(), other.currentWorkspaceId));
+  assert.equal((await api("/circle/threads/" + inquiry.id, other.token)).items.length, 1);
+  await api("/circle/send", other.token, "POST", {
+    nonce: randomUUID(), threadId: inquiry.id, kind: "text", text: "会员到期后继续发送",
+  }, 403);
+  await api("/circle/send", other.token, "POST", {
+    nonce: randomUUID(), postId: post.id, direct: true, kind: "text", text: "会员到期后新建私信",
+  }, 403);
+  await api("/circle/send", worker, "POST", {
+    nonce: randomUUID(), threadId: inquiry.id, kind: "text", text: "企业员工正常回复",
+  });
   await api("/circle/threads/" + inquiry.id, boss, "GET", undefined, 404);
   assert.equal((await api(staff + "/circle/posts?mine=1", boss)).items[0].id, post.id);
   await api(staff + "/circle/posts/" + post.id, boss, "PATCH", { action: "close" });

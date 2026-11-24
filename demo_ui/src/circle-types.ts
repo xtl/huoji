@@ -1,4 +1,5 @@
 export type ListingKind = "供应" | "求购";
+export type CircleParticipation = "allowed" | "locked" | "loading" | "unavailable";
 export const businessRoles = ["货主", "贸易商", "数据中心", "租赁方", "技术服务方"] as const;
 export function listingKindLabel(kind: string, mode?: string) {
   return mode === "租赁" ? (kind === "供应" ? "出租" : "求租") : kind;

@@ -75,6 +75,11 @@ export function useCircleLive(token?: string, scope?: string) {
         async function renew() {
           const next = await circleApi<typeof info>(token, "/im");
           if (released) return;
+          if (!next.appId) {
+            dispose?.();
+            dispose = undefined;
+            return;
+          }
           await chat.login({ userID: next.userId, userSig: next.userSig });
           if (!released) renewal = setTimeout(() => void renew().catch(() => {}), 50 * 60000);
         }

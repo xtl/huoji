@@ -646,6 +646,14 @@ html:has(.circle-drawer[open]) {
 .circle-chat-end {
   border-top: 1px solid var(--c-line);
 }
+.circle-membership {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.circle-membership p { color: var(--c-muted); font-size: 14px; }
 @media (max-width: 767px) {
   .circle-toolbar {
     gap: 8px;

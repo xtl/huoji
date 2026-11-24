@@ -46,6 +46,7 @@ export function createCircleRouter(
   authenticate: (bearer: unknown, res: import("express").Response) => Actor | null,
   cloud = tencentDelivery(),
   companiesForAccount: (userId: string) => Array<{ id: string; name: string }> = () => [],
+  canParticipate: (workspaceId: string) => boolean = () => true,
 ) {
   const router = Router();
   let database: DatabaseSync | undefined;
@@ -239,7 +240,13 @@ export function createCircleRouter(
     events.once("feed", finish);
     res.once("close", cleanup);
   });
-  router.get("/im", (req, res) => res.json(cloud?.credentials(res.locals.me) ?? { appId: 0 }));
+  const participationAllowed = (res: Response) => canParticipate((res.locals.actor as Actor).currentWorkspaceId);
+  function requireParticipation(res: Response) {
+    if (!participationAllowed(res)) throw new Problem(403, "开通个人会员后，可发布广场供需并与同行对话。");
+  }
+  router.get("/im", (_req, res) => res.json(
+    cloud && participationAllowed(res) ? cloud.credentials(res.locals.me) : { appId: 0 },
+  ));
   router.get("/posts", (req, res) => {
     const params: any[] = [],
       where: string[] = [];
@@ -277,6 +284,7 @@ export function createCircleRouter(
     });
   });
   router.post("/posts", (req, res) => {
+    requireParticipation(res);
     const me = res.locals.me,
       b = req.body ?? {},
       nonce = key(b.nonce);
@@ -357,6 +365,7 @@ export function createCircleRouter(
     res.json(getPost(p.id));
   });
   router.post("/posts/:id/questions", (req, res) => {
+    requireParticipation(res);
     const p = getPost(req.params.id),
       me = res.locals.me,
       b = req.body ?? {};
@@ -433,6 +442,7 @@ export function createCircleRouter(
     res.json({ ok: true });
   });
   router.post("/send", (req, res) => {
+    requireParticipation(res);
     const me = res.locals.me,
       b = req.body ?? {},
       nonce = key(b.nonce);

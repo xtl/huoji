@@ -1,7 +1,24 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, ChevronRight, X } from "lucide-react";
-import { businessRoles, listingKindLabel, sourceRoleLabel, type CircleSource, type ListingDraft, type ListingKind } from "../circle-types";
+import { businessRoles, listingKindLabel, sourceRoleLabel, type CircleParticipation, type CircleSource, type ListingDraft, type ListingKind } from "../circle-types";
 import { postCircle } from "./circle-client";
+
+export function CircleMembershipNotice({ participation, onRetry }: {
+  participation: CircleParticipation;
+  onRetry: () => void;
+}) {
+  return <div className="circle-pad circle-membership" role="status">
+    {participation === "loading" && <p>正在核对会员状态…</p>}
+    {participation === "unavailable" && <>
+      <p>暂时无法读取会员状态。</p>
+      <button type="button" className="circle-secondary" onClick={onRetry}>重新核对</button>
+    </>}
+    {participation === "locked" && <>
+      <p>开通个人会员后，可发布广场供需并与同行对话。</p>
+      <a className="circle-primary" href="#account/credits">查看会员方案</a>
+    </>}
+  </div>;
+}
 
 export function CircleDrawer({
   title,

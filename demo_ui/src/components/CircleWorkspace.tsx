@@ -8,10 +8,10 @@ import {
   Search,
   UserRound,
 } from "lucide-react";
-import type { CirclePost, CircleQuestion, CircleSource, CircleThread, QuoteTerms } from "../circle-types";
+import type { CircleParticipation, CirclePost, CircleQuestion, CircleSource, CircleThread, QuoteTerms } from "../circle-types";
 import { listingKindLabel, matchingCircleSources, sourceRoleLabel } from "../circle-types";
 import { navigateWorkspace, TALK_HASH } from "../workspace-navigation";
-import { CircleDrawer, PublishForm } from "./CircleForms";
+import { CircleDrawer, CircleMembershipNotice, PublishForm } from "./CircleForms";
 import { CircleChat } from "./CircleChat";
 import { localDate, postCircle, useCircleData } from "./circle-client";
 import "./circle.css";
@@ -26,6 +26,8 @@ type Props = {
   actor: string;
   name: string;
   companyName?: string;
+  participation: CircleParticipation;
+  onCheckMembership: () => void;
   version: string;
   hash: string;
   sources: CircleSource[];
@@ -76,6 +78,7 @@ function PostDetail({
   open,
   token,
   refresh,
+  canParticipate,
 }: {
   detail: Detail;
   mine: boolean;
@@ -84,6 +87,7 @@ function PostDetail({
   open: (s: string) => void;
   token: string;
   refresh: () => void;
+  canParticipate: boolean;
 }) {
   const p = detail.post,
     [error, fail] = useState(""),
@@ -275,7 +279,7 @@ function PostDetail({
                 <b>发布人</b> {q.answer}
               </p>
             ) : (
-              mine &&
+              canParticipate && mine &&
               p.active && (
                 <button
                   className="circle-link"
@@ -288,7 +292,7 @@ function PostDetail({
                 </button>
               )
             )}
-            {reply === q.id && (
+            {canParticipate && reply === q.id && (
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -309,7 +313,7 @@ function PostDetail({
             )}
           </div>
         ))}
-        {!mine && p.active ? (
+        {canParticipate && !mine && p.active ? (
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -340,7 +344,7 @@ function PostDetail({
     </div>
   );
 }
-export default function CircleWorkspace({ token, actor, name, companyName, version, hash, sources, refresh }: Props) {
+export default function CircleWorkspace({ token, actor, name, companyName, participation, onCheckMembership, version, hash, sources, refresh }: Props) {
   const parts = hash.replace(/^#/, "").split("/"),
     talk = parts[0] === "input" && parts[1] === "talk",
     mine = !talk && parts[1] === "mine",
@@ -393,8 +397,11 @@ export default function CircleWorkspace({ token, actor, name, companyName, versi
     action === "thread"
       ? items.find((t) => t.id === param)
       : items.find((t) => (action === "direct" ? t.peer === p?.owner && !t.postId : t.postId === param));
-  const chatReady =
-    action === "thread" || (["direct", "inquire"].includes(action) && p && actor && threads.data);
+  const canParticipate = participation === "allowed";
+  const startsConversation = ["direct", "inquire"].includes(action);
+  const membershipGate = !canParticipate && (action === "publish" || (startsConversation && !existing));
+  const chatReady = !membershipGate &&
+    (action === "thread" || (startsConversation && p && actor && threads.data));
   const error = (talk ? threads.error : list.error) || (action && detail.error);
   return (
     <div className="circle-workspace">
@@ -537,7 +544,12 @@ export default function CircleWorkspace({ token, actor, name, companyName, versi
           )}
         </>
       )}
-      {action === "publish" && (
+      {membershipGate && (
+        <CircleDrawer title={action === "publish" ? "发布供需" : "同行会话"} onClose={dismiss}>
+          <CircleMembershipNotice participation={participation} onRetry={onCheckMembership} />
+        </CircleDrawer>
+      )}
+      {action === "publish" && canParticipate && (
         <PublishForm
           token={token}
           name={name}
@@ -567,6 +579,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, versi
               sources={sources}
               open={open}
               refresh={refresh}
+              canParticipate={canParticipate}
             />
           ) : (
             <p className="circle-pad">{detail.error || "正在加载发布…"}</p>
@@ -580,6 +593,8 @@ export default function CircleWorkspace({ token, actor, name, companyName, versi
             version={version}
             actor={actor}
             sources={sources}
+            participation={participation}
+            onCheckMembership={onCheckMembership}
             target={{
               threadId: action === "thread" ? param : existing?.id,
               post: action === "thread" ? undefined : p,
@@ -591,7 +606,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, versi
           />
         </React.Fragment>
       )}
-      {["inquire", "direct"].includes(action) && !chatReady && (
+      {startsConversation && !chatReady && !membershipGate && (
         <CircleDrawer title="同行会话" onClose={dismiss}>
           <div className="circle-pad">
             {detail.error || threads.error || "正在打开会话…"}

@@ -174,15 +174,18 @@ export class CreditWallet {
       return anchor <= now;
     });
   }
+  private activePlan(db: Db, workspace: string, now: string) {
+    return db.prepare("SELECT code,end FROM wallet_plans WHERE workspace=? AND start<=? AND end>? ORDER BY start DESC LIMIT 1")
+      .get(workspace, now, now);
+  }
+  hasActiveMembership(workspace: string, now = new Date().toISOString()) {
+    return this.store.use(db => Boolean(this.activePlan(db, workspace, now)));
+  }
   snapshot(scope: Scope, ownEntriesOnly: boolean, now = new Date().toISOString()) {
     const workspace = scope.currentWorkspaceId;
     return this.store.transaction((db) => {
       this.prepare(db, workspace, now);
-      const plan = db
-        .prepare(
-          "SELECT code,end FROM wallet_plans WHERE workspace=? AND start<=? AND end>? ORDER BY start DESC LIMIT 1",
-        )
-        .get(workspace, now, now);
+      const plan = this.activePlan(db, workspace, now);
       const next = db
         .prepare("SELECT amount,due FROM wallet_grants WHERE workspace=? AND applied=0 ORDER BY due LIMIT 1")
         .get(workspace);

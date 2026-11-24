@@ -5,7 +5,7 @@ import AccountProfile from "./components/AccountProfile";
 import TradeSearch from "./components/TradeSearch";
 import CircleWorkspace from "./components/CircleWorkspace";
 import { useCircleLive } from "./components/circle-client";
-import type { CircleSource } from "./circle-types";
+import type { CircleParticipation, CircleSource } from "./circle-types";
 import { navigateWorkspace, useWorkspaceRoute, useMessageEntry, setIntakeView, setAccountSection, DEEPSEEK_SETTINGS_HASH, TALK_HASH, type AccountSection, type TabKey } from "./workspace-navigation";
 import { readCompactMemorySpec, readMemoryFrequency } from "./memory-specs";
 import { startLedgerSync, type SyncState } from "./workspace-ledger-client";
@@ -1364,6 +1364,13 @@ export default function App() {
     return <LoginScreen onLogin={handleLogin} sessionNotice={authNotice} />;
   }
 
+  let circleParticipation: CircleParticipation = walletError ? "unavailable" : "loading";
+  if (currentWorkspace.type === "ENTERPRISE") circleParticipation = "allowed";
+  else if (accountWallet) {
+    const expiresAt = Date.parse(accountWallet.membershipExpiresAt ?? "");
+    circleParticipation = accountWallet.membershipStatus === "ACTIVE" && expiresAt > Date.now() ? "allowed" : "locked";
+  }
+
   return (
     <div className="app-shell" onKeyDown={event => {
       if (event.key === "Escape" && !event.defaultPrevented && !inspectorCollapsed
@@ -1441,7 +1448,10 @@ export default function App() {
           </div>}
           {activeTab === "input" && messageEntry.landing && <p className="message-opening" role="status">正在打开消息…</p>}
           {(activeTab==="circle" || (activeTab==="input" && intakeView==="talk"))&&<React.Fragment key={messageScope}><CircleWorkspace token={authSession.token}
-            actor={liveCircle.actor} name={liveCircle.name||authSession.user.maskedPhone} companyName={currentWorkspace.type === "ENTERPRISE" ? currentWorkspace.name : undefined} version={liveCircle.version} hash={hash} sources={circleSources} refresh={liveCircle.refresh}/></React.Fragment>}
+            actor={liveCircle.actor} name={liveCircle.name||authSession.user.maskedPhone} companyName={currentWorkspace.type === "ENTERPRISE" ? currentWorkspace.name : undefined}
+            participation={circleParticipation}
+            onCheckMembership={() => refreshWallet(n => n + 1)}
+            version={liveCircle.version} hash={hash} sources={circleSources} refresh={liveCircle.refresh}/></React.Fragment>}
 
           {activeTab === "stock" && (
             <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]"}`}>

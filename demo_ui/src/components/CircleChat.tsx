@@ -3,7 +3,8 @@ import { FileText, Send } from "lucide-react";
 import type { CircleMessage, CirclePost, CircleSource, CircleThread, QuoteTerms } from "../circle-types";
 import { listingKindLabel, matchingCircleSources } from "../circle-types";
 import { circleApi, localDate, postCircle, useCircleData } from "./circle-client";
-import { CircleDrawer } from "./CircleForms";
+import { CircleDrawer, CircleMembershipNotice } from "./CircleForms";
+import type { CircleParticipation } from "../circle-types";
 export type ChatTarget = { threadId?: string; post?: CirclePost; direct?: boolean; peerName: string };
 type History = { thread: CircleThread; items: CircleMessage[]; more: boolean };
 const dateAfter = (days: number) =>
@@ -16,6 +17,8 @@ export function CircleChat({
   sources,
   onClose,
   onSaved,
+  participation,
+  onCheckMembership,
 }: {
   token: string;
   actor: string;
@@ -24,6 +27,8 @@ export function CircleChat({
   sources: CircleSource[];
   onClose: () => void;
   onSaved: () => void;
+  participation: CircleParticipation;
+  onCheckMembership: () => void;
 }) {
   const [id, setId] = useState(target.threadId ?? "");
   const remote = useCircleData<History>(token, id ? "/threads/" + id : "", version);
@@ -126,7 +131,7 @@ export function CircleChat({
     }
   }
   async function send(kind: "text" | "quote" | "status") {
-    if (locked.current) return;
+    if (locked.current || participation !== "allowed") return;
     locked.current = true;
     working(true);
     fail("");
@@ -241,6 +246,8 @@ export function CircleChat({
         )}
         {thread?.status === "done" ? (
           <p className="circle-chat-end">本次对接已结束，历史报价可继续查看。</p>
+        ) : participation !== "allowed" ? (
+          <CircleMembershipNotice participation={participation} onRetry={onCheckMembership} />
         ) : (
           <form
             className="circle-composer"
