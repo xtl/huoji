@@ -4,7 +4,6 @@ import {
   ArrowUpRight,
   BadgeCheck,
   ChevronRight,
-  ListChecks,
   MessageCircle,
   MessagesSquare,
   PackageOpen,
@@ -41,16 +40,21 @@ type Props = {
 function Kind({ kind, mode }: { kind: string; mode: string }) {
   return <span className={"circle-kind " + (kind === "求购" ? "buy" : "")}>{listingKindLabel(kind, mode)}</span>;
 }
-function CircleIdentity({ post, avatar }: { post: CirclePost; avatar?: string | null }) {
+function CircleIdentity({ post, avatar, showTime = false }: { post: CirclePost; avatar?: string | null; showTime?: boolean }) {
   const initial = /^\d{3}\*{4}\d{4}$/.test(post.author) ? "" : Array.from(post.author.trim())[0];
   return <div className="circle-identity">
     <span className="circle-avatar" aria-hidden="true">
       {avatar ? <img src={avatar} alt="" loading="lazy" /> : initial || <UserRound size={20} />}
     </span>
     <div className="circle-identity-copy">
-      <strong>{post.author}</strong>
-      {post.companyName && <span className="circle-company" title="已认证企业"><BadgeCheck size={14} aria-hidden="true" />{post.companyName}</span>}
-      <small>{post.businessRole || sourceRoleLabel(post.role, post.mode)}</small>
+      <div className="circle-identity-name">
+        <strong>{post.author}</strong>
+        {post.companyName && <span className="circle-company" title="已认证企业"><BadgeCheck size={14} aria-hidden="true" />{post.companyName}</span>}
+      </div>
+      <small className="circle-identity-meta">
+        {showTime && <time dateTime={post.publishedAt}>{localDate(post.publishedAt)}</time>}
+        <span>{post.businessRole || sourceRoleLabel(post.role, post.mode)}</span>
+      </small>
     </div>
   </div>;
 }
@@ -69,32 +73,40 @@ function FeedPost({
   onDiscuss: () => void;
   onChat: () => void;
 }) {
+  const supply = post.kind === "供应";
+  const rental = post.mode === "租赁";
+  const quoteLabel = rental ? (supply ? "租金" : "租金预算") : (supply ? "报价" : "预算");
   return (
     <li className="circle-feed-post">
       <article>
         <header className="circle-feed-post-head">
-          <CircleIdentity post={post} avatar={avatar} />
-          <time dateTime={post.publishedAt}>{localDate(post.publishedAt)}</time>
+          <CircleIdentity post={post} avatar={avatar} showTime />
         </header>
-        <h3 className="circle-feed-title">
-          <Kind kind={post.kind} mode={post.mode} />
-          <button type="button" onClick={onOpen}>{post.title}</button>
-          {!post.active && <small>已结束</small>}
-        </h3>
-        {post.terms && <p className="circle-feed-terms">{post.terms}</p>}
-        <dl className="circle-feed-facts">
-          <div><dt>{post.kind === "供应" ? "可供数量" : "需求数量"}</dt><dd>{post.quantity}</dd></div>
-          <div><dt>交付</dt><dd>{post.city} · {post.mode}</dd></div>
-          <div><dt>{post.kind === "供应" ? "报价" : "预算"}</dt><dd>{post.price || (post.kind === "供应" ? "面议" : "接受报价")}</dd></div>
+        <div className="circle-feed-content">
+          <h3 className="circle-feed-title">
+            <Kind kind={post.kind} mode={post.mode} />
+            <button type="button" onClick={onOpen}>{post.title}</button>
+          </h3>
+          <p className="circle-feed-facts">
+            <span>数量 <strong>{post.quantity}</strong></span>
+            <span>{post.city}</span>
+            <span>{post.mode}</span>
+            {!post.active && <span className="circle-feed-closed">已结束</span>}
+          </p>
+          {post.terms && <p className="circle-feed-terms">{post.terms}</p>}
+        </div>
+        <dl className="circle-feed-quote" data-quoted={Boolean(post.price) || undefined}>
+          <dt>{quoteLabel}</dt>
+          <dd>{post.price || (supply ? "面议" : "接受报价")}</dd>
         </dl>
         <footer className="circle-feed-actions">
           <button type="button" className="circle-discuss" onClick={onDiscuss}>
             <MessagesSquare size={16} aria-hidden="true" />规格讨论
-            {!!post.questionCount && <span>{post.questionCount}</span>}
+            {!!post.questionCount && <span className="circle-discuss-count">{post.questionCount}</span>}
           </button>
-          <button type="button" className="circle-secondary" onClick={own ? onOpen : onChat}>
-            {own ? <ListChecks size={16} aria-hidden="true" /> : <MessageCircle size={16} aria-hidden="true" />}
-            {own ? "管理发布" : post.kind === "供应" ? "询价" : "我能供货"}
+          <button type="button" className="circle-feed-action" data-own={own || undefined} onClick={own ? onOpen : onChat}>
+            {own ? "管理发布" : supply ? "询价" : "我能供货"}
+            <ChevronRight size={16} aria-hidden="true" />
           </button>
         </footer>
       </article>
@@ -407,6 +419,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
   const items = threads.data?.items ?? [],
     p = detail.data?.post;
   const unread = items.reduce((total, thread) => total + thread.unread, 0);
+  const hasRecentTalk = !talk && items.length > 0;
   const open = (next: string) => {
     setHint("");
     navigateWorkspace(base + "/" + next);
@@ -439,7 +452,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
     (action === "thread" || (startsConversation && p && actor && threads.data));
   const error = (talk ? threads.error : list.error) || (action && detail.error);
   return (
-    <div className="circle-workspace">
+    <div className={talk ? "circle-workspace" : "circle-workspace circle-marketplace" + (hasRecentTalk ? " has-recent-talk" : "")}>
       {error && (
         <div role="alert" className="circle-error">
           {error} <button onClick={refresh}>重试</button>
@@ -474,7 +487,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
         </section>
       ) : (
         <>
-          <div className="view-bar">
+          <div className="view-bar circle-market-nav">
             <nav className="circle-tabs" aria-label="广场范围">
               {[
                 ["圈内供需", "#circle"],
@@ -499,12 +512,13 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
               ))}
             </nav>
             <div className="circle-feed-nav-actions">
-              <a className="circle-link circle-feed-mobile-talk" href={TALK_HASH} aria-label="同行会话">
+              <a className="circle-link circle-feed-talk-link" href={TALK_HASH} aria-label={unread > 0 ? "同行会话，" + unread + " 条未读消息" : "同行会话"}>
                 <MessageCircle size={19} aria-hidden="true" />
-                {unread > 0 && <b className="circle-unread">{unread}</b>}
+                <span>会话</span>
+                {unread > 0 && <b className="circle-unread" aria-hidden="true">{unread}</b>}
               </a>
-              <button type="button" className="circle-primary" onClick={() => open("publish")}>
-                <Plus size={16} aria-hidden="true" />发布供需
+              <button type="button" className="circle-primary" aria-label="发布供需" onClick={() => open("publish")}>
+                <Plus size={16} aria-hidden="true" /><span>发布<span className="circle-publish-suffix">供需</span></span>
               </button>
             </div>
           </div>
@@ -538,20 +552,20 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
                 </label>
               </div>
               {list.data?.items.length ? (
-                  <ul className="circle-feed" aria-label="广场发布">
-                    {list.data.items.map((post) => (
-                        <React.Fragment key={post.id}>
-                          <FeedPost
-                            post={post}
-                            avatar={list.data?.avatars?.[post.owner]}
-                            own={post.owner === actor}
-                            onOpen={() => open("post/" + post.id)}
-                            onDiscuss={() => open("post/" + post.id + "/discussion")}
-                            onChat={() => open("inquire/" + post.id)}
-                          />
-                        </React.Fragment>
-                    ))}
-                  </ul>
+                <ul className="circle-feed" aria-label="广场发布">
+                  {list.data.items.map(post => (
+                    <React.Fragment key={post.id}>
+                      <FeedPost
+                        post={post}
+                        avatar={list.data?.avatars?.[post.owner]}
+                        own={post.owner === actor}
+                        onOpen={() => open("post/" + post.id)}
+                        onDiscuss={() => open("post/" + post.id + "/discussion")}
+                        onChat={() => open("inquire/" + post.id)}
+                      />
+                    </React.Fragment>
+                  ))}
+                </ul>
               ) : (
                 !list.error && (
                   <Empty
@@ -580,9 +594,9 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
                 </div>
               )}
             </div>
-            <aside className="circle-feed-side" aria-label="同行会话">
+            {hasRecentTalk && <aside className="circle-feed-side" aria-label="同行会话">
               <a className="circle-feed-side-heading" href={TALK_HASH}>
-                <span><MessageCircle size={17} aria-hidden="true" />同行会话</span>
+                <span><MessageCircle size={17} aria-hidden="true" />最近会话</span>
                 {unread > 0 && <b className="circle-unread" aria-label={unread + " 条未读消息"}>{unread}</b>}
                 <ArrowUpRight size={16} aria-hidden="true" />
               </a>
@@ -592,7 +606,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
                   <small>{thread.lastText || thread.title}</small>
                 </a>
               ))}
-            </aside>
+            </aside>}
           </div>
         </>
       )}
