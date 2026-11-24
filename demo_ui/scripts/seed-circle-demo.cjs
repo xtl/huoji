@@ -17,14 +17,23 @@ const products = [
   ["H200", "H200 8 卡整机", "台", [4, 8, 16, 32]],
   ["H100", "H100 8 卡整机", "台", [2, 4, 8, 12]],
   ["H20", "H20 96G 整机", "台", [2, 4, 8, 16]],
-  ["A100", "A100 80G 显卡", "张", [4, 8, 16, 32]],
-  ["A800", "A800 80G 显卡", "张", [4, 8, 16]],
+  ["A100", "A100 80G 8 卡整机", "台", [2, 4, 8, 16]],
+  ["A800", "A800 80G 8 卡整机", "台", [2, 4, 8]],
   ["910C", "昇腾 910C 整机", "台", [2, 4, 8]],
-  ["5090", "RTX 5090 显卡", "张", [4, 8, 24, 48]],
   ["DDR4", "64GB DDR4 3200 服务器内存", "条", [20, 40, 80, 120]],
   ["DDR5", "64GB DDR5 6400 服务器内存", "条", [32, 64, 128, 200]],
 ];
-const cities = ["深圳", "广州", "上海", "北京", "杭州", "苏州", "香港", "成都"];
+const memorySpecs = [
+  ["DDR4", "三星 64GB DDR4 3200 ECC RDIMM", "条", [20, 40, 80, 120]],
+  ["DDR4", "SK 海力士 32GB DDR4 3200 ECC RDIMM", "条", [24, 48, 96, 192]],
+  ["DDR4", "美光 128GB DDR4 3200 ECC LRDIMM", "条", [16, 32, 64]],
+  ["DDR5", "SK 海力士 64GB DDR5 6400 ECC RDIMM", "条", [32, 64, 128, 200]],
+  ["DDR5", "三星 32GB DDR5 5600 ECC RDIMM", "条", [20, 40, 80, 160]],
+  ["DDR5", "美光 96GB DDR5 5600 ECC RDIMM", "条", [16, 32, 64, 128]],
+  ["DDR5", "三星 128GB DDR5 5600 ECC RDIMM", "条", [16, 32, 64]],
+];
+const cities = [["深圳", 30], ["上海", 7], ["北京", 7], ["杭州", 6]]
+  .flatMap(([city, count]) => Array(count).fill(city));
 const spotSupply = ["可分批交付，验货后提货。", "可安排看货，报价按含税自提核算。", "支持现场验机，整批优先。"];
 const spotDemand = ["请报含税价及最快交付时间。", "优先本地现货，可分批到货。", "请注明成色、质保和是否支持验货。"];
 const DAY = 86400000;
@@ -69,7 +78,9 @@ try {
 }
 const referenced = products.filter(([model]) => scores.get(model) > 0)
   .sort(([first], [second]) => scores.get(second) - scores.get(first));
-const mix = [...referenced, ...products];
+const serverMix = [...referenced, ...products].filter(([, , unit]) => unit === "台" || unit === "柜");
+const rentalMix = serverMix.filter(([, , unit]) => unit === "台");
+const memoryMix = [...memorySpecs.filter(([model]) => scores.get(model) > 0), ...memorySpecs];
 const db = new DatabaseSync(path.join(path.dirname(identityFile), "circle.sqlite"));
 try {
   db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
@@ -81,9 +92,17 @@ try {
     .run(owner, phone.slice(0, 3) + "****" + phone.slice(-4), user.id);
   const save = db.prepare(`INSERT INTO posts
     (id,owner,nonce,kind,title,quantity,city,mode,role,businessRole,price,terms,publishedAt,expiresAt,confirmedAt,companyName,demoAuthor)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,nonce) DO NOTHING`);
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(owner,nonce) DO UPDATE SET
+      kind=excluded.kind, title=excluded.title, quantity=excluded.quantity, city=excluded.city, mode=excluded.mode,
+      role=excluded.role, businessRole=excluded.businessRole, terms=excluded.terms
+    WHERE posts.demoAuthor IS NOT NULL AND
+      (posts.kind,posts.title,posts.quantity,posts.city,posts.mode,posts.role,posts.businessRole,posts.terms)
+      IS NOT (excluded.kind,excluded.title,excluded.quantity,excluded.city,excluded.mode,excluded.role,excluded.businessRole,excluded.terms)`);
+  const existing = db.prepare("SELECT 1 FROM posts WHERE owner=? AND nonce=?");
   const expiresAt = new Date(endDay + 31 * DAY).toISOString();
   let inserted = 0;
+  let updated = 0;
   for (let day = 0; day < 15; day += 1) {
     const midnight = endDay - (14 - day) * DAY;
     const date = shanghaiDay(midnight);
@@ -94,10 +113,12 @@ try {
       const index = day * 50 + slot;
       const sample = (slot * 17 + day * 11) % 50;
       const supply = sample % 5 < 3;
+      const category = sample < 25 ? "memory" : sample < 35 ? "rental" : "server";
+      const mix = category === "memory" ? memoryMix : category === "rental" ? rentalMix : serverMix;
       const [, model, unit, quantities] = mix[(sample + day * 3) % mix.length];
       const quantity = quantities[(sample + day) % quantities.length] + unit;
-      const city = cities[(sample * 3 + day) % cities.length];
-      const mode = unit === "台" && sample % 8 === 0 ? "租赁" : sample % 7 === 0 ? "期货" : "现货";
+      const city = cities[(slot * 23 + day * 13) % cities.length];
+      const mode = category === "rental" ? "租赁" : sample % 7 === 0 ? "期货" : "现货";
       const terms = mode === "租赁"
         ? supply ? "月租，可安排上架，电费另计。" : "先租三个月，请报月租、机房位置及电费。"
         : mode === "期货"
@@ -105,20 +126,30 @@ try {
           : (supply ? spotSupply : spotDemand)[(sample + day) % spotSupply.length];
       const at = new Date(firstTime + Math.floor((lastTime - firstTime) * slot / 49)).toISOString();
       const nonce = prefix + date + "-" + String(slot).padStart(2, "0");
-      inserted += Number(save.run(
+      const wasPresent = existing.get(owner, nonce);
+      const changes = Number(save.run(
         "demo-" + digest(owner + nonce).slice(0, 28), owner, nonce, supply ? "供应" : "求购",
         model, quantity, city, mode, supply ? "受托供货" : "受托采购", mode === "租赁" ? "租赁方" : "贸易商",
         "", terms, at, expiresAt, at, "", profiles[(index * 17) % profiles.length],
       ).changes);
+      if (wasPresent) updated += changes;
+      else inserted += changes;
     }
   }
-  const totals = db.prepare(`SELECT substr(nonce, ?, 10) AS date,count(*) AS total
+  const totals = db.prepare(`SELECT substr(nonce, ?, 10) AS date,count(*) AS total,
+    sum(title LIKE '%RDIMM') AS memory, sum(mode='租赁') AS rental,
+    sum(mode <> '租赁' AND title NOT LIKE '%RDIMM') AS servers,
+    sum(city='深圳') AS shenzhen, sum(city='上海') AS shanghai,
+    sum(city='北京') AS beijing, sum(city='杭州') AS hangzhou
     FROM posts WHERE owner=? AND demoAuthor IS NOT NULL AND nonce BETWEEN ? AND ? GROUP BY date ORDER BY date`)
     .all(prefix.length + 1, owner, prefix + shanghaiDay(endDay - 14 * DAY), prefix + endDate + "~");
-  if (totals.length !== 15 || totals.some(day => day.total !== 50)) throw new Error("Demo batch count mismatch.");
-  if (inserted) db.exec("INSERT INTO revision VALUES ('feed',1) ON CONFLICT(id) DO UPDATE SET n=n+1");
+  const expected = { total: 50, memory: 25, rental: 10, servers: 15, shenzhen: 30, shanghai: 7, beijing: 7, hangzhou: 6 };
+  if (totals.length !== 15 || totals.some(day => Object.entries(expected).some(([key, value]) => day[key] !== value))) {
+    throw new Error("Demo batch distribution mismatch.");
+  }
+  if (inserted || updated) db.exec("INSERT INTO revision VALUES ('feed',1) ON CONFLICT(id) DO UPDATE SET n=n+1");
   db.exec("COMMIT");
-  console.log(JSON.stringify({ inserted, profiles: profiles.length, referencedModels: referenced.length, totals }));
+  console.log(JSON.stringify({ inserted, updated, profiles: profiles.length, referencedModels: referenced.length, totals }));
 } catch (error) {
   if (db.isTransaction) db.exec("ROLLBACK");
   throw error;

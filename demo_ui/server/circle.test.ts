@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createCircleRouter } from "./circle";
 import type { AddressInfo } from "node:net";
 
@@ -48,11 +49,20 @@ test("demo history stays separate, keeps its owner and rejects messages", async 
   assert.equal(first.inserted, 750);
   assert.equal(first.referencedModels, 1);
   assert.equal(first.totals.length, 15);
-  assert.ok(first.totals.every((day: { total: number }) => day.total === 50));
-  assert.equal(seed().inserted, 0);
-  assert.ok((await request("/posts")).payload.items.every((post: { demo: boolean }) => post.demo));
-  assert.equal((await request("/posts?scope=sale")).payload.items.length, 30);
-  assert.ok((await request("/posts?scope=rental")).payload.items.length > 0);
+  for (const { date: _date, ...day } of first.totals) {
+    assert.deepEqual(day, { total: 50, memory: 25, rental: 10, servers: 15, shenzhen: 30, shanghai: 7, beijing: 7, hangzhou: 6 });
+  }
+  const db = new DatabaseSync(join(dir, "circle.sqlite"));
+  db.exec("UPDATE posts SET city='广州' WHERE demoAuthor IS NOT NULL");
+  db.close();
+  const corrected = seed();
+  assert.equal(corrected.inserted, 0);
+  assert.equal(corrected.updated, 750);
+  assert.equal(seed().updated, 0);
+  assert.deepEqual((await request("/posts")).payload.items, []);
+  assert.deepEqual((await request("/posts?scope=rental")).payload.items, []);
+  assert.equal((await request("/posts?demo=1&scope=sale")).payload.items.length, 30);
+  assert.ok((await request("/posts?demo=1&scope=rental")).payload.items.length > 0);
   assert.deepEqual((await request("/posts?mine=1", "demo-owner")).payload.items, []);
   const { items, more } = (await request("/posts?demo=1")).payload;
   assert.equal(items.length, 30);

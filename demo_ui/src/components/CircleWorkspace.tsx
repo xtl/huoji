@@ -94,7 +94,6 @@ function FeedPost({
           </p>
           {post.terms && <p className="circle-feed-terms">{post.terms}</p>}
           <p className="circle-feed-meta">
-            {post.demo && <span className="circle-demo-label">示例</span>}
             <span className="circle-feed-avatar" aria-hidden="true">
               {avatar ? <img src={avatar} alt="" loading="lazy" /> : initial || <UserRound size={12} />}
             </span>
@@ -113,7 +112,7 @@ function FeedPost({
             <strong>{post.price || (supply ? "面议" : "接受报价")}</strong>
           </p>
           <button type="button" className="circle-feed-action" data-own={own || undefined} onClick={own || post.demo ? onOpen : onChat}>
-            {own ? "管理" : post.demo ? "查看示例" : supply ? (rental ? "询租" : "询价") : "我能供货"}
+            {own ? "管理" : post.demo ? "查看详情" : supply ? (rental ? "询租" : "询价") : "我能供货"}
             <ChevronRight size={15} aria-hidden="true" />
           </button>
         </div>
@@ -184,7 +183,7 @@ function PostDetail({
     <div className="circle-pad circle-post-detail">
       <div className="circle-detail-top">
         <Kind kind={p.kind} mode={p.mode} />
-        <small>{p.demo ? "模拟供需" : p.active ? sourceRoleLabel(p.role, p.mode) : "已结束"}</small>
+        <small>{p.active ? sourceRoleLabel(p.role, p.mode) : "已结束"}</small>
       </div>
       <h3>{p.title}</h3>
       <div className="circle-detail-price">{p.price || (p.kind === "供应" ? "价格面议" : "接受报价")}</div>
@@ -502,7 +501,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
                 ["圈内供需", "#circle"],
                 ["租赁", "#circle/rental"],
                 ["我的发布", "#circle/mine"],
-                ["模拟供需", "#circle/demo"],
+                ["演示广场", "#circle/demo"],
               ].map(([label, path]) => (
                 <a
                   href={path}
@@ -534,7 +533,6 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
           </div>
           <div className="circle-feed-layout">
             <div className="circle-feed-main">
-              {demo && <p className="circle-help">以下为模拟账号和供需示例，仅供浏览。</p>}
               <div className="circle-toolbar">
                 <div className="circle-filters" aria-label="供需类型">
                   {["", "供应", "求购"].map((k) => (
