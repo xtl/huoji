@@ -121,7 +121,7 @@ test("signed Alipay top-up and membership orders use their stored entitlement an
   const legacyWallet = new CreditWallet(store).snapshot({
     userId: legacyOrder.userId, currentWorkspaceId: legacyOrder.workspaceId,
   }, false);
-  assert.equal(legacyWallet.transactions[0]?.amount, 2000);
+  assert.equal(legacyWallet.transactions.find(entry => "type" in entry && entry.type === "RECHARGE")?.amount, 2000);
   async function checkTopUp(price: number, points: number) {
     const order = await create("CREDIT_PACKAGE", "credits_cny_" + price);
     assert.equal(order.amountYuan, price.toFixed(2));
