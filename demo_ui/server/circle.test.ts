@@ -50,7 +50,9 @@ test("demo history stays separate, keeps its owner and rejects messages", async 
   assert.equal(first.totals.length, 15);
   assert.ok(first.totals.every((day: { total: number }) => day.total === 50));
   assert.equal(seed().inserted, 0);
-  assert.deepEqual((await request("/posts")).payload.items, []);
+  assert.ok((await request("/posts")).payload.items.every((post: { demo: boolean }) => post.demo));
+  assert.equal((await request("/posts?scope=sale")).payload.items.length, 30);
+  assert.ok((await request("/posts?scope=rental")).payload.items.length > 0);
   assert.deepEqual((await request("/posts?mine=1", "demo-owner")).payload.items, []);
   const { items, more } = (await request("/posts?demo=1")).payload;
   assert.equal(items.length, 30);

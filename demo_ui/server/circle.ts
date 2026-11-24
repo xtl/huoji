@@ -268,9 +268,9 @@ export function createCircleRouter(
   router.get("/posts", (req, res) => {
     const params: any[] = [],
       where: string[] = [];
-    where.push(req.query.demo === "1" ? "p.demoAuthor IS NOT NULL" : "p.demoAuthor IS NULL");
+    if (req.query.demo === "1") where.push("p.demoAuthor IS NOT NULL");
     if (req.query.mine === "1" && req.query.demo !== "1") {
-      where.push("p.owner=?");
+      where.push("p.owner=? AND p.demoAuthor IS NULL");
       params.push(res.locals.me);
     } else {
       where.push("p.closed=0 AND p.expiresAt>?");

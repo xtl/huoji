@@ -25,6 +25,8 @@ const products = [
   ["DDR5", "64GB DDR5 6400 服务器内存", "条", [32, 64, 128, 200]],
 ];
 const cities = ["深圳", "广州", "上海", "北京", "杭州", "苏州", "香港", "成都"];
+const spotSupply = ["可分批交付，验货后提货。", "可安排看货，报价按含税自提核算。", "支持现场验机，整批优先。"];
+const spotDemand = ["请报含税价及最快交付时间。", "优先本地现货，可分批到货。", "请注明成色、质保和是否支持验货。"];
 const DAY = 86400000;
 const SHANGHAI_OFFSET = 8 * 3600000;
 const prefix = "circle-demo-v1-";
@@ -96,12 +98,17 @@ try {
       const quantity = quantities[(sample + day) % quantities.length] + unit;
       const city = cities[(sample * 3 + day) % cities.length];
       const mode = unit === "台" && sample % 8 === 0 ? "租赁" : sample % 7 === 0 ? "期货" : "现货";
+      const terms = mode === "租赁"
+        ? supply ? "月租，可安排上架，电费另计。" : "先租三个月，请报月租、机房位置及电费。"
+        : mode === "期货"
+          ? supply ? "交期约四周，按批确认到货计划。" : "可接受排期，请回复预计到货周和付款条件。"
+          : (supply ? spotSupply : spotDemand)[(sample + day) % spotSupply.length];
       const at = new Date(firstTime + Math.floor((lastTime - firstTime) * slot / 49)).toISOString();
       const nonce = prefix + date + "-" + String(slot).padStart(2, "0");
       inserted += Number(save.run(
         "demo-" + digest(owner + nonce).slice(0, 28), owner, nonce, supply ? "供应" : "求购",
         model, quantity, city, mode, supply ? "受托供货" : "受托采购", mode === "租赁" ? "租赁方" : "贸易商",
-        "", "模拟供需，仅用于体验广场。", at, expiresAt, at, "", profiles[(index * 17) % profiles.length],
+        "", terms, at, expiresAt, at, "", profiles[(index * 17) % profiles.length],
       ).changes);
     }
   }

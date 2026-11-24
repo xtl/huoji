@@ -94,7 +94,7 @@ function FeedPost({
           </p>
           {post.terms && <p className="circle-feed-terms">{post.terms}</p>}
           <p className="circle-feed-meta">
-            {post.demo && <span className="circle-demo-label">模拟</span>}
+            {post.demo && <span className="circle-demo-label">示例</span>}
             <span className="circle-feed-avatar" aria-hidden="true">
               {avatar ? <img src={avatar} alt="" loading="lazy" /> : initial || <UserRound size={12} />}
             </span>
