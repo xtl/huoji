@@ -71,6 +71,10 @@ const mix = [...referenced, ...products];
 const db = new DatabaseSync(path.join(path.dirname(identityFile), "circle.sqlite"));
 try {
   db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
+  const columns = db.prepare("PRAGMA table_info(posts)").all();
+  if (columns.length && !columns.some(column => column.name === "demoAuthor")) {
+    db.exec("ALTER TABLE posts ADD COLUMN demoAuthor TEXT");
+  }
   db.prepare("INSERT OR IGNORE INTO actors(id,name,account) VALUES(?,?,?)")
     .run(owner, phone.slice(0, 3) + "****" + phone.slice(-4), user.id);
   const save = db.prepare(`INSERT INTO posts
