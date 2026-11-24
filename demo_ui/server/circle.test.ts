@@ -2,8 +2,68 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createCircleRouter } from "./circle";
 import type { AddressInfo } from "node:net";
+
+test("demo history stays separate, keeps its owner and rejects messages", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "huoji-circle-demo-"));
+  const identity = join(dir, "identity.json");
+  const capture = join(dir, "rpa-messages.json");
+  const phone = "13800000000";
+  writeFileSync(identity, JSON.stringify({
+    users: [{ phone, id: "demo-owner" }],
+    workspaces: [{ ownerUserId: "demo-owner", id: "personal", type: "PERSONAL" }],
+  }));
+  writeFileSync(capture, JSON.stringify({ messages: [{
+    userId: "demo-owner", workspaceId: "personal", sender: "private-canary",
+    parsedResult: { data: { items: [{ gpuModel: "H200" }] } },
+  }] }));
+  const app = express();
+  app.use(express.json());
+  app.use(createCircleRouter(join(dir, "circle.sqlite"), header => ({
+    userId: String(header).slice(7), currentWorkspaceId: "personal", displayName: "真实账号昵称",
+  }), null));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const origin = "http://127.0.0.1:" + (server.address() as AddressInfo).port;
+  async function request(route: string, who = "viewer", method = "GET", body?: object) {
+    const res = await fetch(origin + route, {
+      method, headers: { Authorization: "Bearer " + who, "Content-Type": "application/json" },
+      body: body && JSON.stringify(body),
+    });
+    return { status: res.status, payload: await res.json() };
+  }
+  assert.deepEqual((await request("/posts")).payload.items, []);
+  const date = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const seed = () => JSON.parse(execFileSync(process.execPath, ["scripts/seed-circle-demo.cjs", phone, date], {
+    encoding: "utf8", env: { ...process.env, AUTH_STATE_FILE: identity, RPA_MESSAGES_FILE: capture },
+    stdio: ["ignore", "pipe", "pipe"],
+  }));
+  const first = seed();
+  assert.equal(first.inserted, 750);
+  assert.equal(first.referencedModels, 1);
+  assert.equal(first.totals.length, 15);
+  assert.ok(first.totals.every((day: { total: number }) => day.total === 50));
+  assert.equal(seed().inserted, 0);
+  assert.deepEqual((await request("/posts")).payload.items, []);
+  assert.deepEqual((await request("/posts?mine=1", "demo-owner")).payload.items, []);
+  const { items, more } = (await request("/posts?demo=1")).payload;
+  assert.equal(items.length, 30);
+  assert.equal(more, true);
+  const secondPage = (await request("/posts?demo=1&offset=30")).payload.items;
+  assert.equal(new Set([...items, ...secondPage].map((post: { author: string }) => post.author)).size, 30);
+  assert.ok(items.every((post: { demo: boolean }) => post.demo));
+  const { id } = items[0];
+  assert.equal((await request("/send", "viewer", "POST", { nonce: randomUUID(), postId: id, kind: "text", text: "询价" })).status, 409);
+  assert.equal((await request("/posts/" + id + "/questions", "viewer", "POST", { nonce: randomUUID(), body: "有货吗" })).status, 409);
+  assert.equal((await request("/posts/" + id, "viewer", "PATCH", { action: "close" })).status, 404);
+  assert.equal((await request("/posts/" + id, "demo-owner", "PATCH", { action: "close" })).status, 200);
+});
 
 test("members publish whitelisted fields, talk privately, revise quotes and retain closed records", async (t) => {
   const app = express();

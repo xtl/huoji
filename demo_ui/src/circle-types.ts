@@ -23,6 +23,7 @@ export interface CirclePost extends Omit<ListingDraft, "days"> {
   id: string;
   owner: string;
   author: string;
+  demo?: boolean;
   companyName?: string;
   questionCount?: number;
   publishedAt: string;

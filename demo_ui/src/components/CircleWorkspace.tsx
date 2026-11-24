@@ -94,6 +94,7 @@ function FeedPost({
           </p>
           {post.terms && <p className="circle-feed-terms">{post.terms}</p>}
           <p className="circle-feed-meta">
+            {post.demo && <span className="circle-demo-label">模拟</span>}
             <span className="circle-feed-avatar" aria-hidden="true">
               {avatar ? <img src={avatar} alt="" loading="lazy" /> : initial || <UserRound size={12} />}
             </span>
@@ -101,9 +102,9 @@ function FeedPost({
             {post.companyName && <span className="circle-company" title="已认证企业"><BadgeCheck size={13} aria-hidden="true" />{post.companyName}</span>}
             <span className="circle-feed-role">{post.businessRole || sourceRoleLabel(post.role, post.mode)}</span>
             <time dateTime={post.publishedAt}>{localDate(post.publishedAt)}</time>
-            <button type="button" className="circle-feed-discuss" onClick={onDiscuss} aria-label={"规格讨论" + (post.questionCount ? "，" + post.questionCount + " 条" : "")}>
+            {!post.demo && <button type="button" className="circle-feed-discuss" onClick={onDiscuss} aria-label={"规格讨论" + (post.questionCount ? "，" + post.questionCount + " 条" : "")}>
               <MessagesSquare size={13} aria-hidden="true" />{post.questionCount || "讨论"}
-            </button>
+            </button>}
           </p>
         </div>
         <div className="circle-feed-aside">
@@ -111,8 +112,8 @@ function FeedPost({
             <small>{quoteLabel}</small>
             <strong>{post.price || (supply ? "面议" : "接受报价")}</strong>
           </p>
-          <button type="button" className="circle-feed-action" data-own={own || undefined} onClick={own ? onOpen : onChat}>
-            {own ? "管理" : supply ? (rental ? "询租" : "询价") : "我能供货"}
+          <button type="button" className="circle-feed-action" data-own={own || undefined} onClick={own || post.demo ? onOpen : onChat}>
+            {own ? "管理" : post.demo ? "查看示例" : supply ? (rental ? "询租" : "询价") : "我能供货"}
             <ChevronRight size={15} aria-hidden="true" />
           </button>
         </div>
@@ -183,7 +184,7 @@ function PostDetail({
     <div className="circle-pad circle-post-detail">
       <div className="circle-detail-top">
         <Kind kind={p.kind} mode={p.mode} />
-        <small>{p.active ? sourceRoleLabel(p.role, p.mode) : "已结束"}</small>
+        <small>{p.demo ? "模拟供需" : p.active ? sourceRoleLabel(p.role, p.mode) : "已结束"}</small>
       </div>
       <h3>{p.title}</h3>
       <div className="circle-detail-price">{p.price || (p.kind === "供应" ? "价格面议" : "接受报价")}</div>
@@ -215,19 +216,19 @@ function PostDetail({
       )}
       <div className="circle-author">
         <CircleIdentity post={p} avatar={detail.authorAvatar} />
-        {!mine && (
+        {!mine && !p.demo && (
           <button className="circle-link" onClick={() => open("direct/" + p.id)}>
             私信发布人
           </button>
         )}
       </div>
-      {!mine && (p.active || leads.length > 0) && (
+      {!mine && !p.demo && (p.active || leads.length > 0) && (
         <button className="circle-primary" onClick={() => open("inquire/" + p.id)}>
           <MessageCircle size={16} />
           {leads.length ? "继续对接" : p.kind === "供应" ? "我要询价" : "我能供货"}
         </button>
       )}
-      {matches.length > 0 && p.active && (
+      {!p.demo && matches.length > 0 && p.active && (
         <details className="circle-qa">
           <summary>
             我的{p.kind === "供应" ? "需求" : "供应"}库有 {matches.length} 条相关型号
@@ -317,7 +318,7 @@ function PostDetail({
           })}
         </section>
       )}
-      <details className="circle-qa" ref={discussion}>
+      {!p.demo && <details className="circle-qa" ref={discussion}>
         <summary>
           公开问规格 <span>{detail.questions.length}</span>
         </summary>
@@ -388,7 +389,7 @@ function PostDetail({
         ) : (
           !detail.questions.length && <p className="circle-help">暂无规格问题。</p>
         )}
-      </details>
+      </details>}
       {error && (
         <p role="alert" className="circle-error">
           {error}
@@ -401,9 +402,10 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
   const parts = hash.replace(/^#/, "").split("/"),
     talk = parts[0] === "input" && parts[1] === "talk",
     mine = !talk && parts[1] === "mine",
-    rental = !talk && parts[1] === "rental";
-  const base = talk ? TALK_HASH : mine ? "#circle/mine" : rental ? "#circle/rental" : "#circle";
-  const [action, param, sourceKind] = parts.slice(talk || mine || rental ? 2 : 1);
+    rental = !talk && parts[1] === "rental",
+    demo = !talk && parts[1] === "demo";
+  const base = talk ? TALK_HASH : mine ? "#circle/mine" : rental ? "#circle/rental" : demo ? "#circle/demo" : "#circle";
+  const [action, param, sourceKind] = parts.slice(talk || mine || rental || demo ? 2 : 1);
   const [filter, setFilter] = useState(""),
     [word, query] = useState(""),
     [search, searchFor] = useState(""),
@@ -414,7 +416,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
     talk
       ? ""
       : "/posts?" +
-          new URLSearchParams({ mine: mine ? "1" : "0", scope: mine ? "" : rental ? "rental" : "sale", kind: filter, q: search, offset: String(page * 30) }),
+          new URLSearchParams({ mine: mine ? "1" : "0", demo: demo ? "1" : "0", scope: mine || demo ? "" : rental ? "rental" : "sale", kind: filter, q: search, offset: String(page * 30) }),
     version,
   );
   const threads = useCircleData<{ items: CircleThread[] }>(token, "/threads", version);
@@ -454,8 +456,8 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
       : items.find((t) => (action === "direct" ? t.peer === p?.owner && !t.postId : t.postId === param));
   const canParticipate = participation === "allowed";
   const startsConversation = ["direct", "inquire"].includes(action);
-  const membershipGate = !canParticipate && (action === "publish" || (startsConversation && !existing));
-  const chatReady = !membershipGate &&
+  const membershipGate = !canParticipate && (action === "publish" || (startsConversation && !existing && !p?.demo));
+  const chatReady = !membershipGate && !p?.demo &&
     (action === "thread" || (startsConversation && p && actor && threads.data));
   const error = (talk ? threads.error : list.error) || (action && detail.error);
   return (
@@ -500,6 +502,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
                 ["圈内供需", "#circle"],
                 ["租赁", "#circle/rental"],
                 ["我的发布", "#circle/mine"],
+                ["模拟供需", "#circle/demo"],
               ].map(([label, path]) => (
                 <a
                   href={path}
@@ -531,6 +534,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
           </div>
           <div className="circle-feed-layout">
             <div className="circle-feed-main">
+              {demo && <p className="circle-help">以下为模拟账号和供需示例，仅供浏览。</p>}
               <div className="circle-toolbar">
                 <div className="circle-filters" aria-label="供需类型">
                   {["", "供应", "求购"].map((k) => (
@@ -564,7 +568,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
                     <React.Fragment key={post.id}>
                       <FeedPost
                         post={post}
-                        avatar={list.data?.avatars?.[post.owner]}
+                        avatar={post.demo ? undefined : list.data?.avatars?.[post.owner]}
                         own={post.owner === actor}
                         onOpen={() => open("post/" + post.id)}
                         onDiscuss={() => open("post/" + post.id + "/discussion")}
@@ -683,7 +687,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
       {startsConversation && !chatReady && !membershipGate && (
         <CircleDrawer title="同行会话" onClose={dismiss}>
           <div className="circle-pad">
-            {detail.error || threads.error || "正在打开会话…"}
+            {p?.demo ? "模拟供需仅供浏览。" : detail.error || threads.error || "正在打开会话…"}
             {(detail.error || threads.error) && <button onClick={refresh}>重试</button>}
           </div>
         </CircleDrawer>

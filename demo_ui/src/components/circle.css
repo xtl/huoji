@@ -126,6 +126,7 @@
 .circle-marketplace { max-width: 49rem; margin-inline: auto; }
 .circle-marketplace.has-recent-talk { max-width: 65rem; }
 .circle-market-nav { min-height: 47px; }
+.circle-demo-label { border-radius: 4px; background: var(--c-wash); color: var(--c-muted); padding: 1px 5px; }
 .circle-feed-nav-actions { display: flex; flex: none; gap: 8px; align-items: center; }
 .circle-feed-nav-actions .circle-feed-talk-link { min-height: 38px; padding-inline: 8px; }
 .has-recent-talk .circle-feed-talk-link { display: none; }
@@ -674,6 +675,7 @@ html:has(.circle-drawer[open]) {
 }
 @media (max-width: 420px) {
   .circle-market-nav { gap: 6px; }
+  .circle-market-nav { flex-wrap: wrap; }
   .circle-market-nav nav { gap: 10px; }
   .circle-market-nav nav a { white-space: nowrap; font-size: 13px; }
   .circle-feed-nav-actions { gap: 3px; }

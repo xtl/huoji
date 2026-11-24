@@ -90,6 +90,7 @@ export function createCircleRouter(
         d.exec("ALTER TABLE posts ADD COLUMN businessRole TEXT NOT NULL DEFAULT ''");
       }
       if (!columns.includes("companyName")) d.exec("ALTER TABLE posts ADD COLUMN companyName TEXT");
+      if (!columns.includes("demoAuthor")) d.exec("ALTER TABLE posts ADD COLUMN demoAuthor TEXT");
       d.exec("COMMIT");
     } catch (error) {
       d.exec("ROLLBACK");
@@ -173,12 +174,13 @@ export function createCircleRouter(
     next();
   });
   const postsSql =
-    "SELECT p.id,p.owner,u.name author,u.account publisherAccount,p.companyName,p.kind,p.title,p.quantity,p.city,p.mode,p.role,p.businessRole,p.price,p.terms,p.publishedAt,p.expiresAt,p.confirmedAt,p.closed,(SELECT count(*) FROM questions q WHERE q.post=p.id) questionCount FROM posts p JOIN actors u ON u.id=p.owner";
+    "SELECT p.id,p.owner,u.name author,u.account publisherAccount,p.companyName,p.demoAuthor,p.kind,p.title,p.quantity,p.city,p.mode,p.role,p.businessRole,p.price,p.terms,p.publishedAt,p.expiresAt,p.confirmedAt,p.closed,(SELECT count(*) FROM questions q WHERE q.post=p.id) questionCount FROM posts p JOIN actors u ON u.id=p.owner";
   function publisherName(alias: string, profile?: PublisherProfile) {
     return /^\d{3}\*{4}\d{4}$/.test(alias) && profile?.displayName ? profile.displayName : alias;
   }
   function publicPost(row: Record<string, any>, profile?: PublisherProfile, companiesByAccount = new Map<string, PublishingCompany[]>()) {
-    const { publisherAccount, companyName, ...p } = row;
+    const { publisherAccount, companyName, demoAuthor, ...p } = row;
+    if (demoAuthor) return { ...p, author: demoAuthor, companyName: "", demo: true, active: !p.closed && p.expiresAt > now() };
     let visibleCompany = "";
     if (companyName !== "") {
       let companies = companiesByAccount.get(publisherAccount);
@@ -266,7 +268,8 @@ export function createCircleRouter(
   router.get("/posts", (req, res) => {
     const params: any[] = [],
       where: string[] = [];
-    if (req.query.mine === "1") {
+    where.push(req.query.demo === "1" ? "p.demoAuthor IS NOT NULL" : "p.demoAuthor IS NULL");
+    if (req.query.mine === "1" && req.query.demo !== "1") {
       where.push("p.owner=?");
       params.push(res.locals.me);
     } else {
@@ -300,7 +303,7 @@ export function createCircleRouter(
     res.json({
       items: visible.map(row => {
         const profile = profiles.get(row.publisherAccount);
-        if (profile?.avatar) avatars[row.owner] = profile.avatar;
+        if (!row.demoAuthor && profile?.avatar) avatars[row.owner] = profile.avatar;
         return publicPost(row, profile, companiesByAccount);
       }),
       avatars,
@@ -368,7 +371,7 @@ export function createCircleRouter(
           ).map((r) => ({ ...r, quote: JSON.parse(r.quote) }))
         : [];
     const publisher = one("SELECT account FROM actors WHERE id=?", post.owner);
-    const authorAvatar = profilesForAccounts(publisher ? [publisher.account] : []).get(publisher?.account)?.avatar ?? null;
+    const authorAvatar = post.demo ? null : profilesForAccounts(publisher ? [publisher.account] : []).get(publisher?.account)?.avatar ?? null;
     res.json({ post, authorAvatar, questions, offers });
   });
   router.patch("/posts/:id", (req, res) => {
@@ -395,6 +398,7 @@ export function createCircleRouter(
     const p = getPost(req.params.id),
       me = res.locals.me,
       b = req.body ?? {};
+    if (p.demo) throw new Problem(409, "模拟供需仅供浏览。");
     if (!p.active) throw new Problem(409, "该帖已结束。");
     tx(() => {
       if (b.questionId) {
@@ -485,6 +489,7 @@ export function createCircleRouter(
       } else {
         const ref = getPost(field(b.postId, 64)),
           post = b.direct === true ? "" : ref.id;
+        if (ref.demo) throw new Problem(409, "模拟供需仅供浏览。");
         if (post && !ref.active) throw new Problem(409, "该发布已结束，无法新建询价。");
         const peer = ref.owner;
         if (
