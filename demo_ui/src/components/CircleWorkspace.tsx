@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
+  ArrowUpRight,
+  BadgeCheck,
   ChevronRight,
+  ListChecks,
   MessageCircle,
+  MessagesSquare,
   PackageOpen,
   Plus,
   Search,
@@ -18,6 +22,7 @@ import "./circle.css";
 
 type Detail = {
   post: CirclePost;
+  authorAvatar?: string | null;
   questions: CircleQuestion[];
   offers: { threadId: string; name: string; quote: QuoteTerms; version: number; sentAt: string }[];
 };
@@ -36,37 +41,63 @@ type Props = {
 function Kind({ kind, mode }: { kind: string; mode: string }) {
   return <span className={"circle-kind " + (kind === "求购" ? "buy" : "")}>{listingKindLabel(kind, mode)}</span>;
 }
-function PostRow({
+function CircleIdentity({ post, avatar }: { post: CirclePost; avatar?: string | null }) {
+  const initial = /^\d{3}\*{4}\d{4}$/.test(post.author) ? "" : Array.from(post.author.trim())[0];
+  return <div className="circle-identity">
+    <span className="circle-avatar" aria-hidden="true">
+      {avatar ? <img src={avatar} alt="" loading="lazy" /> : initial || <UserRound size={20} />}
+    </span>
+    <div className="circle-identity-copy">
+      <strong>{post.author}</strong>
+      {post.companyName && <span className="circle-company" title="已认证企业"><BadgeCheck size={14} aria-hidden="true" />{post.companyName}</span>}
+      <small>{post.businessRole || sourceRoleLabel(post.role, post.mode)}</small>
+    </div>
+  </div>;
+}
+function FeedPost({
   post,
+  avatar,
   own,
   onOpen,
+  onDiscuss,
   onChat,
 }: {
   post: CirclePost;
+  avatar?: string;
   own: boolean;
   onOpen: () => void;
+  onDiscuss: () => void;
   onChat: () => void;
 }) {
   return (
-    <li className="circle-post-row">
-      <button className="circle-post-main" type="button" onClick={onOpen}>
-        <Kind kind={post.kind} mode={post.mode} />
-        <span className="circle-product">
-          <strong>{post.title}</strong>
-          <small>{[post.quantity, post.city, post.mode].join(" · ")}</small>
-        </span>
-        <span className="circle-price">{post.price || (post.kind === "供应" ? "价格面议" : "接受报价")}</span>
-        <span className="circle-publisher">
+    <li className="circle-feed-post">
+      <article>
+        <header className="circle-feed-post-head">
+          <CircleIdentity post={post} avatar={avatar} />
           <time dateTime={post.publishedAt}>{localDate(post.publishedAt)}</time>
-          <small>
-            {[post.companyName, post.author, post.active ? post.businessRole || sourceRoleLabel(post.role, post.mode) : "已结束"].filter(Boolean).join(" · ")}
-          </small>
-        </span>
-      </button>
-      <button type="button" className="circle-row-action" onClick={own ? onOpen : onChat}>
-        {own ? "管理发布" : post.kind === "供应" ? "询价" : "我能供货"}
-        <ChevronRight size={15} />
-      </button>
+        </header>
+        <h3 className="circle-feed-title">
+          <Kind kind={post.kind} mode={post.mode} />
+          <button type="button" onClick={onOpen}>{post.title}</button>
+          {!post.active && <small>已结束</small>}
+        </h3>
+        {post.terms && <p className="circle-feed-terms">{post.terms}</p>}
+        <dl className="circle-feed-facts">
+          <div><dt>{post.kind === "供应" ? "可供数量" : "需求数量"}</dt><dd>{post.quantity}</dd></div>
+          <div><dt>交付</dt><dd>{post.city} · {post.mode}</dd></div>
+          <div><dt>{post.kind === "供应" ? "报价" : "预算"}</dt><dd>{post.price || (post.kind === "供应" ? "面议" : "接受报价")}</dd></div>
+        </dl>
+        <footer className="circle-feed-actions">
+          <button type="button" className="circle-discuss" onClick={onDiscuss}>
+            <MessagesSquare size={16} aria-hidden="true" />规格讨论
+            {!!post.questionCount && <span>{post.questionCount}</span>}
+          </button>
+          <button type="button" className="circle-secondary" onClick={own ? onOpen : onChat}>
+            {own ? <ListChecks size={16} aria-hidden="true" /> : <MessageCircle size={16} aria-hidden="true" />}
+            {own ? "管理发布" : post.kind === "供应" ? "询价" : "我能供货"}
+          </button>
+        </footer>
+      </article>
     </li>
   );
 }
@@ -79,6 +110,7 @@ function PostDetail({
   token,
   refresh,
   canParticipate,
+  showDiscussion,
 }: {
   detail: Detail;
   mine: boolean;
@@ -88,6 +120,7 @@ function PostDetail({
   token: string;
   refresh: () => void;
   canParticipate: boolean;
+  showDiscussion: boolean;
 }) {
   const p = detail.post,
     [error, fail] = useState(""),
@@ -99,6 +132,12 @@ function PostDetail({
     [answer, setAnswer] = useState("");
   const lock = useRef(false),
     nonce = useRef(crypto.randomUUID());
+  const discussion = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!showDiscussion || !discussion.current) return;
+    discussion.current.open = true;
+    discussion.current.scrollIntoView({ block: "nearest" });
+  }, [p.id, showDiscussion]);
   async function save(path: string, body: object, method = "POST") {
     if (lock.current) return;
     lock.current = true;
@@ -156,12 +195,7 @@ function PostDetail({
         </section>
       )}
       <div className="circle-author">
-        <UserRound size={18} />
-        <span>
-          <strong>{p.companyName || p.author}</strong>
-          {p.companyName && <small>企业认证 · 发布人 {p.author}</small>}
-          <small>{[p.businessRole, sourceRoleLabel(p.role, p.mode)].filter(Boolean).join(" · ")}</small>
-        </span>
+        <CircleIdentity post={p} avatar={detail.authorAvatar} />
         {!mine && (
           <button className="circle-link" onClick={() => open("direct/" + p.id)}>
             私信发布人
@@ -264,7 +298,7 @@ function PostDetail({
           })}
         </section>
       )}
-      <details className="circle-qa">
+      <details className="circle-qa" ref={discussion}>
         <summary>
           公开问规格 <span>{detail.questions.length}</span>
         </summary>
@@ -356,7 +390,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
     [search, searchFor] = useState(""),
     [page, go] = useState(0);
   const [hint, setHint] = useState("");
-  const list = useCircleData<{ items: CirclePost[]; more: boolean }>(
+  const list = useCircleData<{ items: CirclePost[]; more: boolean; avatars?: Record<string, string> }>(
     token,
     talk
       ? ""
@@ -372,6 +406,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
   );
   const items = threads.data?.items ?? [],
     p = detail.data?.post;
+  const unread = items.reduce((total, thread) => total + thread.unread, 0);
   const open = (next: string) => {
     setHint("");
     navigateWorkspace(base + "/" + next);
@@ -463,85 +498,102 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
                 </a>
               ))}
             </nav>
-            <button type="button" className="circle-primary" onClick={() => open("publish")}>
-              <Plus size={16} aria-hidden="true" />发布供需
-            </button>
-          </div>
-          <div className="circle-toolbar">
-            <div className="circle-filters" aria-label="供需类型">
-              {["", "供应", "求购"].map((k) => (
-                <button
-                  type="button"
-                  key={k}
-                  aria-pressed={filter === k}
-                  onClick={() => {
-                    setFilter(k);
-                    go(0);
-                  }}
-                >
-                  {k ? listingKindLabel(k, rental ? "租赁" : undefined) : "全部"}
-                </button>
-              ))}
+            <div className="circle-feed-nav-actions">
+              <a className="circle-link circle-feed-mobile-talk" href={TALK_HASH} aria-label="同行会话">
+                <MessageCircle size={19} aria-hidden="true" />
+                {unread > 0 && <b className="circle-unread">{unread}</b>}
+              </a>
+              <button type="button" className="circle-primary" onClick={() => open("publish")}>
+                <Plus size={16} aria-hidden="true" />发布供需
+              </button>
             </div>
-            <label className="circle-search">
-              <Search size={16} />
-              <input
-                aria-label="搜索广场"
-                maxLength={80}
-                placeholder="搜索型号或城市"
-                value={word}
-                onChange={(e) => query(e.target.value)}
-              />
-            </label>
           </div>
-          {list.data?.items.length ? (
-            <div className="circle-board">
-              <div className="circle-board-head">
-                <span>产品与交付</span>
-                <span>{rental ? "租金 / 预算" : "报价 / 预算"}</span>
-                <span>发布时间 ↓ / 发布方</span>
-                <span />
+          <div className="circle-feed-layout">
+            <div className="circle-feed-main">
+              <div className="circle-toolbar">
+                <div className="circle-filters" aria-label="供需类型">
+                  {["", "供应", "求购"].map((k) => (
+                    <button
+                      type="button"
+                      key={k}
+                      aria-pressed={filter === k}
+                      onClick={() => {
+                        setFilter(k);
+                        go(0);
+                      }}
+                    >
+                      {k ? listingKindLabel(k, rental ? "租赁" : undefined) : "全部"}
+                    </button>
+                  ))}
+                </div>
+                <label className="circle-search">
+                  <Search size={16} />
+                  <input
+                    aria-label="搜索广场"
+                    maxLength={80}
+                    placeholder="搜索型号或城市"
+                    value={word}
+                    onChange={(e) => query(e.target.value)}
+                  />
+                </label>
               </div>
-              <ul className="circle-posts">
-                {list.data.items.map((post) => (
-                  <React.Fragment key={post.id}>
-                    <PostRow
-                      post={post}
-                      own={post.owner === actor}
-                      onOpen={() => open("post/" + post.id)}
-                      onChat={() => open("inquire/" + post.id)}
-                    />
-                  </React.Fragment>
-                ))}
-              </ul>
+              {list.data?.items.length ? (
+                  <ul className="circle-feed" aria-label="广场发布">
+                    {list.data.items.map((post) => (
+                        <React.Fragment key={post.id}>
+                          <FeedPost
+                            post={post}
+                            avatar={list.data?.avatars?.[post.owner]}
+                            own={post.owner === actor}
+                            onOpen={() => open("post/" + post.id)}
+                            onDiscuss={() => open("post/" + post.id + "/discussion")}
+                            onChat={() => open("inquire/" + post.id)}
+                          />
+                        </React.Fragment>
+                    ))}
+                  </ul>
+              ) : (
+                !list.error && (
+                  <Empty
+                    loading={!list.data}
+                    filtered={!!(search || filter)}
+                    mine={mine}
+                    go={() => {
+                      if (search || filter) {
+                        setFilter("");
+                        query("");
+                        searchFor("");
+                      } else open("publish");
+                    }}
+                  />
+                )
+              )}
+              {(page > 0 || list.data?.more) && (
+                <div className="circle-pages">
+                  <button disabled={!page} onClick={() => go(page - 1)}>
+                    上一页
+                  </button>
+                  <span>第 {page + 1} 页</span>
+                  <button disabled={!list.data?.more} onClick={() => go(page + 1)}>
+                    下一页
+                  </button>
+                </div>
+              )}
             </div>
-          ) : (
-            !list.error && (
-              <Empty
-                loading={!list.data}
-                filtered={!!(search || filter)}
-                mine={mine}
-                go={() => {
-                  if (search || filter) {
-                    setFilter("");
-                    query("");
-                    searchFor("");
-                  } else open("publish");
-                }}
-              />
-            )
-          )}
-          {(page > 0 || list.data?.more) && (
-            <div className="circle-pages">
-              <button disabled={!page} onClick={() => go(page - 1)}>
-                上一页
-              </button>
-              <span>第 {page + 1} 页</span>
-              <button disabled={!list.data?.more} onClick={() => go(page + 1)}>
-                下一页
-              </button>
-            </div>
-          )}
+            <aside className="circle-feed-side" aria-label="同行会话">
+              <a className="circle-feed-side-heading" href={TALK_HASH}>
+                <span><MessageCircle size={17} aria-hidden="true" />同行会话</span>
+                {unread > 0 && <b className="circle-unread" aria-label={unread + " 条未读消息"}>{unread}</b>}
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </a>
+              {items.slice(0, 3).map(thread => (
+                <a className="circle-feed-thread" key={thread.id} href={TALK_HASH + "/thread/" + thread.id}>
+                  <strong>{thread.name}{thread.unread > 0 && <b className="circle-unread">{thread.unread}</b>}</strong>
+                  <small>{thread.lastText || thread.title}</small>
+                </a>
+              ))}
+            </aside>
+          </div>
         </>
       )}
       {membershipGate && (
@@ -580,6 +632,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
               open={open}
               refresh={refresh}
               canParticipate={canParticipate}
+              showDiscussion={sourceKind === "discussion"}
             />
           ) : (
             <p className="circle-pad">{detail.error || "正在加载发布…"}</p>

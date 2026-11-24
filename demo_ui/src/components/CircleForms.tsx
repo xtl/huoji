@@ -145,7 +145,7 @@ export function PublishForm({
     try {
       const post = await postCircle<{ id: string }>(token, "/posts", {
         ...d,
-        displayName: (alias ?? name).trim(),
+        ...(alias === null ? {} : { displayName: alias.trim() }),
         nonce: nonce.current,
       });
       onDone(post.id);

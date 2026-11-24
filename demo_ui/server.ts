@@ -241,7 +241,8 @@ const circleRouter=createCircleRouter(path.join(path.dirname(identityFilePath())
   if (!session) return null;
   return { userId: session.userId, currentWorkspaceId: session.currentWorkspaceId, displayName: usersById.get(session.userId)!.displayName };
 }, undefined, (userId) => enterprise.spaces(userId, true),
-  workspaceId => isCompany(workspaceId) || creditWallet.hasActiveMembership(workspaceId));
+  workspaceId => isCompany(workspaceId) || creditWallet.hasActiveMembership(workspaceId),
+  accounts => enterprise.accountProfiles(accounts));
 app.use("/api/circle",circleRouter);
 
 const rpaInbox = new RpaInbox({
@@ -300,7 +301,7 @@ app.use("/api/enterprise/staff/:id",(req,res,next)=>{
 },staffRouter);
 app.use("/api/enterprise", enterpriseRouter(enterprise,{
   session:readSession, user:id=>usersById.get(id), personal:personalWorkspaceId,
-  onCircleVisibilityChanged: () => circleRouter.invalidateCompanyVisibility(),
+  onCircleVisibilityChanged: () => circleRouter.invalidateFeed(),
   switchSpace(scope,workspace){
     const current=scope as DemoSession;
     if(current.currentWorkspaceId===workspace) return buildAuthPayload(current);
@@ -457,6 +458,7 @@ app.patch("/api/auth/profile", (req, res) => {
         .run(user.id, profile.displayName, profile.avatar);
       return profile;
     });
+    circleRouter.invalidateFeed();
     return res.set("Cache-Control", "no-store").json(updated);
   } catch {
     return res.status(503).json({ error: "个人资料保存失败，请稍后重试。" });

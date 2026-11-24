@@ -9,6 +9,7 @@ import { businessRoles, type QuoteTerms } from "../src/circle-types";
 
 type Actor = { userId: string; currentWorkspaceId: string; displayName: string };
 type PublishingCompany = { id: string; name: string; showNameInCircle?: 0 | 1 };
+type PublisherProfile = { displayName: string; avatar: string | null };
 class Problem extends Error {
   constructor(
     public status: number,
@@ -48,11 +49,12 @@ export function createCircleRouter(
   cloud = tencentDelivery(),
   companiesForAccount: (userId: string) => PublishingCompany[] = () => [],
   canParticipate: (workspaceId: string) => boolean = () => true,
+  profilesForAccounts: (accounts: string[]) => Map<string, PublisherProfile> = () => new Map(),
 ) {
   const router = Router();
   let database: DatabaseSync | undefined;
   const events = new EventEmitter();
-  let visibilityRevision = randomUUID();
+  let presentationRevision = randomUUID();
   events.setMaxListeners(0);
   function db() {
     if (database) return database;
@@ -70,6 +72,7 @@ export function createCircleRouter(
       CREATE INDEX IF NOT EXISTS posts_expiry ON posts(expiresAt) WHERE closed=0;
       CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY, post TEXT NOT NULL REFERENCES posts(id), sender TEXT NOT NULL REFERENCES actors(id),
         nonce TEXT NOT NULL,body TEXT NOT NULL,answer TEXT NOT NULL DEFAULT '',createdAt TEXT NOT NULL, UNIQUE(sender,nonce));
+      CREATE INDEX IF NOT EXISTS questions_post ON questions(post);
       CREATE TABLE IF NOT EXISTS threads(id TEXT PRIMARY KEY, post TEXT NOT NULL, a TEXT NOT NULL REFERENCES actors(id),b TEXT NOT NULL REFERENCES actors(id),
         status TEXT NOT NULL DEFAULT 'open', lastText TEXT NOT NULL DEFAULT '', updatedAt TEXT NOT NULL,readA INTEGER DEFAULT 0,readB INTEGER DEFAULT 0,
         UNIQUE(post,a,b));
@@ -170,8 +173,11 @@ export function createCircleRouter(
     next();
   });
   const postsSql =
-    "SELECT p.id,p.owner,u.name author,u.account publisherAccount,p.companyName,p.kind,p.title,p.quantity,p.city,p.mode,p.role,p.businessRole,p.price,p.terms,p.publishedAt,p.expiresAt,p.confirmedAt,p.closed FROM posts p JOIN actors u ON u.id=p.owner";
-  function publicPost(row: Record<string, any>, companiesByAccount = new Map<string, PublishingCompany[]>()) {
+    "SELECT p.id,p.owner,u.name author,u.account publisherAccount,p.companyName,p.kind,p.title,p.quantity,p.city,p.mode,p.role,p.businessRole,p.price,p.terms,p.publishedAt,p.expiresAt,p.confirmedAt,p.closed,(SELECT count(*) FROM questions q WHERE q.post=p.id) questionCount FROM posts p JOIN actors u ON u.id=p.owner";
+  function publisherName(alias: string, profile?: PublisherProfile) {
+    return /^\d{3}\*{4}\d{4}$/.test(alias) && profile?.displayName ? profile.displayName : alias;
+  }
+  function publicPost(row: Record<string, any>, profile?: PublisherProfile, companiesByAccount = new Map<string, PublishingCompany[]>()) {
     const { publisherAccount, companyName, ...p } = row;
     let visibleCompany = "";
     if (companyName !== "") {
@@ -185,12 +191,12 @@ export function createCircleRouter(
       );
       if (company && company.showNameInCircle !== 0) visibleCompany = companyName ?? company.name;
     }
-    return { ...p, companyName: visibleCompany, active: !p.closed && p.expiresAt > now() } as Record<string, any>;
+    return { ...p, author: publisherName(p.author, profile), companyName: visibleCompany, active: !p.closed && p.expiresAt > now() } as Record<string, any>;
   }
   function getPost(id: string) {
     const p = one(postsSql + " WHERE p.id=?", id);
     if (!p) throw notFound();
-    return publicPost(p);
+    return publicPost(p, profilesForAccounts([p.publisherAccount]).get(p.publisherAccount));
   }
   function own(id: string, me: string) {
     const p = getPost(id);
@@ -216,9 +222,9 @@ export function createCircleRouter(
     const company = companiesForAccount(actor.userId).find(space => space.id === actor.currentWorkspaceId);
     return {
       actor: me,
-      name: one("SELECT name FROM actors WHERE id=?", me)!.name,
+      name: publisherName(one("SELECT name FROM actors WHERE id=?", me)!.name, profilesForAccounts([actor.userId]).get(actor.userId)),
       companyName: company?.showNameInCircle === 0 ? "" : company?.name ?? "",
-      revision: [rev("feed"), rev(me), expiry, visibilityRevision].join("."),
+      revision: [rev("feed"), rev(me), expiry, presentationRevision].join("."),
       unread,
     };
   }
@@ -287,9 +293,17 @@ export function createCircleRouter(
       maxPage + 1,
       Math.floor(offset),
     );
+    const visible = rows.slice(0, maxPage);
+    const profiles = profilesForAccounts([...new Set(visible.map(row => row.publisherAccount))]);
     const companiesByAccount = new Map<string, PublishingCompany[]>();
+    const avatars: Record<string, string> = {};
     res.json({
-      items: rows.slice(0, maxPage).map((p) => publicPost(p, companiesByAccount)),
+      items: visible.map(row => {
+        const profile = profiles.get(row.publisherAccount);
+        if (profile?.avatar) avatars[row.owner] = profile.avatar;
+        return publicPost(row, profile, companiesByAccount);
+      }),
+      avatars,
       more: rows.length > maxPage,
     });
   });
@@ -353,7 +367,9 @@ export function createCircleRouter(
             post.id,
           ).map((r) => ({ ...r, quote: JSON.parse(r.quote) }))
         : [];
-    res.json({ post, questions, offers });
+    const publisher = one("SELECT account FROM actors WHERE id=?", post.owner);
+    const authorAvatar = profilesForAccounts(publisher ? [publisher.account] : []).get(publisher?.account)?.avatar ?? null;
+    res.json({ post, authorAvatar, questions, offers });
   });
   router.patch("/posts/:id", (req, res) => {
     const p = own(req.params.id, res.locals.me),
@@ -557,8 +573,8 @@ export function createCircleRouter(
       .json({ error: error instanceof Problem ? error.message : "暂时无法保存或加载，请重试。" });
   });
   return Object.assign(router, {
-    invalidateCompanyVisibility() {
-      visibilityRevision = randomUUID();
+    invalidateFeed() {
+      presentationRevision = randomUUID();
       wake("feed");
     },
   });

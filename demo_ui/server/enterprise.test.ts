@@ -181,6 +181,7 @@ test("verified enterprises isolate collection, posts, membership and metered key
   );
   assert.equal(post.companyName, "隔离测试公司");
   assert.equal(post.publisherAccount, undefined);
+  await api("/auth/profile", worker, "PATCH", { displayName: "企业发布员" });
   const getCircleSettings = async (token: string) =>
     (await api(ent, token)).companies.find((space: { id: string }) => space.id === id).showNameInCircle;
   assert.equal(await getCircleSettings(boss), 1);
@@ -213,6 +214,7 @@ test("verified enterprises isolate collection, posts, membership and metered key
   }
   const feed = (await api("/circle/posts", other.token)).items;
   assert.equal(feed.find((item: { id: string }) => item.id === post.id).companyName, "隔离测试公司");
+  assert.equal(feed.find((item: { id: string }) => item.id === post.id).author, "企业发布员");
   assert.equal(feed.find((item: { id: string }) => item.id === personalPost.id).companyName, "");
   assert.equal((await api("/circle/posts/" + post.id, other.token)).post.companyName, "隔离测试公司");
   const observer = await api("/circle/sync", other.token);

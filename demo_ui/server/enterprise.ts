@@ -83,6 +83,15 @@ export class EnterpriseStore {
           .all(userId, Number(includeInactive)) as unknown as Space[],
     );
   }
+  accountProfiles(accounts: string[]) {
+    if (!accounts.length) return new Map<string, { displayName: string; avatar: string | null }>();
+    return this.use(db => new Map(db.prepare(
+      `SELECT userId,displayName,avatar FROM account_profiles WHERE userId IN (${accounts.map(() => "?").join(",")})`,
+    ).all(...accounts).map(row => [String(row.userId), {
+      displayName: String(row.displayName),
+      avatar: typeof row.avatar === "string" ? row.avatar : null,
+    }])));
+  }
   member(company: string, userId: string) {
     if (!isCompany(company)) return undefined;
     return this.use(
