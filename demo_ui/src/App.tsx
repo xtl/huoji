@@ -2380,6 +2380,7 @@ function LoginScreen({ onLogin, sessionNotice }: { onLogin: (session: AuthSessio
             <Check className="h-4 w-4" />
             {isLoggingIn ? "正在登录…" : "登录"}
           </button>
+          <a href="/about/" className="mt-4 block text-center text-sm font-medium text-indigo-700 hover:underline">了解货记</a>
         </form>
       </main>
       <SiteRecordFooter className="mt-6" />
