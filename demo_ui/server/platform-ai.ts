@@ -2,6 +2,7 @@ import express from "express";
 import { randomBytes, randomInt } from "node:crypto";
 import { DeepSeekKeyStore, createDeepSeekSettingsRouter, secureTransport } from "./deepseek-settings";
 import { EnterpriseStore, usageMonth } from "./enterprise";
+import { pointScale, type CreditWallet } from "./credit-wallet";
 
 export const PLATFORM_KEY = "platform-shared-deepseek";
 type Account = { id: string; phone: string };
@@ -18,6 +19,8 @@ export function platformAiRouter(
   keys: DeepSeekKeyStore,
   deps: {
     accounts: () => Account[];
+    wallet: CreditWallet;
+    personalWorkspaceId: (id: string) => string;
     sendCode: (phone: string, code: string) => Promise<unknown>;
   },
 ) {
@@ -169,12 +172,44 @@ export function platformAiRouter(
       res.status(400).json({ error: "页码无效。" });
       return;
     }
+    const pageItems = items.slice((page - 1) * 40, page * 40);
+    const now = new Date().toISOString();
+    const rowsWithStatus = dimension === "account" ? store.use(db => {
+      const plan = db.prepare("SELECT MAX(end) AS expiry, MAX(start<=? AND end>?) AS active FROM wallet_plans WHERE workspace=?");
+      const certification = db.prepare(`SELECT name,status FROM companies c WHERE applicant=? OR
+        (status='APPROVED' AND EXISTS (SELECT 1 FROM company_members m WHERE m.company=c.id AND m.userId=? AND m.active=1))
+        ORDER BY created DESC`);
+      return pageItems.map(row => {
+        const membership = plan.get(now, now, deps.personalWorkspaceId(row.id));
+        return { ...row, membership: membership?.active ? "有效" : membership?.expiry ? "已到期" : "未开通",
+          expiry: membership?.expiry, companies: certification.all(row.id, row.id) };
+      });
+    }) : pageItems;
     res.json({
       month,
       count: items.length,
-      items: items.slice((page - 1) * 40, page * 40),
+      items: rowsWithStatus,
       total: items.reduce((sum, x) => sum + Number(x.total), 0),
     });
+  });
+  router.post("/accounts/:id/grants", (req, res) => {
+    const userId = req.params.id;
+    const { kind, points, requestId } = req.body || {};
+    if (!deps.accounts().some(account => account.id === userId)) {
+      res.status(404).json({error:"账号不存在。"});
+      return;
+    }
+    if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId) ||
+        !(kind === "membership" && points === 0 || kind === "credits" && Number.isSafeInteger(points) && points > 0 && Number.isSafeInteger(points * pointScale))) {
+      res.status(400).json({error:"请选择会员或输入有效的正整数货记分。"});
+      return;
+    }
+    const applied = deps.wallet.grantFromPlatform({userId, currentWorkspaceId: deps.personalWorkspaceId(userId)}, res.locals.actor, requestId, kind, points);
+    if (!applied) {
+      res.status(409).json({error:"该发放编号已用于其他操作。"});
+      return;
+    }
+    res.json({ok:true});
   });
   router.get("/breakdown", (req, res) => {
     const month = String(req.query.month ?? "");

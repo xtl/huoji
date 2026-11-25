@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DeepSeekSettings from "./DeepSeekSettings";
 import "./platform-console.css";
 
@@ -15,6 +15,9 @@ type Row = {
   chargedCredits: number;
   ceiling: number | null;
   kind?: string;
+  membership?: string;
+  expiry?: string;
+  companies?: {name: string; status: string}[];
 };
 type Report = { items: Row[]; count: number; total: number };
 const fmt = (n: number) => n.toLocaleString("zh-CN");
@@ -35,11 +38,33 @@ export default function PlatformConsole() {
   const [selected, select] = useState<Row | null>(null),
     [limit, setLimit] = useState(""),
     [details, setDetails] = useState<Row[] | null>(null);
+  const [points, setPoints] = useState("");
+  const [grantMessage, setGrantMessage] = useState("");
+  const pendingGrants = useRef(new Map<string, string>());
+  function grant(kind: "membership" | "credits") {
+    if (!selected || busy) return;
+    const amount = kind === "credits" ? Number(points) : 0;
+    const description = kind === "membership" ? "增加 7 天个人 Pro 会员" : "发放 " + fmt(amount) + " 货记分";
+    if (!window.confirm("确认给 " + selected.name + " 的个人空间" + description + "？")) return;
+    void action(async () => {
+      const intent = JSON.stringify([selected.id, kind, amount]);
+      const requestId = pendingGrants.current.get(intent) ?? crypto.randomUUID();
+      pendingGrants.current.set(intent, requestId);
+      await api("accounts/" + encodeURIComponent(selected.id) + "/grants", "POST", {kind, points: amount, requestId});
+      pendingGrants.current.delete(intent);
+      setGrantMessage("已为 " + selected.name + description + "。");
+      setPoints("");
+      select(null);
+      refresh(v => v + 1);
+    });
+  }
   function leave() {
     sessionStorage.removeItem(key);
     setToken("");
     select(null);
     setReport(null);
+    setGrantMessage("");
+    pendingGrants.current.clear();
   }
   async function api<T>(route: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
     const response = await fetch("/api/platform/" + route, {
@@ -259,6 +284,7 @@ export default function PlatformConsole() {
                     <tr>
                       {[
                         by === "account" ? "账号手机号" : "企业",
+                        ...(by === "account" ? ["个人会员", "企业认证"] : []),
                         "输入",
                         "输出",
                         "总 Token",
@@ -277,6 +303,10 @@ export default function PlatformConsole() {
                     {report?.items.map((row) => (
                       <tr key={row.id}>
                         <td>{row.name}</td>
+                        {by === "account" && <>
+                          <td>{row.membership}{row.expiry && <div>{new Date(row.expiry).toLocaleString("zh-CN")} 到期</div>}</td>
+                          <td>{row.companies?.length ? row.companies.map((c, i) => <div key={i}>{c.name} · {({APPROVED:"已认证", PENDING:"审核中", REJECTED:"已驳回"} as Record<string,string>)[c.status] ?? c.status}</div>) : "未认证"}</td>
+                        </>}
                         <td>{fmt(row.input)}</td>
                         <td>{fmt(row.output)}</td>
                         <td>
@@ -288,7 +318,7 @@ export default function PlatformConsole() {
                         <td>{row.unknown}</td>
                         <td>{row.ceiling === null ? "不限" : fmt(row.ceiling)}</td>
                         <td>
-                          <button onClick={() => select(row)}>管理</button>
+                          <button disabled={busy} onClick={() => { select(row); setPoints(""); setGrantMessage(""); }}>管理</button>
                         </td>
                       </tr>
                     ))}
@@ -307,12 +337,20 @@ export default function PlatformConsole() {
                   </button>
                 </div>
               )}
+              {grantMessage && <p role="status">{grantMessage}</p>}
               {selected && (
                 <section className="platform-detail">
                   <div className="platform-filters">
                     <h3>{selected.name}</h3>
                     <button onClick={() => select(null)}>关闭</button>
                   </div>
+                  {by === "account" && <div>
+                    <h4>个人空间权益</h4>
+                    <p>已有会员的账号从现有到期时间顺延 7 天。</p>
+                    <button disabled={busy} onClick={() => grant("membership")}>开通 7 天会员</button>
+                    <label>发放货记分数量<input type="number" min="1" step="1" value={points} onChange={e => setPoints(e.target.value)} /></label>
+                    <button disabled={busy || !/^\d+$/.test(points) || Number(points) <= 0 || !Number.isSafeInteger(Number(points) * 10_000_000)} onClick={() => grant("credits")}>发放货记分</button>
+                  </div>}
                   <p>
                     {by === "account" ? "各空间用量" : "企业成员用量"} · {month}
                   </p>

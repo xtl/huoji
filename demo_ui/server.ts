@@ -32,6 +32,7 @@ const deepSeekKeys = new DeepSeekKeyStore(path.join(path.dirname(identityFilePat
 const enterprise = new EnterpriseStore(path.join(path.dirname(identityFilePath()), "enterprise.sqlite"));
 const creditWallet = new CreditWallet(enterprise);
 app.use("/api/platform",platformAiRouter(enterprise, deepSeekKeys,{
+  wallet: creditWallet, personalWorkspaceId,
   accounts:()=>[...usersById.values()], sendCode:(phone,code)=>deliverSmsCode(phone,code),
 }));
 app.use("/api/settings/deepseek", (req,res) => {

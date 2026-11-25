@@ -50,6 +50,7 @@ export class CreditWallet {
       CREATE TABLE IF NOT EXISTS wallet_balances(workspace TEXT PRIMARY KEY, units INTEGER NOT NULL DEFAULT 0 CHECK(units>=0));
       CREATE TABLE IF NOT EXISTS wallet_plans(id TEXT PRIMARY KEY,workspace TEXT NOT NULL,code TEXT NOT NULL,start TEXT NOT NULL,end TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS wallet_plan_period ON wallet_plans(workspace,start,end);
+      CREATE TABLE IF NOT EXISTS platform_wallet_grants(id TEXT PRIMARY KEY,actor TEXT NOT NULL,workspace TEXT NOT NULL,kind TEXT NOT NULL,points INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS wallet_grants(id TEXT PRIMARY KEY,workspace TEXT NOT NULL,employee TEXT NOT NULL,title TEXT NOT NULL,kind TEXT NOT NULL,amount INTEGER NOT NULL,due TEXT NOT NULL,applied INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS wallet_due ON wallet_grants(workspace,applied,due);
       CREATE TABLE IF NOT EXISTS wallet_recharges(workspace TEXT PRIMARY KEY);
@@ -178,6 +179,31 @@ export class CreditWallet {
     return db.prepare("SELECT code,end FROM wallet_plans WHERE workspace=? AND start<=? AND end>? ORDER BY start DESC LIMIT 1")
       .get(workspace, now, now);
   }
+  grantFromPlatform(scope: Scope, actor: string, requestId: string, kind: "membership" | "credits", points: number, now = new Date().toISOString()) {
+    const workspace = scope.currentWorkspaceId;
+    if (!Number.isSafeInteger(points * pointScale) || (kind === "credits" ? points < 1 || !Number.isInteger(points) : points !== 0))
+      throw Error("无效的发放额度。");
+    return this.store.transaction(db => {
+      const previous = db.prepare("SELECT * FROM platform_wallet_grants WHERE id=?").get(requestId);
+      if (previous) return previous.workspace === workspace && previous.actor === actor && previous.kind === kind && previous.points === points;
+      const id = "platform:" + requestId;
+      if (kind === "membership") {
+        const last = db.prepare("SELECT MAX(end) AS end FROM wallet_plans WHERE workspace=?").get(workspace);
+        const start = typeof last?.end === "string" && last.end > now ? last.end : now;
+        const end = new Date(Date.parse(start) + 7 * 86400_000).toISOString();
+        db.prepare("INSERT INTO wallet_plans VALUES(?,?,?,?,?)").run(id, workspace, "PRO_TRIAL", start, end);
+      } else {
+        this.prepare(db, workspace, now);
+        if (!Number.isSafeInteger(this.balance(db, workspace) + points * pointScale)) throw Error("余额超过可记录范围。");
+        this.post(db, id, workspace, scope.userId, "GRANT", "平台发放货记分", points * pointScale, now);
+        db.prepare("INSERT OR IGNORE INTO wallet_recharges VALUES(?)").run(workspace);
+      }
+      db.prepare("INSERT INTO platform_wallet_grants VALUES(?,?,?,?,?)").run(requestId, actor, workspace, kind, points);
+      db.prepare("INSERT INTO platform_ai_audit(created,actor,action,subject) VALUES(?,?,?,?)")
+        .run(now, actor, kind === "membership" ? "GRANT_7_DAYS" : "GRANT_CREDITS", JSON.stringify({ userId: scope.userId, workspace, points, requestId }));
+      return true;
+    });
+  }
   hasActiveMembership(workspace: string, now = new Date().toISOString()) {
     return this.store.use(db => Boolean(this.activePlan(db, workspace, now)));
   }
@@ -200,9 +226,9 @@ export class CreditWallet {
       return {
         creditBalance: this.available(db, workspace) / pointScale,
         planCode: plan?.code ?? "FREE",
-        planName: plan?.code === "PRO_YEARLY" ? "个人 Pro 年卡" : plan ? "个人 Pro 月卡" : "免费版",
+        planName: plan?.code === "PRO_TRIAL" ? "个人 Pro 体验会员" : plan?.code === "PRO_YEARLY" ? "个人 Pro 年卡" : plan ? "个人 Pro 月卡" : "免费版",
         membershipStatus: plan ? "ACTIVE" : "FREE",
-        membershipExpiresAt: plan?.end,
+        membershipExpiresAt: plan ? db.prepare("SELECT MAX(end) AS end FROM wallet_plans WHERE workspace=?").get(workspace)?.end : undefined,
         nextGrant: next ?? null,
         transactions: entries.map(({ delta, balance, ...entry }) => ({
           ...entry,

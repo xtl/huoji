@@ -297,7 +297,28 @@ test("verified enterprises isolate collection, posts, membership and metered key
   assert.equal((await api(ent + "/usage?detail=1", company.token)).rows.length, 5);
   assert.equal((await api(ent + "/usage", employee.token)).rows[0].total, 50);
   const accounts = await api("/platform/usage?by=account", ops);
+  const target = "/platform/accounts/" + other.user.id + "/grants";
+  const trial = { kind: "membership", points: 0, requestId: crypto.randomUUID() };
+  const credits = { kind: "credits", points: 75, requestId: crypto.randomUUID() };
+  const original = await api("/wallet", other.token);
+  await api(target, other.token, "POST", trial, 401);
+  await api(target, ops, "POST", trial);
+  const firstExpiry = (await api("/wallet", other.token)).membershipExpiresAt;
+  await api(target, ops, "POST", trial);
+  assert.equal((await api("/wallet", other.token)).membershipExpiresAt, firstExpiry);
+  await api(target, ops, "POST", { ...trial, requestId: crypto.randomUUID() });
+  await api(target, ops, "POST", credits);
+  await api(target, ops, "POST", credits);
+  await api(target, ops, "POST", { ...credits, points: 76 }, 409);
+  await api(target, ops, "POST", { ...credits, points: -1 }, 400);
+  const granted = await api("/wallet", other.token);
+  assert.equal(granted.creditBalance, original.creditBalance + 75);
+  assert.equal(granted.planCode, "PRO_TRIAL");
+  assert.equal(Date.parse(granted.membershipExpiresAt) - Date.parse(firstExpiry), 7 * 86400_000);
+  const listed = (await api("/platform/usage?by=account", ops)).items.find((r: {id:string}) => r.id === other.user.id);
+  assert.deepEqual([listed.membership, listed.expiry, listed.companies], ["有效", granted.membershipExpiresAt, []]);
   const metered = accounts.items.find((r: {id:string}) => r.id === employee.user.id);
+  assert.equal(metered.companies[0].status, "APPROVED");
   assert.deepEqual([metered.total,metered.input,metered.output,metered.unknown], [200,160,40,1]);
   assert.ok(metered.modelCost>0 && metered.chargedCredits>0);
   // The provider also returned billable usage for one unusable response. Only delivered parses debit credits.
