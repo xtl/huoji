@@ -7,6 +7,7 @@ export const PLATFORM_KEY = "platform-shared-deepseek";
 type Account = { id: string; phone: string };
 type Dimension = "account" | "company";
 type Subject = { id: string; name: string };
+const fullPhoneViewer = "13714133178";
 const mask = (phone: string) => phone.slice(0, 3) + "****" + phone.slice(-4);
 const fields =
   "COUNT(*) calls,COALESCE(SUM(input),0) input,COALESCE(SUM(output),0) output,COALESCE(SUM(total),0) total,SUM(status='UNKNOWN') unknown,SUM(status='REJECTED') rejected,COALESCE(SUM(costE8),0)/100000000.0 modelCost,COALESCE(SUM(chargedUnits),0)/10000000.0 chargedCredits";
@@ -119,8 +120,13 @@ export function platformAiRouter(
     },
     createDeepSeekSettingsRouter(keys, (auth) => (actor(auth) ? { userId: PLATFORM_KEY } : null)),
   );
-  function subjects(dimension: Dimension): Subject[] {
-    if (dimension === "account") return deps.accounts().map((a) => ({ id: a.id, name: mask(a.phone) }));
+  function subjects(dimension: Dimension, viewer: string): Subject[] {
+    if (dimension === "account") {
+      return deps.accounts().map(account => ({
+        id: account.id,
+        name: viewer === fullPhoneViewer ? account.phone : mask(account.phone),
+      }));
+    }
     return store.use((db) =>
       db.prepare("SELECT id,name FROM companies WHERE status='APPROVED' ORDER BY name").all(),
     ) as unknown as Subject[];
@@ -154,7 +160,7 @@ export function platformAiRouter(
     const search = String(req.query.q || "")
       .trim()
       .toLowerCase();
-    const items = subjects(dimension)
+    const items = subjects(dimension, res.locals.actor)
       .map((s) => ({ ...zero, ...lookup.get(s.id), ...s, ceiling: ceilings.get(s.id) ?? null }))
       .filter((s) => !search || (s.name + " " + s.id).toLowerCase().includes(search))
       .sort((a, b) => Number(b.total) - Number(a.total) || a.name.localeCompare(b.name));
@@ -182,7 +188,7 @@ export function platformAiRouter(
     const company = by === "company",
       field = company ? "employee" : "workspace",
       filter = company ? "workspace" : "employee";
-    const labels = new Map(subjects(company ? "account" : "company").map((s) => [s.id, s.name]));
+    const labels = new Map(subjects(company ? "account" : "company", res.locals.actor).map((s) => [s.id, s.name]));
     const rows = store.use((db) =>
       db
         .prepare(
@@ -208,7 +214,7 @@ export function platformAiRouter(
       !["company", "account"].includes(dimension) ||
       typeof id !== "string" ||
       !(ceiling === null || (Number.isSafeInteger(ceiling) && ceiling >= 0)) ||
-      !subjects(dimension).some((s) => s.id === id)
+      !subjects(dimension, res.locals.actor).some((s) => s.id === id)
     ) {
       res.status(400).json({ error: "请选择有效账号或企业，限额应为非负整数。" });
       return;

@@ -235,8 +235,8 @@ export default function PlatformConsole() {
                   }}
                 />
                 <input
-                  aria-label="筛选"
-                  placeholder={by === "account" ? "搜索手机号尾号" : "搜索企业名称"}
+                  aria-label={by === "account" ? "搜索手机号" : "搜索企业名称"}
+                  placeholder={by === "account" ? "搜索手机号" : "搜索企业名称"}
                   value={q}
                   onChange={(e) => {
                     select(null);
@@ -258,7 +258,7 @@ export default function PlatformConsole() {
                   <thead>
                     <tr>
                       {[
-                        by === "account" ? "账号" : "企业",
+                        by === "account" ? "账号手机号" : "企业",
                         "输入",
                         "输出",
                         "总 Token",
