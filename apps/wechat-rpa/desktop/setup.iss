@@ -1,5 +1,5 @@
 ; build.py reads these versions and shows them at the top of the assistant page.
-#define CloudVersion "0.2.2"
+#define CloudVersion "0.2.3"
 #define LocalTestVersion "0.1.1"
 #ifdef Cloud
   #define Edition "货记采集助手（云同步版）"

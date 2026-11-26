@@ -51,6 +51,7 @@ def profile_for(config: dict[str, Any], group: str) -> dict[str, Any]:
     column = profile.get("incomingBubbleLeft")
     if column is not None and (type(column) is not int or not 0 <= column < size[0]):
         raise OcrCaptureError("OCR_PROFILE_INVALID: incomingBubbleLeft 必须是窗口内实测的消息气泡左坐标。")
+    profile = dict(profile)
     # 【改进 1】从配置读取用户可定制的信心度阈值，默认 0.70（降低容错）
     profile["_ocrMinConfidence"] = profile.get("ocrMinConfidence", 0.70)
     if not isinstance(profile["_ocrMinConfidence"], (int, float)) or not 0 < profile["_ocrMinConfidence"] < 1:

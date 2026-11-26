@@ -50,7 +50,7 @@ const failureMessages = {
   WGC_TIMEOUT: "等待微信窗口截图超时，请还原窗口后重试。",
   WGC_NO_FRAME: "未收到微信窗口画面，请还原窗口后重试。",
   WGC_INVALID_FRAME: "收到的微信窗口画面无效，请还原窗口后重试。",
-  WGC_CAPTURE_FAILED: "读取微信窗口画面失败，请还原窗口后重试。",
+  WGC_CAPTURE_FAILED: "已找到群聊，Windows 未能读取窗口画面。请关闭该独立群窗口，在微信中重新打开后重试。",
   WGC_DEPENDENCIES_MISSING: "窗口截图组件缺失，请检查本机采集器安装。",
   WGC_CHILD_START_FAILED: "窗口截图进程未能启动，请检查本机采集器环境。",
   CAPTURE_LOCK_BUSY: "另一个采集任务正在使用微信窗口，请稍后重试。",

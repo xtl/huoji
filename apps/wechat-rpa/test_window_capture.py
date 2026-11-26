@@ -118,8 +118,7 @@ class FrameTests(unittest.TestCase):
                 self.events["on_closed"]()
 
         image = w._first_frame(123, Capture)
-        self.assertEqual(factories, [{"window_hwnd": 123, "cursor_capture": False, "monitor_index": None,
-                                     "secondary_window": False, "draw_border": None}])
+        self.assertEqual(factories, [{"window_hwnd": 123, "cursor_capture": False, "monitor_index": None}])
         self.assertEqual(image.getpixel((0, 0)), (3, 2, 1))
         controls[0].stop.assert_called_once()
 

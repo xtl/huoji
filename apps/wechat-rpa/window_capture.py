@@ -117,8 +117,9 @@ def _first_frame(hwnd: int, factory: Any):
     from PIL import Image
     result = []
     failures = []
-    capture = factory(window_hwnd=hwnd, cursor_capture=False, monitor_index=None,
-                      secondary_window=False, draw_border=None)
+    # Passing False still requests the newer IncludeSecondaryWindows setting.
+    # Leave it at the OS default; the capture target is the verified HWND.
+    capture = factory(window_hwnd=hwnd, cursor_capture=False, monitor_index=None)
 
     @capture.event
     def on_frame_arrived(frame, control):
