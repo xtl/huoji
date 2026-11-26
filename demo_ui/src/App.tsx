@@ -7,6 +7,8 @@ import CircleWorkspace from "./components/CircleWorkspace";
 import { useCircleLive } from "./components/circle-client";
 import type { CircleParticipation, CircleSource } from "./circle-types";
 import { navigateWorkspace, useWorkspaceRoute, useMessageEntry, setIntakeView, setAccountSection, DEEPSEEK_SETTINGS_HASH, TALK_HASH, type AccountSection, type TabKey } from "./workspace-navigation";
+import { OpportunityEditor } from "./components/EnterpriseOpportunities";
+import type { OpportunitySeed } from "./opportunity-types";
 import { readCompactMemorySpec, readMemoryFrequency } from "./memory-specs";
 import { startLedgerSync, type SyncState } from "./workspace-ledger-client";
 import "./trade-workspace.css";
@@ -475,6 +477,7 @@ export default function App() {
   const rental = hash === "#stock/rental" || hash === "#market/rental";
   const [initialAuth] = useState(() => loadAuthSession());
   const [authSession, setAuthSession] = useState<AuthSession | null>(initialAuth.session);
+  const [opportunitySeed, setOpportunitySeed] = useState<OpportunitySeed | null>(null);
   const liveCircle = useCircleLive(authSession?.token, authSession?.currentWorkspaceId);
   const messageScope = authSession ? JSON.stringify([authSession.user.id, authSession.currentWorkspaceId]) : "";
   const messageEntry = useMessageEntry(messageScope, hash, intakeView, liveCircle.unread, Boolean(liveCircle.actor));
@@ -1451,6 +1454,7 @@ export default function App() {
             actor={liveCircle.actor} name={liveCircle.name||authSession.user.maskedPhone} companyName={liveCircle.companyName}
             participation={circleParticipation}
             onCheckMembership={() => refreshWallet(n => n + 1)}
+            onOpportunity={currentWorkspace.type === "ENTERPRISE" ? setOpportunitySeed : undefined}
             version={liveCircle.version} hash={hash} sources={circleSources} refresh={liveCircle.refresh}/></React.Fragment>}
 
           {activeTab === "stock" && (
@@ -1848,6 +1852,7 @@ export default function App() {
                 <MatchList
                   items={pagedMatches}
                   view={matchView}
+                  onOpportunity={currentWorkspace.type === "ENTERPRISE" ? candidate => setOpportunitySeed(opportunityFromMatch(candidate)) : undefined}
                   selectedId={inspectorCollapsed ? "" : selectedMatch?.id ?? ""}
                   onSelect={(candidate) => {
                     setSelectedMatchId(candidate.id);
@@ -1877,6 +1882,7 @@ export default function App() {
                   candidate={selectedMatch}
                   onStatusChange={updateMatchStatus}
                   onCopy={copyMatchSummary}
+                  onOpportunity={currentWorkspace.type === "ENTERPRISE" ? candidate => setOpportunitySeed(opportunityFromMatch(candidate)) : undefined}
                   verification={selectedMatch && !inspectorCollapsed && (
                     <React.Fragment key={matchHistoryPrefix(authSession.user.id, currentWorkspaceId, selectedMatch.demand.id, selectedMatch.stock.id)}>
                       <MatchSupplyVerification session={authSession} candidate={selectedMatch} />
@@ -1889,9 +1895,18 @@ export default function App() {
 
           {relatedTarget && relatedSource && activeTab === relatedTarget.kind && <React.Fragment key={relatedTarget.kind + relatedTarget.id}>
             <RelatedMatchesDrawer kind={relatedTarget.kind} source={relatedSource} matches={relatedMatches}
-              session={authSession} onClose={() => setRelatedTarget(null)} onStatusChange={updateMatchStatus} onCopy={copyMatchSummary} />
+              session={authSession} onClose={() => setRelatedTarget(null)} onStatusChange={updateMatchStatus} onCopy={copyMatchSummary}
+              onOpportunity={currentWorkspace.type === "ENTERPRISE" ? candidate => setOpportunitySeed(opportunityFromMatch(candidate)) : undefined} />
           </React.Fragment>}
-          {activeTab === "account" && (accountSection==="enterprise" || (currentWorkspace.type==="ENTERPRISE" && !["credits","ledger"].includes(accountSection))) && <EnterpriseHome session={authSession} onSwitch={changeWorkspace}/>}
+          {activeTab === "account" && (accountSection==="enterprise" || (currentWorkspace.type==="ENTERPRISE" && !["credits","ledger"].includes(accountSection))) &&
+            <EnterpriseHome session={authSession} onSwitch={changeWorkspace} hash={hash} />}
+          {opportunitySeed && currentWorkspace.type === "ENTERPRISE" && <OpportunityEditor token={authSession.token}
+            userId={authSession.user.id} seed={opportunitySeed} onClose={() => setOpportunitySeed(null)}
+            onDone={id => {
+              setOpportunitySeed(null);
+              setRelatedTarget(null);
+              navigateWorkspace("#account/enterprise/opportunities/" + id);
+            }} />}
           {activeTab === "account" && accountSection!=="enterprise" && (currentWorkspace.type==="PERSONAL" || ["credits","ledger"].includes(accountSection)) && (accountWallet ? (
             <AccountCenter
               session={authSession}
@@ -2403,7 +2418,7 @@ function SiteRecordFooter({ className = "" }: { className?: string }) {
   );
 }
 
-function RelatedMatchesDrawer({ kind, source, matches, session, onClose, onStatusChange, onCopy }: {
+function RelatedMatchesDrawer({ kind, source, matches, session, onClose, onStatusChange, onCopy, onOpportunity }: {
   kind: "stock" | "market";
   source: StockItem | MarketPost;
   matches: MatchCandidate[];
@@ -2411,6 +2426,7 @@ function RelatedMatchesDrawer({ kind, source, matches, session, onClose, onStatu
   onClose: () => void;
   onStatusChange: (id: string, status: MatchStatus) => void;
   onCopy: (candidate: MatchCandidate, notify: (notice: { tone: NoticeTone; text: string }) => void) => Promise<void>;
+  onOpportunity?: (candidate: MatchCandidate) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
@@ -2474,6 +2490,7 @@ function RelatedMatchesDrawer({ kind, source, matches, session, onClose, onStatu
       <button type="button" className="related-back" ref={backButton} onClick={() => { setSelectedId(""); setFeedback(""); }}>
         <ArrowLeft size={16} />返回{title}</button>
       <MatchDetailDrawer candidate={selected}
+        onOpportunity={onOpportunity}
         onCopy={pair => void onCopy(pair, notice => setFeedback(notice.text))}
         onStatusChange={(id, status) => { onStatusChange(id, status); setFeedback(`已标记为${matchStatusText(status)}。`); }}
         verification={<MatchSupplyVerification session={session} candidate={selected} />} />
@@ -2510,11 +2527,12 @@ function MatchViewSwitch({ value, onChange }: { value: MatchView; onChange: (val
   );
 }
 
-function MatchList({ items, view, selectedId, onSelect }: {
+function MatchList({ items, view, selectedId, onSelect, onOpportunity }: {
   items: MatchCandidate[];
   view: MatchView;
   selectedId: string;
   onSelect: (item: MatchCandidate) => void;
+  onOpportunity?: (candidate: MatchCandidate) => void;
 }) {
   if (!items.length) return null;
   const supplyFirst = view === "SUPPLY_TO_DEMAND";
@@ -2546,6 +2564,9 @@ function MatchList({ items, view, selectedId, onSelect }: {
               <span className="trade-match-cta">{pair.status !== "NEW" && <small>{matchStatusText(pair.status)}</small>}对照供需 <ChevronRight size={14} /></span>
             </span>
           </button>
+          {onOpportunity && <div className="trade-match-opportunity">
+            <button type="button" aria-label={`转商机：${pair.demand.title}`} onClick={() => onOpportunity(pair)}>转商机</button>
+          </div>}
         </li>;
       })}
     </ul>
@@ -2626,11 +2647,20 @@ function MatchSupplyVerification({ candidate, session }: { candidate: MatchCandi
   />;
 }
 
-function MatchDetailDrawer({ candidate, onStatusChange, onCopy, verification }: {
+function opportunityFromMatch({ demand, stock }: MatchCandidate): OpportunitySeed {
+  return {
+    demandId: demand.id, supplyId: stock.id,
+    demand: { title: demand.title, model: demand.gpuModel, customer: demand.sourceContact || demand.sourceSender || "",
+      quantity: demand.quantity || 0, unit: demand.quantityUnit, city: demand.locationCity, mode: demand.tradeMode },
+  };
+}
+
+function MatchDetailDrawer({ candidate, onStatusChange, onCopy, verification, onOpportunity }: {
   candidate: MatchCandidate | null;
   onStatusChange: (candidateId: string, status: MatchStatus) => void;
   onCopy: (candidate: MatchCandidate) => void;
   verification: React.ReactNode;
+  onOpportunity?: (candidate: MatchCandidate) => void;
 }) {
   const [view, setView] = useState<"compare" | "verify">("compare");
   if (!candidate) return null;
@@ -2664,6 +2694,7 @@ function MatchDetailDrawer({ candidate, onStatusChange, onCopy, verification }: 
           <ul>{candidate.riskNotes.map(note => <li key={note}>{note}</li>)}</ul>
         </section>}
         <div className="trade-follow-actions">
+          {onOpportunity && <button type="button" className="primary-button rounded-md px-3 py-1.5 text-sm" onClick={() => onOpportunity(candidate)}>转商机</button>}
           <button type="button" className="trade-related" onClick={() => setView("verify")}>去核实货源<ChevronRight size={15} /></button>
           <button type="button" className="trade-copy" onClick={() => onCopy(candidate)}><ClipboardCheck size={15} />复制摘要</button>
         </div>

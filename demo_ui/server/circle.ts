@@ -578,6 +578,18 @@ export function createCircleRouter(
       .json({ error: error instanceof Problem ? error.message : "暂时无法保存或加载，请重试。" });
   });
   return Object.assign(router, {
+    opportunityQuote(actor: Actor, threadId: string, messageId: number) {
+      const actorId = idFor(actor);
+      const row = one(`SELECT m.id,m.thread,m.sender,m.quote,m.version,m.sentAt
+        FROM messages m JOIN threads t ON t.id=m.thread
+        WHERE m.id=? AND m.thread=? AND m.kind='quote' AND (t.a=? OR t.b=?)`,
+      messageId, threadId, actorId, actorId);
+      if (!row) return null;
+      return {
+        id: Number(row.id), threadId: String(row.thread), outgoing: row.sender === actorId,
+        version: Number(row.version), sentAt: String(row.sentAt), terms: JSON.parse(row.quote) as QuoteTerms,
+      };
+    },
     invalidateFeed() {
       presentationRevision = randomUUID();
       wake("feed");

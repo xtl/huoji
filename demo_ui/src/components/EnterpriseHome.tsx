@@ -2,6 +2,8 @@ import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, Building2, ShieldCheck } from "lucide-react";
 import type { AuthSession } from "../App";
 import StaffRecords from "./StaffRecords";
+import EnterpriseOpportunities from "./EnterpriseOpportunities";
+import { navigateWorkspace } from "../workspace-navigation";
 import "./enterprise.css";
 
 import { companyRequest, type Role, type Staff } from "./enterprise-client";
@@ -266,9 +268,11 @@ function ReviewRow({
 export default function EnterpriseHome({
   session,
   onSwitch,
+  hash,
 }: {
   session: AuthSession;
   onSwitch: (session: AuthSession) => void;
+  hash: string;
 }) {
   const token = session.token,
     id = session.currentWorkspaceId;
@@ -276,9 +280,12 @@ export default function EnterpriseHome({
     [rev, setRev] = useState(0),
     [note, setNote] = useState(""),
     [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState(window.location.hash === "#account/enterprise/usage" ? "AI 用量" : "成员"),
+  const [tab, setTab] = useState(hash === "#account/enterprise/usage" ? "AI 用量" : "商机"),
     [channel, setChannel] = useState("phone"),
     [showApplication, setShowApplication] = useState(false);
+  const opportunityPath = "#account/enterprise/opportunities";
+  const opportunityRoute = hash === opportunityPath || hash.startsWith(opportunityPath + "/");
+  const selectedTab = opportunityRoute ? "商机" : hash === "#account/enterprise/usage" ? "AI 用量" : tab;
   useEffect(() => {
     let live = true;
     companyRequest<Overview>(token, "")
@@ -291,7 +298,7 @@ export default function EnterpriseHome({
     return () => {
       live = false;
     };
-  }, [token, rev, tab]);
+  }, [token, rev, selectedTab]);
   useEffect(() => {
     const refresh = () => { if (!document.hidden) setRev(value => value + 1); };
     window.addEventListener("focus", refresh);
@@ -516,17 +523,22 @@ export default function EnterpriseHome({
           {current && (
             <>
               <nav className="ent-tabs" aria-label="企业管理">
-                {(manager ? ["成员", "员工资料", "广场设置", "AI 用量"] : ["AI 用量"]).map((t) => (
+                {(manager ? ["商机", "成员", "员工资料", "广场设置", "AI 用量"] : ["商机", "AI 用量"]).map((t) => (
                   <button
                     key={t}
-                    aria-current={(manager ? tab : "AI 用量") === t ? "page" : undefined}
-                    onClick={() => setTab(t)}
+                    aria-current={selectedTab === t ? "page" : undefined}
+                    onClick={() => {
+                      setTab(t);
+                      if (opportunityRoute || hash === "#account/enterprise/usage") navigateWorkspace("#account/enterprise", true);
+                    }}
                   >
                     {t}
                   </button>
                 ))}
               </nav>
-              {manager && tab === "成员" && (
+              {selectedTab === "商机" && <Fragment key={id}><EnterpriseOpportunities token={token} userId={session.user.id}
+                initialId={opportunityRoute ? hash.split("/")[3] : undefined} /></Fragment>}
+              {manager && selectedTab === "成员" && (
                 <>
                   {owner && (
                     <section className="ent-card">
@@ -632,10 +644,10 @@ export default function EnterpriseHome({
                   </section>
                 </>
               )}
-              {manager && tab === "员工资料" && (
+              {manager && selectedTab === "员工资料" && (
                 <StaffRecords token={token} members={data.members.filter((m) => owner || m.role === "MEMBER")} />
               )}
-              {manager && tab === "广场设置" && (
+              {manager && selectedTab === "广场设置" && (
                 <section className="ent-card">
                   <label className="ent-circle-visibility">
                     <input type="checkbox" role="switch" checked={current.showNameInCircle !== 0} disabled={busy}
@@ -657,7 +669,7 @@ export default function EnterpriseHome({
                   <p id="ent-circle-visibility-help">关闭后，本企业现有和今后发布的内容只显示发布人。询价和私信仍由发布人接收。</p>
                 </section>
               )}
-              {(!manager || tab === "AI 用量") && (
+              {selectedTab === "AI 用量" && (
                 <>
                   <TokenUsage token={token} />
                 </>

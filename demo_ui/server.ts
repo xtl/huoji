@@ -21,6 +21,7 @@ import { actualCharge, modelPrices } from "./server/model-credit-prices";
 import { creditPackagesFor, monthlyPrice, monthlyCredits, annualPrice, annualMonthlyCredits, pointsPerCostYuan, pricingVersion, rechargePricingVersion } from "./src/credit-pricing";
 import { EnterpriseStore, enterpriseRouter, isCompany } from "./server/enterprise";
 import { createWorkspaceLedgerRouter } from "./server/workspace-ledger";
+import { createOpportunityRouter } from "./server/opportunities";
 
 if (process.env.NODE_ENV !== "test") dotenv.config();
 
@@ -245,6 +246,12 @@ const circleRouter=createCircleRouter(path.join(path.dirname(identityFilePath())
   workspaceId => isCompany(workspaceId) || creditWallet.hasActiveMembership(workspaceId),
   accounts => enterprise.accountProfiles(accounts));
 app.use("/api/circle",circleRouter);
+app.use("/api/enterprise/opportunities", createOpportunityRouter(enterprise, {
+  session: readSession,
+  name: id => usersById.get(id)?.displayName || "企业成员",
+  snapshot: ledgerRouter.readSnapshot,
+  quote: (session, thread, message) => circleRouter.opportunityQuote({ ...session, displayName: "" }, thread, message),
+}));
 
 const rpaInbox = new RpaInbox({
   ...(process.env.NODE_ENV === "production" || process.env.HUOJI_CLOUD === "1" || (process.env.HUOJI_DESKTOP_TEST === "1" && process.env.NODE_ENV === "test") ? {allowedGroups: []} : {}),

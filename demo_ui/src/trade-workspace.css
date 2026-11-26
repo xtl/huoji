@@ -198,6 +198,9 @@
 .trade-risk { color: #825616; }
 .trade-match-cta { display: inline-flex; flex-shrink: 0; gap: .3rem; align-items: center; color: var(--trade-accent); font-size: .78rem; font-weight: 600; }
 .trade-match-cta small { color: var(--trade-muted); font-weight: 400; }
+.trade-match-opportunity { display: flex; justify-content: flex-end; padding: 0 1.1rem .55rem; }
+.trade-match-opportunity button { color: var(--trade-accent); font-weight: 650; font-size: .82rem; padding: .36rem .55rem; border: 1px solid var(--control-border); border-radius: 5px; }
+.trade-match-opportunity button:hover { background: var(--accent-soft); }
 .trade-compare-table { font-size: .83rem; }
 .trade-compare-table th, .trade-compare-table td { padding: .6rem .35rem; overflow-wrap: anywhere; }
 .trade-compare-table thead th { font-size: .75rem; font-weight: 550; background: var(--surface-subtle); }

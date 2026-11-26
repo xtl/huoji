@@ -5,6 +5,7 @@ import { listingKindLabel, matchingCircleSources } from "../circle-types";
 import { circleApi, localDate, postCircle, useCircleData } from "./circle-client";
 import { CircleDrawer, CircleMembershipNotice } from "./CircleForms";
 import type { CircleParticipation } from "../circle-types";
+import type { OpportunitySeed } from "../opportunity-types";
 export type ChatTarget = { threadId?: string; post?: CirclePost; direct?: boolean; peerName: string };
 type History = { thread: CircleThread; items: CircleMessage[]; more: boolean };
 const dateAfter = (days: number) =>
@@ -19,6 +20,7 @@ export function CircleChat({
   onSaved,
   participation,
   onCheckMembership,
+  onOpportunity,
 }: {
   token: string;
   actor: string;
@@ -29,6 +31,7 @@ export function CircleChat({
   onSaved: () => void;
   participation: CircleParticipation;
   onCheckMembership: () => void;
+  onOpportunity?: (seed: OpportunitySeed) => void;
 }) {
   const [id, setId] = useState(target.threadId ?? "");
   const remote = useCircleData<History>(token, id ? "/threads/" + id : "", version);
@@ -232,6 +235,18 @@ export function CircleChat({
                   </p>
                   <p>交期 {m.quote.delivery}</p>
                   <small>有效至 {m.quote.validUntil}</small>
+                  {onOpportunity && <button type="button" className="circle-link" onClick={() => {
+                    const quote = m.quote!;
+                    const model = quote.product || post?.title || "";
+                    const quantityText = post?.kind === "求购" ? post.quantity : quote.quantity;
+                    const quantity = quantityText.trim().match(/^([\d,]+(?:\.\d+)?)\s*(.*)$/);
+                    onOpportunity({
+                      quote: { threadId: id, messageId: m.id }, outgoingQuote: m.sender === actor,
+                      demand: { title: model, model, customer: m.sender === actor || post?.kind === "求购" ? name : "",
+                        city: post?.city || "", quantity: Number(quantity?.[1].replaceAll(",", "")) || 0,
+                        unit: quantity?.[2].trim() || "台", mode: post?.mode === "租赁" ? "RENTAL" : post?.mode === "期货" ? "FUTURES" : "SPOT" },
+                    });
+                  }}>转商机</button>}
                 </div>
               ) : (
                 <p>{m.text}</p>

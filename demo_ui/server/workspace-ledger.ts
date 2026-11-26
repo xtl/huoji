@@ -126,5 +126,9 @@ export function createWorkspaceLedgerRouter(file: string, authenticate: (auth: u
       throw error;
     }
   });
-  return router;
+  return Object.assign(router, {
+    readSnapshot(userId: string, workspaceId: string) {
+      return read(JSON.stringify([userId, workspaceId])).snapshot;
+    },
+  });
 }

@@ -12,6 +12,7 @@ import {
   UserRound,
 } from "lucide-react";
 import type { CircleParticipation, CirclePost, CircleQuestion, CircleSource, CircleThread, QuoteTerms } from "../circle-types";
+import type { OpportunitySeed } from "../opportunity-types";
 import { listingKindLabel, matchingCircleSources, sourceRoleLabel } from "../circle-types";
 import { navigateWorkspace, TALK_HASH } from "../workspace-navigation";
 import { CircleDrawer, CircleMembershipNotice, PublishForm } from "./CircleForms";
@@ -37,6 +38,7 @@ type Props = {
   hash: string;
   sources: CircleSource[];
   refresh: () => void;
+  onOpportunity?: (seed: OpportunitySeed) => void;
 };
 function Kind({ kind, mode }: { kind: string; mode: string }) {
   return <span className={"circle-kind " + (kind === "求购" ? "buy" : "")}>{listingKindLabel(kind, mode)}</span>;
@@ -397,7 +399,7 @@ function PostDetail({
     </div>
   );
 }
-export default function CircleWorkspace({ token, actor, name, companyName, participation, onCheckMembership, version, hash, sources, refresh }: Props) {
+export default function CircleWorkspace({ token, actor, name, companyName, participation, onCheckMembership, version, hash, sources, refresh, onOpportunity }: Props) {
   const parts = hash.replace(/^#/, "").split("/"),
     talk = parts[0] === "input" && parts[1] === "talk",
     mine = !talk && parts[1] === "mine",
@@ -670,6 +672,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
             sources={sources}
             participation={participation}
             onCheckMembership={onCheckMembership}
+            onOpportunity={onOpportunity}
             target={{
               threadId: action === "thread" ? param : existing?.id,
               post: action === "thread" ? undefined : p,
