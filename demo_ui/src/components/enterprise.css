@@ -168,7 +168,7 @@
   border-bottom: 1px solid #dce2ec;
   overflow-x: auto;
 }
-.ent-tabs > button {
+.ent-tabs > button, .ent-tabs > a {
   color: #576984;
   padding: 10px 2px;
   border: 0;
@@ -177,7 +177,7 @@
   white-space: nowrap;
   font-size: 0.88rem;
 }
-.ent-tabs > button[aria-current] {
+.ent-tabs > [aria-current] {
   color: #334d9f;
   box-shadow: inset 0 -2px #4058b6;
   font-weight: 650;

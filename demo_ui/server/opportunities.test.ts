@@ -33,7 +33,8 @@ test("match, split sourcing, portfolio, private quotes and reassignment work in 
     owner: { userId: "owner", currentWorkspaceId: "ent_team" },
     manager: { userId: "manager", currentWorkspaceId: "ent_team" },
     vendor: { userId: "vendor", currentWorkspaceId: "ent_other" },
-    personal: { userId: "sales", currentWorkspaceId: "personal" },
+    personal: { userId: "sales", currentWorkspaceId: "personal-sales" },
+    otherPersonal: { userId: "colleague", currentWorkspaceId: "personal-colleague" },
   };
   const session = (header: unknown) => sessions[String(header).slice(7) as keyof typeof sessions] ?? null;
   const ledger = createWorkspaceLedgerRouter(join(dir, "ledger.sqlite"), session);
@@ -45,10 +46,12 @@ test("match, split sourcing, portfolio, private quotes and reassignment work in 
   app.use(express.json());
   app.use("/ledger", ledger);
   app.use("/circle", circle);
-  app.use("/opportunities", createOpportunityRouter(store, {
+  const deps: Parameters<typeof createOpportunityRouter>[1] = {
     session, name: id => id, snapshot: ledger.readSnapshot,
     quote: (actor, thread, message) => circle.opportunityQuote({ ...actor, displayName: actor.userId }, thread, message),
-  }));
+  };
+  app.use("/opportunities", createOpportunityRouter(store, deps));
+  app.use("/personal", createOpportunityRouter(store, deps, actor => actor.currentWorkspaceId === "personal-" + actor.userId));
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>(resolve => server.once("listening", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
@@ -117,4 +120,39 @@ test("match, split sourcing, portfolio, private quotes and reassignment work in 
   assert.equal(handoff.events[0].fields.assigneeId, "colleague");
   assert.equal(handoff.quotes.length, 1);
   assert.equal((await board("colleague")).portfolio.length, 0);
+
+  const personalBoard = (user: string): Promise<OpportunityBoard> => request(user, "/personal");
+  await request("sales", "/personal", 403);
+  await request("owner", "/personal", 403);
+  assert.equal((await personalBoard("personal")).opportunities.length, 0);
+  await request("personal", "/personal", 404, input);
+  await request("personal", "/ledger", 200, { operations: [{
+    id: "private-records", seed: false, keys: [], changes: [
+      { table: "stocks", action: "add", row: { ...trade, id: "supply-a", title: "个人货源", status: "VERIFIED" } },
+      { table: "market", action: "add", row: { ...trade, id: "need", title: "个人采购需求", postType: "DEMAND" } },
+    ],
+  }] });
+  await request("personal", "/personal", 403, { ...input, assigneeId: "colleague" });
+  const privateDeal = await request("personal", "/personal", 201, input);
+  assert.notEqual(privateDeal.id, created.id);
+  assert.equal((await request("personal", "/personal", 200, input)).id, privateDeal.id);
+  const privateSnapshot = await personalBoard("personal");
+  assert.equal(privateSnapshot.opportunities[0].demand.title, "个人采购需求");
+  assert.equal(privateSnapshot.opportunities[0].confirmedQuantity, 4);
+  assert.equal(privateSnapshot.portfolio[0].demand, 4);
+  await request("personal", `/personal/${privateDeal.id}/quotes`, 404, { quote: linked });
+  const ownPost = await request("personal", "/circle/posts", 201, { nonce: randomUUID(), kind: "求购", title: "H200",
+    quantity: "4 台", city: "深圳", mode: "现货", role: "本人采购", days: 3 });
+  const ownThread = await request("vendor", "/circle/send", 200,
+    { nonce: randomUUID(), kind: "quote", quote, postId: ownPost.id });
+  const ownHistory = await request("personal", "/circle/threads/" + ownThread.id);
+  await request("personal", `/personal/${privateDeal.id}/quotes`, 200,
+    { quote: { threadId: ownThread.id, messageId: ownHistory.items[0].id } });
+  assert.equal((await personalBoard("personal")).opportunities[0].quotes.length, 1);
+  assert.equal((await personalBoard("otherPersonal")).opportunities.length, 0);
+  await request("otherPersonal", "/personal/" + privateDeal.id, 404, { ...input, assigneeId: "colleague" }, "PATCH");
+  assert.ok((await board("owner")).opportunities.every(item => item.id !== privateDeal.id));
+  await request("owner", "/opportunities/" + privateDeal.id, 404, { ...input, assigneeId: "owner" }, "PATCH");
+  await request("personal", "/personal/" + privateDeal.id, 200, { ...input, stage: "WON", version: 2 }, "PATCH");
+  assert.equal((await personalBoard("personal")).opportunities[0].stage, "WON");
 });

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, Building2, ShieldCheck } from "lucide-react";
 import type { AuthSession } from "../App";
 import StaffRecords from "./StaffRecords";
-import EnterpriseOpportunities from "./EnterpriseOpportunities";
+import OpportunityWorkbench from "./OpportunityWorkbench";
 import { navigateWorkspace } from "../workspace-navigation";
 import "./enterprise.css";
 
@@ -536,7 +536,7 @@ export default function EnterpriseHome({
                   </button>
                 ))}
               </nav>
-              {selectedTab === "商机" && <Fragment key={id}><EnterpriseOpportunities token={token} userId={session.user.id}
+              {selectedTab === "商机" && <Fragment key={id}><OpportunityWorkbench token={token} userId={session.user.id}
                 initialId={opportunityRoute ? hash.split("/")[3] : undefined} /></Fragment>}
               {manager && selectedTab === "成员" && (
                 <>

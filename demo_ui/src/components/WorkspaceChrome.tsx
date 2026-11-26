@@ -11,24 +11,25 @@ const destinations = [
   { key: "account", label: "我的", icon: CircleUserRound },
 ] as const;
 
-type NavigationProps = { activeTab: TabKey; onNavigate: (tab: TabKey) => void; messageHref: string; unread: number };
+type NavigationProps = { activeTab: TabKey; onNavigate: (tab: TabKey) => void; messageHref: string; matchHref?: string; unread: number };
 
-function NavigationLinks({ activeTab, onNavigate, messageHref, unread }: NavigationProps) {
+function NavigationLinks({ activeTab, onNavigate, messageHref, matchHref, unread }: NavigationProps) {
   return destinations.filter(item => item.key !== "account").map(({ key, icon: Icon, label }) => (
-    <a key={key} href={key === "input" ? messageHref : `#${key}`} aria-current={key === activeTab ? "page" : undefined} className="workspace-link"
+    <a key={key} href={key === "input" ? messageHref : key === "match" && matchHref ? matchHref : `#${key}`}
+      aria-current={key === activeTab ? "page" : undefined} className="workspace-link"
       aria-label={key === "input" && unread > 0 ? `消息，${unread} 条同行未读` : undefined}
       onClick={event => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         onNavigate(key);
       }}>
-      <Icon size={17} strokeWidth={1.7} aria-hidden="true" />{label}
+      <Icon size={17} strokeWidth={1.7} aria-hidden="true" />{key === "match" && matchHref ? "商机" : label}
       {key === "input" && unread > 0 && <b className="circle-unread nav-unread" aria-hidden="true">{unread > 99 ? "99+" : unread}</b>}
     </a>
   ));
 }
 
-export function WorkbenchHeader({ activeTab, onNavigate, messageHref, unread, workspace, maskedPhone, credits, onCredits, onAccount, onEnterprise, company, onLogout, children }: NavigationProps & {
+export function WorkbenchHeader({ activeTab, onNavigate, messageHref, matchHref, unread, workspace, maskedPhone, credits, onCredits, onAccount, onEnterprise, company, onLogout, children }: NavigationProps & {
   workspace: string; maskedPhone: string; credits: number|null; company: boolean; onEnterprise:()=>void;
   onCredits: () => void; onAccount: () => void; onLogout: () => void; children: ReactNode;
 }) {
@@ -50,7 +51,7 @@ export function WorkbenchHeader({ activeTab, onNavigate, messageHref, unread, wo
     <a href={messageHref} className="masthead-brand" aria-label="货记，打开消息工作台">
       <img alt="" src="/huoji-icon.png" width="30" height="30" /><strong>货记</strong>
     </a>
-    <nav className="workspace-menu" aria-label="主导航"><NavigationLinks activeTab={activeTab} onNavigate={onNavigate} messageHref={messageHref} unread={unread} /></nav>
+    <nav className="workspace-menu" aria-label="主导航"><NavigationLinks activeTab={activeTab} onNavigate={onNavigate} messageHref={messageHref} matchHref={matchHref} unread={unread} /></nav>
     <div className="masthead-tools">
       {children}
       <details ref={account} className="account-dropdown" onKeyDown={event => {

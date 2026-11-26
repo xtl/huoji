@@ -6,8 +6,9 @@ import TradeSearch from "./components/TradeSearch";
 import CircleWorkspace from "./components/CircleWorkspace";
 import { useCircleLive } from "./components/circle-client";
 import type { CircleParticipation, CircleSource } from "./circle-types";
-import { navigateWorkspace, useWorkspaceRoute, useMessageEntry, setIntakeView, setAccountSection, DEEPSEEK_SETTINGS_HASH, TALK_HASH, type AccountSection, type TabKey } from "./workspace-navigation";
-import { OpportunityEditor } from "./components/EnterpriseOpportunities";
+import { navigateWorkspace, useWorkspaceRoute, useMessageEntry, setIntakeView, setAccountSection, DEEPSEEK_SETTINGS_HASH,
+  PERSONAL_OPPORTUNITIES_HASH, TALK_HASH, type AccountSection, type TabKey } from "./workspace-navigation";
+import OpportunityWorkbench, { OpportunityEditor } from "./components/OpportunityWorkbench";
 import type { OpportunitySeed } from "./opportunity-types";
 import { readCompactMemorySpec, readMemoryFrequency } from "./memory-specs";
 import { startLedgerSync, type SyncState } from "./workspace-ledger-client";
@@ -480,6 +481,7 @@ export default function App() {
   const [opportunitySeed, setOpportunitySeed] = useState<OpportunitySeed | null>(null);
   const liveCircle = useCircleLive(authSession?.token, authSession?.currentWorkspaceId);
   const messageScope = authSession ? JSON.stringify([authSession.user.id, authSession.currentWorkspaceId]) : "";
+  useEffect(() => setOpportunitySeed(null), [messageScope]);
   const messageEntry = useMessageEntry(messageScope, hash, intakeView, liveCircle.unread, Boolean(liveCircle.actor));
   const [authNotice, setAuthNotice] = useState(initialAuth.expired ? SESSION_EXPIRED_NOTICE : "");
   const currentAuthToken = useRef<string | null>(authSession?.token ?? null);
@@ -492,6 +494,10 @@ export default function App() {
     } catch { /* Expired authentication is already rejected in memory. */ }
   }, [initialAuth.expired]);
   const currentWorkspace = authSession?.workspaces.find((workspace) => workspace.id === authSession.currentWorkspaceId) ?? null;
+  const personalSpace = currentWorkspace?.type === "PERSONAL";
+  const personalOpportunities = personalSpace &&
+    (hash === PERSONAL_OPPORTUNITIES_HASH || hash.startsWith(PERSONAL_OPPORTUNITIES_HASH + "/"));
+  const visiblePageTitle = activeTab === "match" && personalSpace ? "商机" : pageTitles[activeTab];
   const currentWorkspaceId = currentWorkspace?.id ?? "";
   const [stocks, setStocks] = useState<StockItem[]>(() =>
     normalizeStocks(loadWorkspaceCollection<StockItem[]>(authSession, "stocks", [])),
@@ -568,13 +574,15 @@ export default function App() {
     });
   }
   function navigateTo(tab: TabKey) {
+    const target = tab === "input" ? messageEntry.href :
+      tab === "match" && personalSpace ? PERSONAL_OPPORTUNITIES_HASH : `#${tab}`;
     if (tab === activeTab) {
       if (rental) {
         if (tab === "stock") resetStockFilters(); else resetMarketFilters();
         navigateWorkspace(`#${tab}`);
       }
       if (tab === "circle") navigateWorkspace("#circle");
-      if (tab === "input") navigateWorkspace(messageEntry.href);
+      if (tab === "input" || (tab === "match" && personalSpace)) navigateWorkspace(target);
       if (tab === "account") setAccountSection("overview");
       if (!inspectorCollapsed) closeInspector();
       return;
@@ -583,12 +591,12 @@ export default function App() {
     setInspectorCollapsed(true);
     setNotice(null);
     setQuery("");
-    navigateWorkspace(tab === "input" ? messageEntry.href : `#${tab}`);
+    navigateWorkspace(target);
   }
-  useEffect(() => { window.scrollTo(0, 0); }, [activeTab, intakeView, accountSection, rental]);
+  useEffect(() => { window.scrollTo(0, 0); }, [activeTab, intakeView, accountSection, rental, personalOpportunities]);
   useEffect(() => {
-    document.title = authSession ? `${activeTab === "input" && intakeView === "paste" ? "粘贴录入" : pageTitles[activeTab]} · 货记` : "登录 · 货记";
-  }, [authSession, activeTab, intakeView]);
+    document.title = authSession ? `${activeTab === "input" && intakeView === "paste" ? "粘贴录入" : visiblePageTitle} · 货记` : "登录 · 货记";
+  }, [authSession, activeTab, intakeView, visiblePageTitle]);
   useEffect(() => {
     const onBack = () => { setInspectorCollapsed(true); setQuery(""); setNotice(null); };
     window.addEventListener("popstate", onBack);
@@ -1386,7 +1394,8 @@ export default function App() {
         document.getElementById("workspace-content")?.focus();
       }}>跳到工作区内容</a>
       <div className="workspace-layout" data-page={activeTab}>
-        <WorkbenchHeader activeTab={activeTab} onNavigate={navigateTo} messageHref={messageEntry.href} unread={liveCircle.unread} workspace={currentWorkspace.name} maskedPhone={authSession.user.maskedPhone}
+        <WorkbenchHeader activeTab={activeTab} onNavigate={navigateTo} messageHref={messageEntry.href} matchHref={personalSpace ? PERSONAL_OPPORTUNITIES_HASH : undefined}
+          unread={liveCircle.unread} workspace={currentWorkspace.name} maskedPhone={authSession.user.maskedPhone}
           company={currentWorkspace.type==="ENTERPRISE"} onEnterprise={()=>setAccountSection("enterprise")} credits={accountWallet?.creditBalance??null} onCredits={() => { setNotice(null); setAccountSection("credits"); }}
           onAccount={() => { setNotice(null); setAccountSection("overview"); }} onLogout={handleLogout}>
           <WorkspaceSwitcher session={authSession} onSwitch={changeWorkspace} onManage={()=>setAccountSection("enterprise")}/>
@@ -1418,7 +1427,7 @@ export default function App() {
 
         <main className="workspace-main">
           <section id="workspace-content" tabIndex={-1} className="workspace-content">
-            <h1 className="sr-only">{activeTab === "input" && intakeView === "paste" ? "粘贴录入" : pageTitles[activeTab]}</h1>
+            <h1 className="sr-only">{activeTab === "input" && intakeView === "paste" ? "粘贴录入" : visiblePageTitle}</h1>
             {activeTab === "input" && intakeView === "paste" && <button type="button" className="back-to-inbox" onClick={() => setIntakeView(messageEntry.last)}>
               <ArrowLeft size={15} />返回消息工作台
             </button>}
@@ -1454,7 +1463,7 @@ export default function App() {
             actor={liveCircle.actor} name={liveCircle.name||authSession.user.maskedPhone} companyName={liveCircle.companyName}
             participation={circleParticipation}
             onCheckMembership={() => refreshWallet(n => n + 1)}
-            onOpportunity={currentWorkspace.type === "ENTERPRISE" ? setOpportunitySeed : undefined}
+            onOpportunity={setOpportunitySeed}
             version={liveCircle.version} hash={hash} sources={circleSources} refresh={liveCircle.refresh}/></React.Fragment>}
 
           {activeTab === "stock" && (
@@ -1776,7 +1785,14 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === "match" && (
+          {activeTab === "match" && personalSpace && <nav className="ent-tabs personal-opportunity-tabs" aria-label="商机视图">
+            <a href={PERSONAL_OPPORTUNITIES_HASH} aria-current={personalOpportunities ? "page" : undefined}>我的商机</a>
+            <a href="#match" aria-current={!personalOpportunities ? "page" : undefined}>供需匹配</a>
+          </nav>}
+          {activeTab === "match" && personalOpportunities && <React.Fragment key={messageScope}>
+            <OpportunityWorkbench token={authSession.token} userId={authSession.user.id} scope="personal" initialId={hash.split("/")[2]} />
+          </React.Fragment>}
+          {activeTab === "match" && !personalOpportunities && (
             <div className={`inspector-layout grid ${inspectorCollapsed ? "gap-0 lg:grid-cols-[minmax(0,1fr)_0px]" : "gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]"}`}>
               <div ref={tradeListRef} tabIndex={-1} role="region" aria-label="匹配结果" className="trade-list-region min-w-0 space-y-3">
                 <MatchViewSwitch value={matchView} onChange={(value) => {
@@ -1852,7 +1868,7 @@ export default function App() {
                 <MatchList
                   items={pagedMatches}
                   view={matchView}
-                  onOpportunity={currentWorkspace.type === "ENTERPRISE" ? candidate => setOpportunitySeed(opportunityFromMatch(candidate)) : undefined}
+                  onOpportunity={candidate => setOpportunitySeed(opportunityFromMatch(candidate))}
                   selectedId={inspectorCollapsed ? "" : selectedMatch?.id ?? ""}
                   onSelect={(candidate) => {
                     setSelectedMatchId(candidate.id);
@@ -1882,7 +1898,7 @@ export default function App() {
                   candidate={selectedMatch}
                   onStatusChange={updateMatchStatus}
                   onCopy={copyMatchSummary}
-                  onOpportunity={currentWorkspace.type === "ENTERPRISE" ? candidate => setOpportunitySeed(opportunityFromMatch(candidate)) : undefined}
+                  onOpportunity={candidate => setOpportunitySeed(opportunityFromMatch(candidate))}
                   verification={selectedMatch && !inspectorCollapsed && (
                     <React.Fragment key={matchHistoryPrefix(authSession.user.id, currentWorkspaceId, selectedMatch.demand.id, selectedMatch.stock.id)}>
                       <MatchSupplyVerification session={authSession} candidate={selectedMatch} />
@@ -1896,16 +1912,16 @@ export default function App() {
           {relatedTarget && relatedSource && activeTab === relatedTarget.kind && <React.Fragment key={relatedTarget.kind + relatedTarget.id}>
             <RelatedMatchesDrawer kind={relatedTarget.kind} source={relatedSource} matches={relatedMatches}
               session={authSession} onClose={() => setRelatedTarget(null)} onStatusChange={updateMatchStatus} onCopy={copyMatchSummary}
-              onOpportunity={currentWorkspace.type === "ENTERPRISE" ? candidate => setOpportunitySeed(opportunityFromMatch(candidate)) : undefined} />
+              onOpportunity={candidate => setOpportunitySeed(opportunityFromMatch(candidate))} />
           </React.Fragment>}
           {activeTab === "account" && (accountSection==="enterprise" || (currentWorkspace.type==="ENTERPRISE" && !["credits","ledger"].includes(accountSection))) &&
             <EnterpriseHome session={authSession} onSwitch={changeWorkspace} hash={hash} />}
-          {opportunitySeed && currentWorkspace.type === "ENTERPRISE" && <OpportunityEditor token={authSession.token}
-            userId={authSession.user.id} seed={opportunitySeed} onClose={() => setOpportunitySeed(null)}
+          {opportunitySeed && <OpportunityEditor token={authSession.token}
+            userId={authSession.user.id} scope={personalSpace ? "personal" : "enterprise"} seed={opportunitySeed} onClose={() => setOpportunitySeed(null)}
             onDone={id => {
               setOpportunitySeed(null);
               setRelatedTarget(null);
-              navigateWorkspace("#account/enterprise/opportunities/" + id);
+              navigateWorkspace((personalSpace ? PERSONAL_OPPORTUNITIES_HASH : "#account/enterprise/opportunities") + "/" + id);
             }} />}
           {activeTab === "account" && accountSection!=="enterprise" && (currentWorkspace.type==="PERSONAL" || ["credits","ledger"].includes(accountSection)) && (accountWallet ? (
             <AccountCenter
@@ -1932,7 +1948,8 @@ export default function App() {
         </main>
       </div>
 
-      <MobileNavigation activeTab={activeTab} onNavigate={navigateTo} messageHref={messageEntry.href} unread={liveCircle.unread} />
+      <MobileNavigation activeTab={activeTab} onNavigate={navigateTo} messageHref={messageEntry.href}
+        matchHref={personalSpace ? PERSONAL_OPPORTUNITIES_HASH : undefined} unread={liveCircle.unread} />
     </div>
   );
 }

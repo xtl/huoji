@@ -13,12 +13,13 @@ const chinaTime = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", 
 const localInput = (at: string | null) => at ? new Date(Date.parse(at) + 8 * 3600000).toISOString().slice(0, 16) : "";
 const shortTime = (at: string | null) => at && Number.isFinite(Date.parse(at)) ? chinaTime.format(new Date(at)) : "未记录";
 const describeError = (error: unknown) => error instanceof Error ? error.message : "操作失败，请重试。";
+type Scope = "personal" | "enterprise";
 
 class RequestError extends Error {
   constructor(message: string, readonly existingId?: string) { super(message); }
 }
-async function request<T>(token: string, route = "", method = "GET", body?: object, signal?: AbortSignal): Promise<T> {
-  const res = await fetch("/api/enterprise/opportunities" + route, {
+async function request<T>(token: string, scope: Scope, route = "", method = "GET", body?: object, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`/api/${scope}/opportunities` + route, {
     method, signal, headers: { Authorization: "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body && JSON.stringify(body),
   });
@@ -27,26 +28,27 @@ async function request<T>(token: string, route = "", method = "GET", body?: obje
   return data;
 }
 
-function useBoard(token: string, refresh = 0, supplied?: OpportunityBoard) {
+function useBoard(token: string, scope: Scope, refresh = 0, supplied?: OpportunityBoard) {
   const [board, setBoard] = useState<OpportunityBoard>();
   const [error, fail] = useState("");
   useEffect(() => {
     if (supplied) return;
     const controller = new AbortController();
     fail("");
-    void request<OpportunityBoard>(token, "", "GET", undefined, controller.signal)
+    void request<OpportunityBoard>(token, scope, "", "GET", undefined, controller.signal)
       .then(data => { if (!controller.signal.aborted) setBoard(data); })
       .catch(reason => { if (!controller.signal.aborted) fail(describeError(reason)); });
     return () => controller.abort();
-  }, [token, refresh, supplied]);
+  }, [token, scope, refresh, supplied]);
   return { board: supplied ?? board, error };
 }
 
-export function OpportunityEditor({ token, userId, seed, existing, board: loadedBoard, onClose, onDone }: {
-  token: string; userId: string; seed?: OpportunitySeed; existing?: Opportunity; board?: OpportunityBoard;
+export function OpportunityEditor({ token, userId, scope = "enterprise", seed, existing, board: loadedBoard, onClose, onDone }: {
+  token: string; userId: string; scope?: Scope; seed?: OpportunitySeed; existing?: Opportunity; board?: OpportunityBoard;
   onClose: () => void; onDone: (id: string) => void;
 }) {
-  const { board, error: loadError } = useBoard(token, 0, loadedBoard);
+  const { board, error: loadError } = useBoard(token, scope, 0, loadedBoard);
+  const personal = scope === "personal";
   const [requestId] = useState(() => crypto.randomUUID());
   const [demand, setDemand] = useState(seed?.demand ?? emptyDemand);
   const [stage, setStage] = useState(existing?.stage ?? (seed?.outgoingQuote ? "QUOTED" : "NEW"));
@@ -72,10 +74,10 @@ export function OpportunityEditor({ token, userId, seed, existing, board: loaded
     fail("");
     try {
       const result = linkOnly
-        ? await request<{ id: string }>(token, `/${target}/quotes`, "POST", { quote: seed!.quote }, aborts.signal)
+        ? await request<{ id: string }>(token, scope, `/${target}/quotes`, "POST", { quote: seed!.quote }, aborts.signal)
         : existing
-          ? await request<{ id: string }>(token, `/${existing.id}`, "PATCH", { ...fields, version: existing.version }, aborts.signal)
-          : await request<{ id: string }>(token, "", "POST", {
+          ? await request<{ id: string }>(token, scope, `/${existing.id}`, "PATCH", { ...fields, version: existing.version }, aborts.signal)
+          : await request<{ id: string }>(token, scope, "", "POST", {
             ...fields, demand, requestId, demandId: seed?.demandId, supplyId: seed?.supplyId, quote: seed?.quote,
             plannedQuantity: input.get("plannedQuantity") ? Number(input.get("plannedQuantity")) : null, joinExisting,
           }, aborts.signal);
@@ -97,7 +99,7 @@ export function OpportunityEditor({ token, userId, seed, existing, board: loaded
     }}>
       {existing && <p className="opportunity-form-context">{existing.demand.title} · {existing.demand.quantity}{existing.demand.unit}</p>}
       {seed?.quote && <>
-        <p className="opportunity-form-context">这版报价将归档到企业商机。</p>
+        <p className="opportunity-form-context">{personal ? "这版报价将归档到个人商机。" : "这版报价将归档到企业商机。"}</p>
         <label>归档到<select value={target} onChange={event => setTarget(event.target.value)}>
           <option value="">新建商机</option>
           {board?.opportunities.map(row => <option key={row.id} value={row.id}>{row.demand.title} · {row.demand.customer || row.demand.model}</option>)}
@@ -120,11 +122,11 @@ export function OpportunityEditor({ token, userId, seed, existing, board: loaded
         </div>}
         <fieldset>
           <div className="opportunity-fields">
-            <label>负责人<select name="assigneeId" defaultValue={existing?.assigneeId || userId} required>
+            {!personal && <label>负责人<select name="assigneeId" defaultValue={existing?.assigneeId || userId} required>
               <option value={userId}>{board?.members.find(member => member.id === userId)?.name || "我"}</option>
               {board?.members.filter(member => member.id !== userId && (member.active || member.id === existing?.assigneeId))
                 .map(member => <option key={member.id} value={member.id}>{member.name}{member.active ? "" : "（已停用）"}</option>)}
-            </select></label>
+            </select></label>}
             <label>阶段<select value={stage} onChange={event => setStage(event.target.value as Opportunity["stage"])}>
               {Object.entries(opportunityStages).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select></label>
@@ -151,8 +153,8 @@ export function OpportunityEditor({ token, userId, seed, existing, board: loaded
 const sameModel = (line: PortfolioLine, row: Opportunity) => line.model.toUpperCase().replace(/\s+/g, "") ===
   row.demand.model.toUpperCase().replace(/\s+/g, "") && line.unit === row.demand.unit && line.mode === row.demand.mode;
 
-function OpportunityDetail({ row, board, token, onClose, onEdit, refresh }: {
-  row: Opportunity; board: OpportunityBoard; token: string; onClose: () => void; onEdit: () => void; refresh: () => void;
+function OpportunityDetail({ row, board, token, scope, onClose, onEdit, refresh }: {
+  row: Opportunity; board: OpportunityBoard; token: string; scope: Scope; onClose: () => void; onEdit: () => void; refresh: () => void;
 }) {
   const [error, fail] = useState("");
   const [saving, setSaving] = useState(false);
@@ -164,7 +166,7 @@ function OpportunityDetail({ row, board, token, onClose, onEdit, refresh }: {
     setSaving(true);
     fail("");
     try {
-      await request(token, `/${row.id}/supplies`, "POST", { ...fields, version: row.version });
+      await request(token, scope, `/${row.id}/supplies`, "POST", { ...fields, version: row.version });
       refresh();
     } catch (reason) { fail(describeError(reason)); }
     finally { setSaving(false); }
@@ -175,7 +177,8 @@ function OpportunityDetail({ row, board, token, onClose, onEdit, refresh }: {
         <div><h3>{row.demand.title}</h3><p>{[row.demand.customer, row.demand.city, tradeModes[row.demand.mode]].filter(Boolean).join(" · ")}</p></div>
         <button type="button" className="circle-secondary" onClick={onEdit}>更新跟进</button>
       </div>
-      <p>{opportunityStages[row.stage]} · {board.members.find(member => member.id === row.assigneeId)?.name || "企业成员"} · {shortTime(row.dueAt)}</p>
+      <p>{[opportunityStages[row.stage], scope === "enterprise" && (board.members.find(member => member.id === row.assigneeId)?.name || "企业成员"),
+        shortTime(row.dueAt)].filter(Boolean).join(" · ")}</p>
       {row.nextStep && <p>{nextActions[row.nextAction]}：{row.nextStep}</p>}
       <section>
         <h4>备选货源</h4>
@@ -244,9 +247,12 @@ function reasonFor(row: Opportunity) {
   return nextActions[row.nextAction];
 }
 
-export default function EnterpriseOpportunities({ token, userId, initialId }: { token: string; userId: string; initialId?: string }) {
+export default function OpportunityWorkbench({ token, userId, initialId, scope = "enterprise" }: {
+  token: string; userId: string; initialId?: string; scope?: Scope;
+}) {
   const [revision, setRevision] = useState(0);
-  const { board, error } = useBoard(token, revision);
+  const { board, error } = useBoard(token, scope, revision);
+  const personal = scope === "personal";
   const [selected, setSelected] = useState(initialId ?? "");
   const [editor, setEditor] = useState<"create" | "edit">();
   const [filter, setFilter] = useState<"today" | "open" | "closed">("today");
@@ -262,7 +268,8 @@ export default function EnterpriseOpportunities({ token, userId, initialId }: { 
     filter === "open" ? rows.filter(item => isOpenOpportunity(item.stage)) : today;
   return <div className="opportunity-board">
     <section className="ent-card">
-      <header className="opportunity-heading"><div><h3>今天要跟的单</h3><p>{board?.manager ? "看看哪单要催、哪单还缺货。" : "查看分给你的商机和下一步。"}</p></div>
+      <header className="opportunity-heading"><div><h3>今天要跟的单</h3><p>{personal ? "查看待回复、快到期的报价和待核实货源。" :
+        board?.manager ? "看看哪单要催、哪单还缺货。" : "查看分给你的商机和下一步。"}</p></div>
         <button className="circle-primary" type="button" disabled={!board} onClick={() => setEditor("create")}><Plus size={16} />新建商机</button>
       </header>
       {error && <p className="opportunity-error" role="alert">{error} <button type="button" className="circle-link" onClick={refresh}>重试</button></p>}
@@ -274,7 +281,8 @@ export default function EnterpriseOpportunities({ token, userId, initialId }: { 
         </div>
         {filtered.length ? <ul className="opportunity-list">{filtered.map(item => <li key={item.id}>
           <button type="button" onClick={() => setSelected(item.id)}>
-            <div><strong>{item.demand.title}</strong><small>{item.demand.customer || item.demand.city || item.demand.model} · {item.demand.quantity}{item.demand.unit} · {board.members.find(member => member.id === item.assigneeId)?.name || "企业成员"}</small></div>
+            <div><strong>{item.demand.title}</strong><small>{item.demand.customer || item.demand.city || item.demand.model} · {item.demand.quantity}{item.demand.unit}
+              {!personal && <> · {board.members.find(member => member.id === item.assigneeId)?.name || "企业成员"}</>}</small></div>
             <div><strong>{isOpenOpportunity(item.stage) ? reasonFor(item) : opportunityStages[item.stage]}</strong><small>{item.nextStep || opportunityStages[item.stage]}</small></div>
             <div><time dateTime={item.dueAt ?? undefined}>{shortTime(item.dueAt)}</time><small>{`已核实 ${item.confirmedQuantity}/${item.demand.quantity}${item.demand.unit}`}</small></div>
             <ChevronRight size={16} aria-hidden="true" />
@@ -306,9 +314,9 @@ export default function EnterpriseOpportunities({ token, userId, initialId }: { 
         <p className="opportunity-empty">{modelQuery ? "没有匹配型号。" : "核对入库后，供需会出现在这里。"}</p>}
     </section>}
     {board && row && !editor && <Fragment key={row.id}>
-      <OpportunityDetail row={row} board={board} token={token}
+      <OpportunityDetail row={row} board={board} token={token} scope={scope}
         onClose={() => setSelected("")} onEdit={() => setEditor("edit")} refresh={refresh} /></Fragment>}
-    {board && editor && <OpportunityEditor token={token} userId={userId} board={board} existing={editor === "edit" ? row : undefined}
+    {board && editor && <OpportunityEditor token={token} userId={userId} scope={scope} board={board} existing={editor === "edit" ? row : undefined}
       onClose={() => setEditor(undefined)} onDone={id => { setSelected(id); setEditor(undefined); refresh(); }} />}
   </div>;
 }

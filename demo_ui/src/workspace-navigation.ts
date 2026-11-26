@@ -4,6 +4,7 @@ export type TabKey = "input" | "stock" | "market" | "match" | "account" | "circl
 export type IntakeView = "wechat" | "paste" | "review" | "talk";
 type InboxView = Exclude<IntakeView, "paste">;
 export const TALK_HASH = "#input/talk";
+export const PERSONAL_OPPORTUNITIES_HASH = "#match/opportunities";
 export type AccountSection = "overview" | "credits" | "ledger" | "deepseek" | "enterprise";
 export const DEEPSEEK_SETTINGS_HASH = "#settings/deepseek";
 

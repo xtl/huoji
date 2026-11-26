@@ -246,12 +246,15 @@ const circleRouter=createCircleRouter(path.join(path.dirname(identityFilePath())
   workspaceId => isCompany(workspaceId) || creditWallet.hasActiveMembership(workspaceId),
   accounts => enterprise.accountProfiles(accounts));
 app.use("/api/circle",circleRouter);
-app.use("/api/enterprise/opportunities", createOpportunityRouter(enterprise, {
+const opportunityDependencies: Parameters<typeof createOpportunityRouter>[1] = {
   session: readSession,
   name: id => usersById.get(id)?.displayName || "企业成员",
   snapshot: ledgerRouter.readSnapshot,
   quote: (session, thread, message) => circleRouter.opportunityQuote({ ...session, displayName: "" }, thread, message),
-}));
+};
+app.use("/api/enterprise/opportunities", createOpportunityRouter(enterprise, opportunityDependencies));
+app.use("/api/personal/opportunities", createOpportunityRouter(enterprise, opportunityDependencies,
+  session => session.currentWorkspaceId === personalWorkspaceId(session.userId)));
 
 const rpaInbox = new RpaInbox({
   ...(process.env.NODE_ENV === "production" || process.env.HUOJI_CLOUD === "1" || (process.env.HUOJI_DESKTOP_TEST === "1" && process.env.NODE_ENV === "test") ? {allowedGroups: []} : {}),
