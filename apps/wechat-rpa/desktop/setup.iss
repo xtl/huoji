@@ -17,7 +17,7 @@ AppId=HuojiCaptureLocalTest
 #endif
 AppName={#Edition}
 #ifdef Cloud
-AppVersion=0.2.0
+AppVersion=0.2.1
 ChangesAssociations=yes
 #else
 AppVersion=0.1.0

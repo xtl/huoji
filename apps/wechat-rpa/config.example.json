@@ -8,6 +8,11 @@
   "pollIntervalSeconds": 10,
   "statePath": ".data/wechat-rpa.sqlite3",
   "upload": {"enabled": false, "batchSize": 50},
+  "ocr": {
+    "minConfidence": 0.70,
+    "retries": 2,
+    "contrastEnhancement": true
+  },
   "selectors": {
     "window": {"controlType": "WindowControl", "name": "{chatName}", "maxDepth": 1},
     "title": {"controlType": "TextControl", "name": "{chatName}", "maxDepth": 6},

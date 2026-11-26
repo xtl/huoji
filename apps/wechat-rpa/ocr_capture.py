@@ -51,6 +51,13 @@ def profile_for(config: dict[str, Any], group: str) -> dict[str, Any]:
     column = profile.get("incomingBubbleLeft")
     if column is not None and (type(column) is not int or not 0 <= column < size[0]):
         raise OcrCaptureError("OCR_PROFILE_INVALID: incomingBubbleLeft 必须是窗口内实测的消息气泡左坐标。")
+    # 【改进 1】从配置读取用户可定制的信心度阈值，默认 0.70（降低容错）
+    profile["_ocrMinConfidence"] = profile.get("ocrMinConfidence", 0.70)
+    if not isinstance(profile["_ocrMinConfidence"], (int, float)) or not 0 < profile["_ocrMinConfidence"] < 1:
+        raise OcrCaptureError("OCR_PROFILE_INVALID: ocrMinConfidence 必须是 0 到 1 之间的小数。")
+    profile["_ocrRetries"] = profile.get("ocrRetries", 2)  # 【改进 3】自动重试次数，默认 2 次
+    if not isinstance(profile["_ocrRetries"], int) or profile["_ocrRetries"] < 0:
+        raise OcrCaptureError("OCR_PROFILE_INVALID: ocrRetries 必须是非负整数。")
     return profile
 
 
@@ -59,6 +66,20 @@ def normalize_title(value: str) -> str:
     # OCR may split an opening bracket into two overlapping detections. Only
     # the numeric member-count decoration is removed; group text stays exact.
     return re.sub(r"[（(]+\d+[)）]+$", "", value)
+
+
+def _enhance_image_contrast(image):
+    """【改进 2】增强图像对比度，改善白色/浅色主题下的识别效果"""
+    import numpy as np
+    from PIL import ImageEnhance
+    # 如果图像太暗淡（大部分像素在 180-255 之间），增强对比度
+    arr = np.asarray(image)
+    if arr.size > 0:
+        avg_brightness = arr.mean()
+        if avg_brightness > 150:  # 浅色背景
+            enhancer = ImageEnhance.Contrast(image)
+            return enhancer.enhance(1.5)  # 增加 50% 对比度
+    return image
 
 
 def ocr_lines(output: Any, minimum_score: float = 0.80,
@@ -111,11 +132,11 @@ def snapshot_message(group: str, lines: list[str], observed_at: str) -> dict[str
     }
 
 
-def ocr_title_text(output: Any) -> str:
+def ocr_title_text(output: Any, min_confidence: float = 0.80) -> str:
     # The calibrated title region is one line. Chinese glyphs and the numeric
     # count can have different top coordinates, so read left-to-right rather
     # than treating the count as a separate earlier row.
-    validated = ocr_lines(output, 0.80)
+    validated = ocr_lines(output, min_confidence)
     if not validated:
         return ""
     rows = [(min(float(point[0]) for point in box), str(text).strip())
@@ -221,9 +242,12 @@ def create_engine(factory):
 
 def title_matches_image(image, profile, group, engine):
     import numpy as np
+    # 【改进 2】对标题区域增强对比度
     title = image.crop(tuple(profile["titleRegion"]))
+    title = _enhance_image_contrast(title)
     title = title.resize((title.width * 2, title.height * 2))
-    read = ocr_title_text(engine(np.asarray(title)))
+    min_conf = profile.get("_ocrMinConfidence", 0.70)
+    read = ocr_title_text(engine(np.asarray(title)), min_confidence=min_conf)
     expected = re.sub(r"\s+", "", group)
     return re.sub(r"\s+", "", read) == expected or normalize_title(read) == expected
 
@@ -321,7 +345,9 @@ def read_snapshot_image(config: dict[str, Any], group: str, image: Any,
     No image or recognized text is logged or transmitted by this function.
     """
     crop, output = _validated_crop_output(config, group, image, engine)
-    return snapshot_message(group, ocr_lines(output, 0.80, annotate_uncertain=True), observed_at)
+    profile = profile_for(config, group)
+    min_conf = profile.get("_ocrMinConfidence", 0.70)
+    return snapshot_message(group, ocr_lines(output, min_conf, annotate_uncertain=True), observed_at)
 
 
 def _validated_crop_output(config: dict[str, Any], group: str, image: Any, engine: Any):
@@ -353,7 +379,10 @@ def read_messages_image(config: dict[str, Any], group: str, image: Any,
 
 
 def capture_snapshots(config: dict[str, Any]) -> list[dict[str, Any]]:
-    """Called only by the user-run collector, never starts a background service."""
+    """Called only by the user-run collector, never starts a background service.
+
+    【改进 3】增加自动重试机制：OCR 置信度失败时重试 N 次
+    """
     groups = config.get("groups")
     if not isinstance(groups, list) or not groups or any(not isinstance(group, str) or not group.strip() for group in groups):
         raise OcrCaptureError("OCR_GROUPS_REQUIRED: 必须明确指定采集群。")
@@ -372,13 +401,29 @@ def capture_snapshots(config: dict[str, Any]) -> list[dict[str, Any]]:
         _engine = create_engine(RapidOCR)
     messages = []
     for group, hwnd in windows.items():
-        try:
-            image = capture_window(hwnd, group, groups)
-            observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        except WindowCaptureError as exc:
-            raise OcrCaptureError(str(exc)) from exc
-        if _window_title(api, hwnd) != group or not _wechat_process(api, hwnd) or api[2].IsIconic(hwnd):
-            raise OcrCaptureError("OCR_WINDOW_CHANGED: 截图期间窗口身份发生变化，本次不采集。")
-        messages.extend(read_messages_image(config, group, image, _engine, observed_at))
+        profile = profile_for(config, group)
+        max_retries = profile.get("_ocrRetries", 2)
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                image = capture_window(hwnd, group, groups)
+                observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            except WindowCaptureError as exc:
+                raise OcrCaptureError(str(exc)) from exc
+            if _window_title(api, hwnd) != group or not _wechat_process(api, hwnd) or api[2].IsIconic(hwnd):
+                raise OcrCaptureError("OCR_WINDOW_CHANGED: 截图期间窗口身份发生变化，本次不采集。")
+            try:
+                messages.extend(read_messages_image(config, group, image, _engine, observed_at))
+                break  # 成功，跳出重试循环
+            except OcrCaptureError as e:
+                if "OCR_LOW_CONFIDENCE" not in str(e):
+                    raise  # 不是置信度问题，直接抛出
+                last_error = e
+                if attempt < max_retries:
+                    import time
+                    time.sleep(0.3)  # 等待 300ms 后重试
+                    continue
+                else:
+                    raise last_error  # 达到最大重试次数，抛出最后一个错误
     _require_unlocked_desktop(api)
     return messages
