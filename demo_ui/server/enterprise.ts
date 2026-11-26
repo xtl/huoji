@@ -282,7 +282,7 @@ export function enterpriseRouter(
   r.patch("/circle-settings", run((req, scope) => {
     manage(scope);
     const showName = req.body?.showName;
-    requireThat(typeof showName === "boolean", 400, "请选择是否在广场展示企业名称。");
+    requireThat(typeof showName === "boolean", 400, "请选择是否在内圈展示企业名称。");
     const changed = store.use(db => db.prepare(
       `INSERT INTO company_circle_settings(company, showName) VALUES (?, ?)
        ON CONFLICT(company) DO UPDATE SET showName=excluded.showName

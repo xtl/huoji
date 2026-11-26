@@ -14,7 +14,7 @@ export function CircleMembershipNotice({ participation, onRetry }: {
       <button type="button" className="circle-secondary" onClick={onRetry}>重新核对</button>
     </>}
     {participation === "locked" && <>
-      <p>开通个人会员后，可发布广场供需并与同行对话。</p>
+      <p>开通个人会员后，可发布内圈供需并与同行对话。</p>
       <a className="circle-primary" href="#account/credits">查看会员方案</a>
     </>}
   </div>;

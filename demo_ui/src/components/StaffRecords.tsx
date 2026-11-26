@@ -21,7 +21,7 @@ const labels: Record<View, string> = {
   drafts: "待入库",
   stocks: "供应",
   market: "需求",
-  posts: "广场发布",
+  posts: "内圈发布",
 };
 export default function StaffRecords({ members, token }: { members: Staff[]; token: string }) {
   const [member, setMember] = useState(members[0]?.userId || ""),

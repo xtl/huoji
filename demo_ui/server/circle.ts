@@ -260,7 +260,7 @@ export function createCircleRouter(
   });
   const participationAllowed = (res: Response) => canParticipate((res.locals.actor as Actor).currentWorkspaceId);
   function requireParticipation(res: Response) {
-    if (!participationAllowed(res)) throw new Problem(403, "开通个人会员后，可发布广场供需并与同行对话。");
+    if (!participationAllowed(res)) throw new Problem(403, "开通个人会员后，可发布内圈供需并与同行对话。");
   }
   router.get("/im", (_req, res) => res.json(
     cloud && participationAllowed(res) ? cloud.credentials(res.locals.me) : { appId: 0 },
@@ -572,7 +572,7 @@ export function createCircleRouter(
     res.json({ id });
   });
   router.use((error: Error, _req: Request, res: Response, _next: unknown) => {
-    if (!(error instanceof Problem)) console.error("[同行广场] 操作失败", error.name);
+    if (!(error instanceof Problem)) console.error("[内圈] 操作失败", error.name);
     res
       .status(error instanceof Problem ? error.status : 500)
       .json({ error: error instanceof Problem ? error.message : "暂时无法保存或加载，请重试。" });

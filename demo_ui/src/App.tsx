@@ -47,7 +47,7 @@ import "./components/account-center.css";
 import { appendMatchHistory, matchHistoryPrefix, readMatchHistory } from "./match-verification-history";
 import type { VerificationEntry } from "./supply-verification";
 
-const pageTitles: Record<TabKey, string> = { input: "消息工作台", stock: "供应库", market: "需求库", match: "供需匹配", account: "个人中心", circle: "同行广场" };
+const pageTitles: Record<TabKey, string> = { input: "消息工作台", stock: "供应库", market: "需求库", match: "供需匹配", account: "个人中心", circle: "内圈" };
 type MarketType = "GOODS" | "DEMAND";
 type TradeMode = "SPOT" | "FUTURES" | "RENTAL";
 type ProductCategory = "SERVER" | "GPU_CARD" | "MEMORY" | "STORAGE" | "CPU" | "NETWORK" | "OTHER";
@@ -2833,7 +2833,7 @@ function TradeDetailDrawer({
       <h3 className="trade-inspector-title">{item.title}</h3>
       <div className="trade-detail-publication"><span>消息发布时间</span><TradeTime item={item} /></div>
       {(!("status" in item)||!["SOLD_OUT","EXPIRED"].includes(item.status))&&<button type="button" className="quick-secondary"
-        onClick={()=>navigateWorkspace("#circle/publish/"+encodeURIComponent(item.id)+"/"+kind)}><Radio size={15}/>发布到广场</button>}
+        onClick={()=>navigateWorkspace("#circle/publish/"+encodeURIComponent(item.id)+"/"+kind)}><Radio size={15}/>发布到内圈</button>}
       <div className="trade-detail-numbers">
         <div><span>{item.tradeMode === "RENTAL" ? (isStock ? "可租数量" : "求租数量") : isStock ? "供货数量" : "采购数量"}</span><strong>{quantityText(item.quantity, item.quantityUnit)}</strong></div>
         <div><span>{item.tradeMode === "RENTAL" ? (isStock ? "租金" : "租金预算") : isStock ? "报价" : "采购预算"}</span><strong>{item.priceAmount ? formatMoney(item.priceAmount) : "未记录"}</strong></div>

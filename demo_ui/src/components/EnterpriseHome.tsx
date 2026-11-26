@@ -523,7 +523,7 @@ export default function EnterpriseHome({
           {current && (
             <>
               <nav className="ent-tabs" aria-label="企业管理">
-                {(manager ? ["商机", "成员", "员工资料", "广场设置", "AI 用量"] : ["商机", "AI 用量"]).map((t) => (
+                {(manager ? ["商机", "成员", "员工资料", "内圈设置", "AI 用量"] : ["商机", "AI 用量"]).map((t) => (
                   <button
                     key={t}
                     aria-current={selectedTab === t ? "page" : undefined}
@@ -647,7 +647,7 @@ export default function EnterpriseHome({
               {manager && selectedTab === "员工资料" && (
                 <StaffRecords token={token} members={data.members.filter((m) => owner || m.role === "MEMBER")} />
               )}
-              {manager && selectedTab === "广场设置" && (
+              {manager && selectedTab === "内圈设置" && (
                 <section className="ent-card">
                   <label className="ent-circle-visibility">
                     <input type="checkbox" role="switch" checked={current.showNameInCircle !== 0} disabled={busy}
@@ -662,9 +662,9 @@ export default function EnterpriseHome({
                               ? { ...company, showNameInCircle: showName ? 1 : 0 }
                               : company),
                           });
-                        }, "广场展示设置已保存。");
+                        }, "内圈展示设置已保存。");
                       }} />
-                    <strong>在广场展示企业名称</strong>
+                    <strong>在内圈展示企业名称</strong>
                   </label>
                   <p id="ent-circle-visibility-help">关闭后，本企业现有和今后发布的内容只显示发布人。询价和私信仍由发布人接收。</p>
                 </section>

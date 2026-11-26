@@ -7,7 +7,7 @@ const destinations = [
   { key: "stock", label: "供应库", icon: Box },
   { key: "market", label: "需求库", icon: ListFilter },
   { key: "match", label: "匹配", icon: GitCompareArrows },
-  { key: "circle", label: "广场", icon: Store },
+  { key: "circle", label: "内圈", icon: Store },
   { key: "account", label: "我的", icon: CircleUserRound },
 ] as const;
 

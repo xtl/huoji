@@ -11,7 +11,7 @@ export async function circleApi<T>(token: string, path: string, init: RequestIni
     cache: "no-store",
   });
   const data = await response.json().catch(() => null);
-  if (!response.ok || !data) throw new Error(data?.error || "暂时无法连接广场，请重试。");
+  if (!response.ok || !data) throw new Error(data?.error || "暂时无法连接内圈，请重试。");
   return data as T;
 }
 export const postCircle = <T>(token: string, path: string, body: object, method = "POST") =>

@@ -283,7 +283,7 @@ function PostDetail({
                   <input required maxLength={35} value={value} onChange={(e) => setValue(e.target.value)} />
                 </label>
               ) : (
-                <span>结束后将从广场移出，已有对话保留。</span>
+                <span>结束后将从内圈移出，已有对话保留。</span>
               )}
               <button disabled={pending}>{action === "quantity" ? "保存数量" : "确认结束"}</button>
               <button type="button" onClick={() => setAction("")}>
@@ -498,7 +498,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
       ) : (
         <>
           <div className="view-bar circle-market-nav">
-            <nav className="circle-tabs" aria-label="广场范围">
+            <nav className="circle-tabs" aria-label="内圈范围">
               {[
                 ["圈内供需", demo ? "#circle/demo" : "#circle"],
                 ["租赁", "#circle/rental"],
@@ -553,7 +553,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
                 <label className="circle-search">
                   <Search size={16} />
                   <input
-                    aria-label="搜索广场"
+                    aria-label="搜索内圈"
                     maxLength={80}
                     placeholder="搜索型号或城市"
                     value={word}
@@ -562,7 +562,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
                 </label>
               </div>
               {list.data?.items.length ? (
-                <ul className="circle-feed" aria-label="广场发布">
+                <ul className="circle-feed" aria-label="内圈发布">
                   {[...list.data.items].sort((a, b) => Number(b.active) - Number(a.active)).map(post => (
                     <React.Fragment key={post.id}>
                       <FeedPost
@@ -640,7 +640,7 @@ export default function CircleWorkspace({ token, actor, name, companyName, parti
             go(0);
             refresh();
             navigateWorkspace("#circle/mine/post/" + id);
-            setHint("已发布到同行广场");
+            setHint("已发布到内圈");
           }}
         />
       )}
@@ -732,7 +732,7 @@ function Empty({
                 : "可以从个人库选一条，也可以直接填写新的货源或求购。"}
           </p>
           <button type="button" className="circle-secondary" onClick={go}>
-            {chat ? "去同行广场" : filtered ? "清除筛选" : "发布第一条供需"}
+            {chat ? "去内圈" : filtered ? "清除筛选" : "发布第一条供需"}
             <ArrowRight size={15} />
           </button>
         </>
