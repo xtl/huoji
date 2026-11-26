@@ -34,7 +34,11 @@ const enterprise = new EnterpriseStore(path.join(path.dirname(identityFilePath()
 const creditWallet = new CreditWallet(enterprise);
 app.use("/api/platform",platformAiRouter(enterprise, deepSeekKeys,{
   wallet: creditWallet, personalWorkspaceId,
-  accounts:()=>[...usersById.values()], sendCode:(phone,code)=>deliverSmsCode(phone,code),
+  accounts:()=>[...usersById.values()], setupPhone: authorization => {
+    const session = readSession(authorization);
+    if (!session || (!session.verifiedSms && process.env.NODE_ENV !== "test")) return undefined;
+    return usersById.get(session.userId)?.phone;
+  },
 }));
 app.use("/api/settings/deepseek", (req,res) => {
   if (!readSession(req.headers.authorization)) return res.status(401).json({error:"请先登录。"});

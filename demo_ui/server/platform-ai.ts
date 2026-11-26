@@ -1,9 +1,11 @@
+import { promisify } from "node:util";
 import express from "express";
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { DeepSeekKeyStore, createDeepSeekSettingsRouter, secureTransport } from "./deepseek-settings";
 import { EnterpriseStore, usageMonth } from "./enterprise";
 import { pointScale, type CreditWallet } from "./credit-wallet";
 
+const derivePassword = promisify(scrypt);
 export const PLATFORM_KEY = "platform-shared-deepseek";
 type Account = { id: string; phone: string };
 type Dimension = "account" | "company";
@@ -21,11 +23,12 @@ export function platformAiRouter(
     accounts: () => Account[];
     wallet: CreditWallet;
     personalWorkspaceId: (id: string) => string;
-    sendCode: (phone: string, code: string) => Promise<unknown>;
+    setupPhone: (authorization: unknown) => string | undefined;
   },
 ) {
   const router = express.Router();
-  const challenges = new Map<string, { code: string; until: number; attempts: number }>();
+  store.use(db => db.exec("CREATE TABLE IF NOT EXISTS platform_passwords(phone TEXT PRIMARY KEY, salt TEXT NOT NULL, hash TEXT NOT NULL)"));
+  const attempts = new Map<string, { count: number; until: number }>();
   const sessions = new Map<string, { actor: string; until: number }>();
   const allowed = (phone: string) =>
     (process.env.HUOJI_PLATFORM_ADMIN_PHONES || "")
@@ -48,47 +51,42 @@ export function platformAiRouter(
     next();
   });
   router.use(express.json({ limit: "4kb" }));
-  router.post("/auth/code", async (req, res) => {
-    const phone = String(req.body?.phone ?? "");
-    if (!allowed(phone)) {
-      res.status(403).json({ error: "该手机号未获平台管理授权。" });
+  router.post("/auth/setup", async (req, res, next) => {
+    const { phone, password } = req.body ?? {};
+    if (typeof phone !== "string" || !allowed(phone) || deps.setupPhone(req.headers.authorization) !== phone) {
+      res.status(403).json({ error: "请先在同一浏览器登录该管理员的货记账号，再设置后台密码。" });
       return;
     }
-    const previous = challenges.get(phone);
-    if (previous && previous.until - 240000 > Date.now()) {
-      res.status(429).json({ error: "请稍后再获取验证码。" });
+    if (typeof password !== "string" || password.length < 12 || password.length > 128) {
+      res.status(400).json({ error: "密码长度应为 12 至 128 个字符。" });
       return;
     }
-    const mock =
-      process.env.NODE_ENV === "test" &&
-      (process.env.SMS_PROVIDER || "mock") === "mock" &&
-      req.hostname === "127.0.0.1" &&
-      ["127.0.0.1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress || "") &&
-      !req.headers["x-forwarded-for"];
-    if (!mock && !["aliyun", "tencentcloud"].includes(process.env.SMS_PROVIDER || "")) {
-      res.status(503).json({ error: "平台管理员登录需要开通短信服务。" });
-      return;
-    }
-    const code = String(randomInt(100000, 1000000));
-    const challenge = { code, until: Date.now() + 300000, attempts: 0 };
-    challenges.set(phone, challenge);
     try {
-      if (!mock) await deps.sendCode(phone, code);
-      res.json({ sent: true, ...(mock ? { debugCode: code } : {}) });
-    } catch {
-      if (challenges.get(phone) === challenge) challenges.delete(phone);
-      res.status(503).json({ error: "短信发送失败，请稍后重试。" });
-    }
+      const salt = randomBytes(16).toString("hex");
+      const hash = await derivePassword(password, salt, 64) as Buffer;
+      const saved = store.use(db => db.prepare("INSERT OR IGNORE INTO platform_passwords VALUES(?,?,?)").run(phone, salt, hash.toString("hex")));
+      if (!saved.changes) { res.status(409).json({ error: "该账号已设置后台密码，请使用密码登录。" }); return; }
+      res.json({ ok: true });
+    } catch (error) { next(error); }
   });
-  router.post("/auth/login", (req, res) => {
-    const phone = String(req.body?.phone ?? ""),
-      c = challenges.get(phone);
-    if (c) c.attempts++;
-    if (!allowed(phone) || !c || c.until <= Date.now() || c.attempts > 5 || c.code !== req.body?.code) {
-      res.status(401).json({ error: "验证码无效或已过期。" });
-      return;
+  router.post("/auth/login", async (req, res, next) => {
+    const { phone, password } = req.body ?? {};
+    const denied = () => res.status(401).json({ error: "账号或密码有误，首次使用请先设置密码。" });
+    if (typeof phone !== "string" || !allowed(phone) || typeof password !== "string" || password.length < 12 || password.length > 128) {
+      denied(); return;
     }
-    challenges.delete(phone);
+    const previous = attempts.get(phone);
+    const window = previous && previous.until > Date.now() ? previous : { count: 0, until: Date.now() + 300_000 };
+    if (window.count >= 5) { res.status(429).json({ error: "尝试过于频繁，请五分钟后再试。" }); return; }
+    window.count++;
+    attempts.set(phone, window);
+    try {
+      const stored = store.use(db => db.prepare("SELECT salt,hash FROM platform_passwords WHERE phone=?").get(phone));
+      if (!stored || !timingSafeEqual(await derivePassword(password, String(stored.salt), 64) as Buffer, Buffer.from(String(stored.hash), "hex"))) {
+        denied(); return;
+      }
+    } catch (error) { next(error); return; }
+    attempts.delete(phone);
     for (const [key, s] of sessions) if (s.until <= Date.now()) sessions.delete(key);
     const token = randomBytes(32).toString("hex");
     sessions.set(token, { actor: phone, until: Date.now() + 4 * 3600000 });

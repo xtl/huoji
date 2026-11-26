@@ -119,11 +119,14 @@ test("verified enterprises isolate collection, posts, membership and metered key
   await api(settings, worker, "PUT", { apiKey: companyKey }, 403);
   await api(settings, boss, "DELETE", undefined, 403);
   await api("/platform/usage", review.token, "GET", undefined, 401);
-  await api("/platform/auth/code", "", "POST", { phone: review.user.phone }, 403);
+  const credentials = { phone: review.user.phone, password: "Test-only-password-42" };
+  await api("/platform/auth/setup", review.token, "POST", credentials, 403);
   process.env.HUOJI_PLATFORM_ADMIN_PHONES = review.user.phone;
-  const challenge = await api("/platform/auth/code", "", "POST", { phone: review.user.phone });
-  await api("/platform/auth/login", "", "POST", { phone: review.user.phone, code: "fixture" }, 401);
-  const ops = (await api("/platform/auth/login", "", "POST", { phone: review.user.phone, code: challenge.debugCode })).token;
+  await api("/platform/auth/setup", owner.token, "POST", credentials, 403);
+  await api("/platform/auth/setup", review.token, "POST", credentials);
+  await api("/platform/auth/setup", review.token, "POST", credentials, 409);
+  await api("/platform/auth/login", "", "POST", { ...credentials, password: "wrong-password-123" }, 401);
+  const ops = (await api("/platform/auth/login", "", "POST", credentials)).token;
   await api("/auth/me", ops, "GET", undefined, 401);
   const savedKey = await api("/platform/key", ops, "PUT", { apiKey: companyKey });
   assert.ok(!JSON.stringify(savedKey).includes(companyKey));

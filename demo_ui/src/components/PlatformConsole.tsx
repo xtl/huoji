@@ -25,7 +25,8 @@ const key = "huoji_platform_session";
 export default function PlatformConsole() {
   const [token, setToken] = useState(() => sessionStorage.getItem(key) || "");
   const [phone, setPhone] = useState(""),
-    [code, setCode] = useState(""),
+    [password, setPassword] = useState(""),
+    [setup, setSetup] = useState(false),
     [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false),
     [tab, setTab] = useState<"usage" | "key">("usage");
@@ -66,13 +67,13 @@ export default function PlatformConsole() {
     setGrantMessage("");
     pendingGrants.current.clear();
   }
-  async function api<T>(route: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
+  async function api<T>(route: string, method = "GET", body?: unknown, signal?: AbortSignal, bearer = token): Promise<T> {
     const response = await fetch("/api/platform/" + route, {
       method,
       signal,
       redirect: "error",
       cache: "no-store",
-      headers: { Authorization: "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) },
+      headers: { Authorization: "Bearer " + bearer, ...(body ? { "Content-Type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await response.json().catch(() => null);
@@ -166,10 +167,15 @@ export default function PlatformConsole() {
           onSubmit={(e) => {
             e.preventDefault();
             void action(async () => {
-              const s = await api<{ token: string }>("auth/login", "POST", { phone, code });
+              if (setup) {
+                const session = JSON.parse(localStorage.getItem("huoji_auth_session") || "null");
+                await api("auth/setup", "POST", { phone, password }, undefined, session?.token || "");
+                setSetup(false);
+              }
+              const s = await api<{ token: string }>("auth/login", "POST", { phone, password });
               sessionStorage.setItem(key, s.token);
               setToken(s.token);
-              setCode("");
+              setPassword("");
             });
           }}
         >
@@ -181,31 +187,23 @@ export default function PlatformConsole() {
               value={phone}
               onChange={(e) => {
                 setPhone(e.target.value);
-                setCode("");
+                setPassword("");
               }}
               autoComplete="tel"
             />
           </label>
           <label>
-            短信验证码
-            <input value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" />
+            {setup ? "设置新密码（12 至 128 个字符）" : "后台密码"}
+            <input type="password" required minLength={12} maxLength={128} value={password}
+              onChange={e => setPassword(e.target.value)} autoComplete={setup ? "new-password" : "current-password"} />
           </label>
+          {setup && <p>请先在同一浏览器<a href="/" target="_blank" rel="noreferrer">登录货记账号</a>，再返回此页设置后台密码。</p>}
           <div>
-            <button
-              type="button"
-              disabled={busy || !isSecure || !/^1\d{10}$/.test(phone)}
-              onClick={() =>
-                void action(async () => {
-                  const s = await api<{ debugCode?: string }>("auth/code", "POST", { phone });
-                  if (s.debugCode) setCode(s.debugCode);
-                  setNotice(s.debugCode ? "本机测试验证码已填入。" : "验证码已发送。");
-                })
-              }
-            >
-              获取验证码
+            <button type="button" disabled={busy} onClick={() => { setSetup(!setup); setPassword(""); setNotice(""); }}>
+              {setup ? "返回登录" : "首次设置密码"}
             </button>
-            <button className="primary" disabled={busy || !code || !isSecure}>
-              登录后台
+            <button className="primary" disabled={busy || !password || !isSecure}>
+              {setup ? "设置并登录" : "登录后台"}
             </button>
           </div>
           {!isSecure && <p>请通过 HTTPS 打开平台后台。</p>}
