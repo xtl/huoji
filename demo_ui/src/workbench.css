@@ -9,6 +9,10 @@
 .masthead-brand { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; color: inherit; text-decoration: none; white-space: nowrap; }
 .masthead-brand img { width: 29px; height: 29px; border: 1px solid var(--line); border-radius: 7px; }
 .masthead-brand strong, .login-brand strong { font: 700 20px/1.2 var(--font-app); letter-spacing: .02em; }
+/* Desktop assistant only: the edition badge gives up width before the logo or navigation does. */
+.masthead-identity { display: grid; grid-template-columns: auto minmax(0, max-content); align-items: center; column-gap: 10px; }
+.edition-badge { display: inline-block; min-width: 0; padding: 0 9px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--surface-subtle); font-size: 12px; font-weight: 500; line-height: 22px; white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.edition-badge[data-edition="cloud"] { border-color: #c8d5f4; color: var(--accent); background: var(--accent-soft); }
 .workspace-menu { display: flex; gap: 4px; align-items: center; }
 .workspace-link { position: relative; display: flex; align-items: center; justify-content: center; text-decoration: none; }
 .workspace-menu .workspace-link { gap: 7px; min-height: 36px; padding-inline: 13px; border-radius: 7px; color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
@@ -71,7 +75,7 @@
 .login-brand { display: flex; gap: 10px; align-items: center; color: var(--ink); margin-bottom: 38px; }
 .login-brand > div { display: flex; align-items: center; gap: 14px; }
 .login-brand img { border: 1px solid var(--line); }
-.login-brand span { color: var(--muted); font-size: 13px; padding-left: 14px; border-left: 1px solid var(--line); }
+.login-brand > div > span { color: var(--muted); font-size: 13px; padding-left: 14px; border-left: 1px solid var(--line); }
 .login-heading { margin-bottom: 24px; }
 .login-heading h1 { font-size: 27px; font-weight: 650; line-height: 1.35; }
 .login-card input { min-height: 28px; font-size: 15px; }
@@ -105,6 +109,23 @@
   .global-search-trigger kbd { display: none; }
 }
 @media (min-width: 768px) and (max-width: 900px) { .workspace-menu .workspace-link > svg { display: none; } }
+/* The full service name needs a wide header; the login card already names it. */
+@media (max-width: 1299px) { .edition-host { display: none; } }
+/* Desktop assistant only: tighten the header the way narrower layouts already do, so the badge keeps its text. */
+@media (min-width: 1081px) and (max-width: 1299px) {
+  .masthead-inner:has(.edition-badge) { gap: 16px; }
+  .masthead-inner:has(.edition-badge) .workspace-link { padding-inline: 9px; }
+  .masthead-inner:has(.edition-badge) .global-search-trigger kbd { display: none; }
+}
+@media (min-width: 768px) and (max-width: 1080px) {
+  .masthead-inner:has(.edition-badge) .workspace-link > svg,
+  .masthead-inner:has(.edition-badge) .account-dropdown summary span,
+  .masthead-inner:has(.edition-badge) .account-dropdown summary > svg:last-child { display: none; }
+}
+@media (min-width: 768px) and (max-width: 900px) {
+  .masthead-inner:has(.edition-badge) .global-search-trigger { width: 34px; flex: 0 0 34px; justify-content: center; padding: 0; }
+  .masthead-inner:has(.edition-badge) .global-search-trigger span { display: none; }
+}
 @media (max-width: 767px) {
   :root { --workspace-header-height: 49px; }
   .workspace-main { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }

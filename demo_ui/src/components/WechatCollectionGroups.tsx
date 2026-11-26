@@ -20,6 +20,7 @@ interface Props {
   uncalibrated: readonly string[];
   canCalibrate: boolean;
   busy: boolean;
+  onChooseWindows?: () => void;
   onBusy: (busy: boolean) => void;
   onChanged: (groups: ManagedGroupList) => void;
   onCalibrated: () => void;
@@ -36,7 +37,7 @@ async function changeGroup<T>(token: string, path: string, method: string, body:
 }
 
 export default function WechatCollectionGroups(props: Props) {
-  const { token, groups, configError, local, calibrated, uncalibrated, canCalibrate, busy, onBusy, onChanged, onCalibrated } = props;
+  const { token, groups, configError, local, calibrated, uncalibrated, canCalibrate, busy, onChooseWindows, onBusy, onChanged, onCalibrated } = props;
   const [name, setName] = useState("");
   const [action, setAction] = useState("");
   const [feedback, setFeedback] = useState<{ error?: boolean; message: string } | null>(null);
@@ -57,7 +58,7 @@ export default function WechatCollectionGroups(props: Props) {
         await changeGroup(token, "/api/rpa/local/groups/calibrate", "POST", { name: target }, controller.signal);
         if (controller.signal.aborted) return;
         onCalibrated();
-        setFeedback({ message: `已校准「${target}」，可在历史补采中选择。` });
+        setFeedback({ message: `已核对「${target}」的微信窗口，可以开始采集。` });
       } else {
         const result = await changeGroup<ManagedGroupList>(token, "/api/rpa/groups", method,
           method === "PATCH" ? { name: target, enabled } : { name: target }, controller.signal);
@@ -82,11 +83,7 @@ export default function WechatCollectionGroups(props: Props) {
     }
   }
 
-  return <section aria-label="采集群管理" className="min-w-0">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      {groups && <span className="caption-text">已启用 {groups.filter(group => group.enabled).length} 个群，共 {groups.length} 个</span>}
-    </div>
-    <form className="mt-3" onSubmit={event => {
+  const manualEntry = <form className="mt-3" onSubmit={event => {
       event.preventDefault();
       if (name.trim() && !duplicate) void act("POST", name.trim());
     }}>
@@ -101,21 +98,31 @@ export default function WechatCollectionGroups(props: Props) {
         </button>
       </div>
       {duplicate && <p id="wechat-group-duplicate" className="mt-1 text-xs text-amber-700">这个群已在列表中。</p>}
-    </form>
+    </form>;
+
+  return <section aria-label="采集群管理" className="min-w-0">
+    <div className="capture-picker-heading">
+      {groups && <p>已启用 {groups.filter(group => group.enabled).length} 个群，共 {groups.length} 个</p>}
+      {onChooseWindows && <button type="button" className="capture-primary" disabled={busy}
+        onClick={onChooseWindows}><Plus size={15} aria-hidden="true" />从微信窗口添加</button>}
+    </div>
+    {!onChooseWindows && manualEntry}
     {configError ? <p role="alert" className="mt-3 text-xs text-amber-700">{configError}</p>
       : !groups ? <p className="caption-text mt-3">正在读取群列表…</p>
-      : groups.length === 0 ? <p className="caption-text mt-3">还没有采集群。输入群名，添加第一个群。</p> : null}
+      : groups.length === 0 ? <p className="caption-text mt-3">{onChooseWindows
+        ? "还没有采集群。打开独立群聊窗口后，就可以选群添加。"
+        : "还没有采集群。可以输入群名，添加第一个群。"}</p> : null}
     {groups && groups.length > 0 && <ul className="mt-3 divide-y divide-[var(--line)] border-y border-[var(--line)]">
       {groups.map(group => <li key={group.name} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2.5">
         <div className="min-w-0 flex-1 basis-36">
           <p className="break-all text-sm font-medium text-neutral-900">{group.name}</p>
           <p className="mt-0.5 text-xs text-neutral-600"><span className={group.enabled ? "text-[color:var(--accent)]" : ""}>{group.enabled ? "已启用" : "已暂停"}</span>
-            {group.enabled && (calibrated.includes(group.name) ? " · 已校准" : uncalibrated.includes(group.name) ? <span className="text-amber-800"> · 待校准</span> : "")}</p>
+            {group.enabled && (calibrated.includes(group.name) ? " · 窗口已核对" : uncalibrated.includes(group.name) ? <span className="text-amber-800"> · 窗口待核对</span> : "")}</p>
         </div>
         <div className="flex flex-wrap gap-1">
-          {local && group.enabled && canCalibrate && <button type="button" aria-label={`校准 ${group.name}`} disabled={busy}
+          {local && group.enabled && canCalibrate && <button type="button" aria-label={`核对窗口 ${group.name}`} disabled={busy}
             className="ghost-button min-h-9 rounded-md border border-[#cfdcd4] bg-white px-2 text-xs disabled:opacity-50" onClick={() => void act("calibrate", group.name)}>
-            {action === group.name ? "正在校准…" : "校准窗口"}</button>}
+            {action === group.name ? "正在核对…" : "核对窗口"}</button>}
           <button type="button" aria-label={`${group.enabled ? "暂停" : "启用"} ${group.name}`} disabled={busy}
             className="ghost-button min-h-9 rounded-md px-2 text-xs disabled:opacity-50" onClick={() => void act("PATCH", group.name, !group.enabled)}>
             {group.enabled ? "暂停" : "启用"}</button>
@@ -125,8 +132,11 @@ export default function WechatCollectionGroups(props: Props) {
       </li>)}
     </ul>}
     {groups && groups.length > 0 && <p className="caption-text mt-2">暂停或移除群后，已采集的消息会保留。</p>}
-    {local && uncalibrated.length > 0 && <p className="caption-text mt-2">校准前，请将群聊单独打开，调整为与已校准群相同的窗口大小。</p>}
-    {!local && <p className="caption-text mt-2">请在采集电脑下载更新后的连接配置，并校准新增群的独立窗口。</p>}
+    {local && !onChooseWindows && uncalibrated.length > 0 && <p className="caption-text mt-2">先单独打开群聊窗口，再点「核对窗口」。</p>}
+    {!local && <p className="caption-text mt-2">保存后，在 Windows 采集助手里选择群聊并开始采集。</p>}
+    {onChooseWindows && <details className="capture-manual-group">
+      <summary>手动输入群名</summary>{manualEntry}
+    </details>}
     {feedback && <p role={feedback.error ? "alert" : "status"} className={`mt-2 break-words text-xs leading-5 ${feedback.error ? "text-amber-800" : "text-emerald-700"}`}>{feedback.message}</p>}
   </section>;
 }

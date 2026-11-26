@@ -1,6 +1,7 @@
 import { creditPackagesFor, monthlyCredits, monthlyPrice, annualPrice, annualMonthlyCredits, annualBonusCredits, pointsPerCostYuan, creditsPerYuan, pricingVersion, rechargePricingVersion } from "./credit-pricing";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { WorkbenchHeader, MobileNavigation } from "./components/WorkspaceChrome";
+import EditionBadge from "./components/EditionBadge";
 import AccountProfile from "./components/AccountProfile";
 import TradeSearch from "./components/TradeSearch";
 import CircleWorkspace from "./components/CircleWorkspace";
@@ -2339,7 +2340,7 @@ function LoginScreen({ onLogin, sessionNotice }: { onLogin: (session: AuthSessio
   return (
     <div className="login-shell">
       <main className="login-card">
-        <div className="login-brand"><BrandIcon /><div><strong>货记</strong><span>硬件供需工作台</span></div></div>
+        <div className="login-brand"><BrandIcon /><div><strong>货记</strong><span>硬件供需工作台</span></div><EditionBadge /></div>
         <form onSubmit={handleLogin}>
           <div className="login-heading"><h1>手机号登录</h1></div>
           {document.querySelector('meta[name="huoji-edition"][content="cloud"]') && <p className="caption-text mb-4">登录 huoij.com 云端账号，采集资料将同步到你选择的个人或企业空间。</p>}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { ArrowUpRight, Box, ChevronDown, Building2, CircleUserRound, GitCompareArrows, Inbox, ListFilter, LogOut, Store, WalletCards } from "lucide-react";
 import type { TabKey } from "../workspace-navigation";
+import EditionBadge, { assistantEdition } from "./EditionBadge";
 
 const destinations = [
   { key: "input", label: "消息", icon: Inbox },
@@ -47,10 +48,11 @@ export function WorkbenchHeader({ activeTab, onNavigate, messageHref, matchHref,
     if (account.current) account.current.open = false;
     action();
   }
+  const brand = <a href={messageHref} className="masthead-brand" aria-label="货记，打开消息工作台">
+    <img alt="" src="/huoji-icon.png" width="30" height="30" /><strong>货记</strong>
+  </a>;
   return <header className="masthead"><div className="masthead-inner">
-    <a href={messageHref} className="masthead-brand" aria-label="货记，打开消息工作台">
-      <img alt="" src="/huoji-icon.png" width="30" height="30" /><strong>货记</strong>
-    </a>
+    {assistantEdition() ? <div className="masthead-identity">{brand}<EditionBadge /></div> : brand}
     <nav className="workspace-menu" aria-label="主导航"><NavigationLinks activeTab={activeTab} onNavigate={onNavigate} messageHref={messageHref} matchHref={matchHref} unread={unread} /></nav>
     <div className="masthead-tools">
       {children}

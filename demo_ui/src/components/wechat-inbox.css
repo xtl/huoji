@@ -26,8 +26,7 @@
 .capture-filter select { appearance: none; min-height: 34px; font-size: 13px; border: 1px solid var(--control-border); border-radius: 5px; background: #fff; padding: 4px 27px 4px 10px; cursor: pointer; color: var(--ink); }
 .capture-filter svg { pointer-events: none; position: absolute; right: 9px; }
 .capture-inbox button:disabled, .capture-dialog button:disabled { opacity: .5; cursor: not-allowed; }
-.capture-running, .capture-needs-attention { font-size: 11px; font-weight: 550; color: #246649; }
-.capture-needs-attention { color: #85520f; }
+.capture-needs-attention { font-size: 11px; font-weight: 550; color: #85520f; }
 .capture-columns, .capture-row { display: grid; grid-template-columns: var(--capture-grid); column-gap: clamp(12px, 2%, 28px); align-items: center; padding-inline: clamp(12px, 1.5%, 22px); }
 .capture-ledger { border: 1px solid var(--capture-line); border-radius: 10px; overflow: clip; }
 .capture-ledger .capture-message:last-child { border-bottom: 0; }
@@ -120,8 +119,7 @@
   .capture-expanded { grid-template-columns: 1fr; gap: 12px; padding: 12px; }
 }
 @container (max-width: 430px) {
-  .capture-tool:has(.capture-running, .capture-needs-attention) .capture-history-label { display: none; }
-  .capture-tool .capture-running, .capture-tool .capture-needs-attention { font-size: 12px; }
+  .capture-tool .capture-needs-attention { font-size: 12px; }
   .capture-list-heading { gap: 5px; }
   .capture-list-heading h2 { font-size: 16px; }
 }
@@ -136,10 +134,37 @@
 .capture-binding strong { color: var(--capture-ink); }
 .capture-binding button { justify-self: start; }
 .assistant-entry { display: grid; justify-items: start; gap: 12px; }
-.assistant-entry strong { font-size: 16px; font-weight: 650; }
+.assistant-entry-inline {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+}
+.assistant-entry-heading { display: flex; align-items: flex-start; gap: 10px; }
+.assistant-entry-heading > svg { flex: none; margin-top: 2px; color: var(--accent); }
+.assistant-entry h3 { font-size: 16px; font-weight: 650; }
 .assistant-entry p { color: var(--muted); font-size: 14px; line-height: 1.65; }
-.assistant-entry .caption-text { font-size: 12px; }
 .assistant-entry .capture-tools { gap: 8px; }
-.capture-picker-list { display: grid; max-height: 35vh; overflow-y: auto; }
-.capture-picker-list label { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
-.capture-picker-destination { margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
+.assistant-entry-status:empty { position: absolute; }
+.assistant-entry-status[data-status="ready"] { color: #246649; }
+.assistant-entry-help a { color: var(--accent); text-decoration: underline; }
+.capture-picker { display: grid; gap: 13px; }
+.capture-form-part { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 8px 12px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.capture-form-part legend { padding: 0 4px; font-size: 14px; font-weight: 650; }
+.capture-form-part p, .capture-picker-heading p, .capture-start-row > span { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.capture-picker-heading, .capture-start-row { display: flex; align-items: center; flex-wrap: wrap; column-gap: 12px; row-gap: 6px; }
+.capture-picker-heading p, .capture-start-row > span { flex: 1 1 130px; }
+.capture-picker-list { display: grid; max-height: 26dvh; overflow-y: auto; border-top: 1px solid var(--line); }
+.capture-picker-list label { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.capture-picker-list span { min-width: 0; overflow-wrap: anywhere; }
+.capture-picker-list input { width: 16px; height: 16px; flex: none; accent-color: var(--accent); }
+.capture-picker-destination { margin: 0 0 12px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.capture-ranges { display: flex; flex-wrap: wrap; gap: 6px; }
+.capture-ranges button { min-height: 35px; padding: 5px 9px; border: 1px solid var(--control-border); border-radius: 6px; font-size: 13px; }
+.capture-ranges button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 650; }
+.capture-page-option { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.capture-page-option input { width: 70px; padding: 6px 8px; border-radius: 6px; }
+.capture-start-row { border-top: 1px solid var(--line); padding-top: 10px; }
+.capture-manual-group { margin-top: 12px; font-size: 13px; color: var(--muted); }
+.capture-manual-group summary { cursor: pointer; }

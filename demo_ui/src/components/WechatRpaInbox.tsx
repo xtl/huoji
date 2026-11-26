@@ -2,7 +2,8 @@ import { collectorConnection } from "../collector-connection";
 import CaptureUsage from "./CaptureUsage";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, Inbox, ListPlus, Plus, RefreshCw, RotateCcw } from "lucide-react";
-import WechatHistoryBackfill, { type CaptureTool } from "./WechatHistoryBackfill";
+import WechatHistoryBackfill, { isLocalHost, type CaptureTool } from "./WechatHistoryBackfill";
+import CloudAssistantEntry from "./CloudAssistantEntry";
 import CaptureDialog from "./CaptureDialog";
 import { setIntakeView } from "../workspace-navigation";
 import type { ManagedGroupList } from "./WechatCollectionGroups";
@@ -339,6 +340,7 @@ export default function WechatRpaInbox({ destination, token, userId, workspaceId
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pollSeconds = Math.max(5, config?.pollIntervalSeconds ?? config?.pollingIntervalSeconds ?? 10);
   const expiresAt = config?.sessionExpiresAt || sessionExpiresAt;
+  const local = isLocalHost(window.location.hostname);
   const secureOrigin = window.location.protocol === "https:" || ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
   const pageBulkCount = messages.filter((message) => rpaMessageCanBulkImport(message, importedItemKeys)).length;
 
@@ -529,6 +531,7 @@ export default function WechatRpaInbox({ destination, token, userId, workspaceId
 
   return (
     <section className="capture-inbox" aria-label="微信采集收件箱">
+      {!local && <CloudAssistantEntry inline />}
       <div className="capture-toolbar">
         <div className="capture-list-heading">
           <h2 ref={listHeading} tabIndex={-1}>{loading && !messages.length ? "读取中…" : error ? "采集消息" : <><b>{total.toLocaleString("zh-CN")}</b> 条消息</>}</h2>
@@ -586,11 +589,9 @@ export default function WechatRpaInbox({ destination, token, userId, workspaceId
       {!messages.length && !loading && !error && <div className="capture-empty">
         <Inbox size={30} strokeWidth={1.4} aria-hidden="true" />
         <h3>{status === "ALL" ? "还没有采集消息" : "没有符合此状态的消息"}</h3>
-        {status === "ALL" ? <>
-          <p>{groups.length ? "可补采已启用群的近期消息。" : "先添加采集群并连接电脑微信。"}</p>
-          <button className="capture-action" type="button" onClick={() => setToolPanel(groups.length ? "history" : "groups")}>{groups.length ? "补采群消息" : "添加采集群"}</button>
-          <button className="capture-tool" type="button" onClick={() => setToolPanel("connection")}>连接设置</button>
-        </> : <button className="capture-action" type="button" onClick={() => changeListView("ALL", 1)}>查看全部消息</button>}
+        {status === "ALL" && local && <p>打开电脑微信中的群聊窗口，再点上方的「开始采集」。</p>}
+        {status === "ALL" && !local && <p>用采集助手选群并开始采集，消息会同步到这里。</p>}
+        {status !== "ALL" && <button className="capture-action" type="button" onClick={() => changeListView("ALL", 1)}>查看全部消息</button>}
       </div>}
       {loading && !messages.length && <p role="status" className="capture-empty">正在读取消息…</p>}
       {messages.length > 0 && <div className="capture-ledger">

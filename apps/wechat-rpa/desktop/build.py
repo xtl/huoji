@@ -3,6 +3,7 @@ import argparse
 import importlib.metadata as md
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,15 @@ WORKER = ("collector", "backfill", "backfill_range", "capture_lock", "group_name
 def copy_file(source, target):
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
+
+
+def installer_version(cloud):
+    """Return the AppVersion that setup.iss assigns to this edition."""
+    name = "CloudVersion" if cloud else "LocalTestVersion"
+    found = re.search(rf'^#define {name} "(\d+(?:\.\d+)+)"$', (HERE / "setup.iss").read_text("utf8"), re.M)
+    if not found:
+        sys.exit(f"setup.iss must define {name}.")
+    return found.group(1)
 
 
 def python_runtime(stage):
@@ -71,6 +81,7 @@ def main():
     args = parser.parse_args()
     if sys.platform != "win32" or sys.maxsize <= 2**32 or Path(sys.prefix).resolve() != (RPA / ".venv").resolve():
         sys.exit("Run using the project's Windows x64 OCR venv.")
+    version = installer_version(args.cloud)
     BUILD.mkdir(exist_ok=True)
     node = shutil.which("node.exe")
     compiler = Path(os.environ["SystemRoot"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
@@ -90,7 +101,8 @@ def main():
         subprocess.run([node, str(WEB / "node_modules/vite/bin/vite.js"), "build", "--outDir", str(stage / "web")], cwd=WEB, check=True)
         index = stage / "web/index.html"
         edition = "cloud" if args.cloud else "local-test"
-        index.write_text(index.read_text("utf8").replace("<head>", f'<head><meta name="huoji-edition" content="{edition}">')
+        index.write_text(index.read_text("utf8").replace("<head>", f'<head><meta name="huoji-edition" content="{edition}">'
+                                                          f'<meta name="huoji-version" content="{version}">')
                          .replace("货记｜AI 硬件供需工作台", "货记采集助手"), encoding="utf8")
         bundler = WEB / "node_modules/esbuild/bin/esbuild"
         subprocess.run([node, str(bundler), str(HERE / ("cloud.cjs" if args.cloud else "local.cjs")), "--bundle", "--platform=node", "--format=cjs",

@@ -1,3 +1,6 @@
+; build.py reads these versions and shows them at the top of the assistant page.
+#define CloudVersion "0.2.2"
+#define LocalTestVersion "0.1.1"
 #ifdef Cloud
   #define Edition "货记采集助手（云同步版）"
   #define AppKey "HuojiCaptureCloud"
@@ -17,10 +20,10 @@ AppId=HuojiCaptureLocalTest
 #endif
 AppName={#Edition}
 #ifdef Cloud
-AppVersion=0.2.1
+AppVersion={#CloudVersion}
 ChangesAssociations=yes
 #else
-AppVersion=0.1.0
+AppVersion={#LocalTestVersion}
 #endif
 DefaultDirName={localappdata}\Programs\{#AppKey}
 DefaultGroupName={#Edition}
